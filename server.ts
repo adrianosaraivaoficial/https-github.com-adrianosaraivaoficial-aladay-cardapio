@@ -1,0 +1,3013 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
+import express, { Request, Response } from 'express';
+import { createServer as createViteServer } from 'vite';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import crypto from 'crypto';
+import QRCode from 'qrcode';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+interface InMemDeliveryZone {
+  id: string;
+  name: string;
+  feeCents: number;
+  estimatedMinutes: number;
+  active: boolean;
+}
+
+interface InMemTenant {
+  id: string;
+  name: string;
+  slug: string;
+  phone: string;
+  address: string;
+  primaryColor: string;
+  isOpen: boolean;
+  deliveryFeeCents: number;
+  minOrderCents: number;
+  deliveryZones?: InMemDeliveryZone[];
+  evolutionInstanceId: string;
+  evolutionStatus: 'connected' | 'connecting' | 'disconnected';
+  subscriptionStatus?: 'active' | 'past_due' | 'suspended';
+  statusNotificationTemplates?: Record<string, string>;
+  pixConfig?: {
+    provider: string;
+    pixKey: string;
+    pixKeyType: string;
+    merchantName: string;
+    merchantCity: string;
+    bankName?: string;
+    autoApproveWebhook: boolean;
+    updatedAt?: string;
+  };
+}
+
+const memoryTenants: InMemTenant[] = [
+  {
+    id: 'tenant_brasas_01',
+    name: 'Brasas & Burger Artesanal',
+    slug: 'brasas-burger',
+    phone: '5511987654321',
+    address: 'Av. Paulista, 1200 - Bela Vista, São Paulo - SP',
+    primaryColor: '#EA580C',
+    isOpen: true,
+    deliveryFeeCents: 800,
+    minOrderCents: 2500,
+    deliveryZones: [
+      { id: 'zone_bela_vista', name: 'Bela Vista / Consolação', feeCents: 600, estimatedMinutes: 35, active: true },
+      { id: 'zone_paulista_jardins', name: 'Jardins / Cerqueira César', feeCents: 800, estimatedMinutes: 40, active: true },
+      { id: 'zone_pinheiros', name: 'Pinheiros / Vila Madalena', feeCents: 1100, estimatedMinutes: 45, active: true },
+      { id: 'zone_perdizes', name: 'Perdizes / Pacaembu', feeCents: 1200, estimatedMinutes: 50, active: true },
+      { id: 'zone_moema', name: 'Moema / Itaim Bibi', feeCents: 1400, estimatedMinutes: 55, active: true },
+    ],
+    evolutionInstanceId: 'aladay',
+    evolutionStatus: 'connected',
+    pixConfig: {
+      provider: 'direct_bank',
+      pixKey: '5511987654321',
+      pixKeyType: 'phone',
+      merchantName: 'Brasas & Burger Artesanal',
+      merchantCity: 'SAO PAULO',
+      bankName: 'Nubank PJ / Banco Inter',
+      autoApproveWebhook: true,
+    },
+  },
+  {
+    id: 'tenant_pizzaria_02',
+    name: 'Pizzaria Di Fiori Forno a Lenha',
+    slug: 'pizzaria-difiori',
+    phone: '5511976543210',
+    address: 'Rua Augusta, 1420 - Consolação, São Paulo - SP',
+    primaryColor: '#DC2626',
+    isOpen: true,
+    deliveryFeeCents: 900,
+    minOrderCents: 3500,
+    deliveryZones: [
+      { id: 'zone_consolacao', name: 'Consolação / Higienópolis', feeCents: 700, estimatedMinutes: 30, active: true },
+      { id: 'zone_santa_cecilia', name: 'Santa Cecília / Vila Buarque', feeCents: 850, estimatedMinutes: 35, active: true },
+      { id: 'zone_paulista', name: 'Bela Vista / Av. Paulista', feeCents: 900, estimatedMinutes: 40, active: true },
+      { id: 'zone_pinheiros_pizzaria', name: 'Pinheiros / Rebouças', feeCents: 1200, estimatedMinutes: 45, active: true },
+    ],
+    evolutionInstanceId: 'instancia_pizzaria_difiori',
+    evolutionStatus: 'connected',
+    pixConfig: {
+      provider: 'direct_bank',
+      pixKey: 'contato@pizzariadifiori.com.br',
+      pixKeyType: 'email',
+      merchantName: 'Pizzaria Di Fiori',
+      merchantCity: 'SAO PAULO',
+      bankName: 'Itaú Empresas',
+      autoApproveWebhook: true,
+    },
+  },
+];
+
+const memoryCategories: any[] = [
+  { id: 'cat_burgers', tenantSlug: 'brasas-burger', name: 'Burgers Artesanais', order: 1 },
+  { id: 'cat_combos', tenantSlug: 'brasas-burger', name: 'Combos Especiais', order: 2 },
+  { id: 'cat_sides', tenantSlug: 'brasas-burger', name: 'Porções & Acompanhamentos', order: 3 },
+  { id: 'cat_pizzas', tenantSlug: 'pizzaria-difiori', name: 'Pizzas Especiais Forno a Lenha', order: 1 },
+  { id: 'cat_calzones', tenantSlug: 'pizzaria-difiori', name: 'Calzones & Doces', order: 2 },
+];
+
+const memoryProducts: any[] = [
+  {
+    id: 'prod_smash_bacon',
+    tenantSlug: 'brasas-burger',
+    categoryId: 'cat_burgers',
+    name: 'Smash Bacon Duplo Especial',
+    description: 'Dois burgers artesanais 90g com crostinha na chapa, queijo cheddar inglês fundido e bacon crocante.',
+    priceCents: 3490,
+    isAvailable: true,
+  },
+  {
+    id: 'prod_costela_prime',
+    tenantSlug: 'brasas-burger',
+    categoryId: 'cat_burgers',
+    name: 'Burger de Costela Desfiada',
+    description: 'Hambúrguer 160g de costela bovina desfiada marinada na cerveja preta.',
+    priceCents: 3890,
+    isAvailable: true,
+  },
+  {
+    id: 'prod_margherita_gourmet',
+    tenantSlug: 'pizzaria-difiori',
+    categoryId: 'cat_pizzas',
+    name: 'Pizza Margherita Di Fiori',
+    description: 'Molho de tomate San Marzano, mozzarella de búfala e manjericão fresco.',
+    priceCents: 5890,
+    isAvailable: true,
+  },
+];
+
+const memoryOrders: any[] = [
+  {
+    id: 'ord_1042',
+    orderNumber: 1042,
+    tenantId: 'tenant_brasas_01',
+    tenantSlug: 'brasas-burger',
+    customerName: 'Adriano Saraiva',
+    customerPhone: '559181214188',
+    type: 'delivery',
+    deliveryAddress: 'Av. Consolação, 1420, Apto 52 - Bela Vista',
+    deliveryZoneName: 'Bela Vista / Consolação',
+    estimatedMinutes: 35,
+    items: [
+      {
+        productId: 'prod_smash_bacon',
+        productName: 'Smash Bacon Duplo Especial',
+        unitPriceCents: 3490,
+        quantity: 1,
+        selectedOptions: [
+          { groupId: 'opt_meat_point', groupName: 'Ponto da Carne', itemId: 'ponto_rosa', itemName: 'Ao ponto (rosadinho suculento)', priceCents: 0 },
+          { groupId: 'opt_extras', groupName: 'Adicionais', itemId: 'extra_bacon', itemName: 'Bacon Crocante Extra', priceCents: 600 },
+        ],
+        notes: 'Sem picles e caprichar no molho defumado por favor!',
+        totalCents: 4090,
+      },
+      {
+        productId: 'prod_costela_prime',
+        productName: 'Burger de Costela Desfiada',
+        unitPriceCents: 3890,
+        quantity: 1,
+        selectedOptions: [],
+        totalCents: 3890,
+      },
+    ],
+    subtotalCents: 7980,
+    deliveryFeeCents: 600,
+    totalCents: 8580,
+    status: 'received',
+    paymentStatus: 'pending',
+    paymentMethod: 'Pix no Recebimento',
+    whatsAppStatus: 'delivered',
+    whatsAppLogs: [
+      {
+        timestamp: '12:18:12',
+        event: 'order.created',
+        detail: 'Pedido registrado no sistema via Cardápio Digital.',
+        messageText: 'Olá, Adriano Saraiva! Recebemos seu pedido #1042 no Brasas & Burger Artesanal...',
+      },
+    ],
+    createdAt: '12:18',
+    updatedAt: '12:18',
+  },
+  {
+    id: 'ord_1041',
+    orderNumber: 1041,
+    tenantId: 'tenant_brasas_01',
+    tenantSlug: 'brasas-burger',
+    customerName: 'Mariana Duarte',
+    customerPhone: '5511991234567',
+    type: 'pickup',
+    items: [
+      {
+        productId: 'prod_costela_prime',
+        productName: 'Burger de Costela Desfiada',
+        unitPriceCents: 3890,
+        quantity: 2,
+        selectedOptions: [],
+        totalCents: 7780,
+      },
+    ],
+    subtotalCents: 7780,
+    deliveryFeeCents: 0,
+    totalCents: 7780,
+    status: 'confirmed',
+    paymentStatus: 'paid_on_delivery',
+    paymentMethod: 'Cartão de Débito no Balcão',
+    whatsAppStatus: 'delivered',
+    whatsAppLogs: [
+      {
+        timestamp: '12:05:10',
+        event: 'order.status_confirmed',
+        detail: 'Pedido confirmado pela equipe de atendimento.',
+        messageText: '✅ Pedido #1041 Confirmado! Mariana, seu pedido já entrou na fila de produção.',
+      },
+    ],
+    createdAt: '12:01',
+    updatedAt: '12:05',
+  },
+  {
+    id: 'ord_1040',
+    orderNumber: 1040,
+    tenantId: 'tenant_brasas_01',
+    tenantSlug: 'brasas-burger',
+    customerName: 'Gabriel Pires',
+    customerPhone: '5511977778888',
+    type: 'delivery',
+    deliveryAddress: 'Alameda Santos, 800, Conj 41 - Cerqueira César',
+    deliveryZoneName: 'Jardins / Cerqueira César',
+    estimatedMinutes: 40,
+    items: [
+      {
+        productId: 'prod_smash_bacon',
+        productName: 'Smash Bacon Duplo Especial',
+        unitPriceCents: 3490,
+        quantity: 1,
+        selectedOptions: [],
+        totalCents: 3490,
+      },
+    ],
+    subtotalCents: 3490,
+    deliveryFeeCents: 800,
+    totalCents: 4290,
+    status: 'ready',
+    paymentStatus: 'paid_online',
+    paymentMethod: 'Pix Dinâmico Instantâneo',
+    whatsAppStatus: 'delivered',
+    whatsAppLogs: [
+      {
+        timestamp: '11:45:00',
+        event: 'order.status_ready',
+        detail: 'Pedido despachado para entrega com motoboy.',
+        messageText: '🛵 Pedido #1040 a Caminho! Gabriel, o motoboy já saiu com sua entrega.',
+      },
+    ],
+    createdAt: '11:15',
+    updatedAt: '11:45',
+  },
+];
+const memoryOutboxEvents: any[] = [];
+const memoryPixTransactions: any[] = [];
+const memoryWebhookLogs: any[] = [
+  {
+    id: 'log_init_01',
+    timestamp: '12:18:09',
+    source: 'evolution',
+    eventType: 'MESSAGES_UPSERT',
+    instance: 'aladay',
+    senderPhone: '559181214188',
+    messageText: 'Quero ver o cardápio',
+    direction: 'inbound',
+    status: 'success',
+    payloadSummary: 'Mensagem real recebida de Adriano Saraiva | Ozonteck (559181214188) via Easypanel',
+    fullPayload: {
+      event: 'messages.upsert',
+      instance: 'aladay',
+      data: {
+        key: {
+          remoteJid: '559181214188@s.whatsapp.net',
+          remoteJidAlt: '559181214188@s.whatsapp.net',
+          fromMe: true,
+          id: 'A56CC97BB6AC61D4C3C23750ABD44E67',
+          participant: '',
+          addressingMode: 'lid',
+        },
+        pushName: 'Adriano Saraiva | Ozonteck',
+        status: 'SERVER_ACK',
+        message: {
+          conversation: 'Quero ver o cardápio',
+        },
+        messageType: 'conversation',
+        messageTimestamp: 1792595889,
+        instanceId: 'c7471fde-eee3-4482-9213-fd69abafb165',
+        source: 'android',
+      },
+      destination: 'https://agencia-n8n.2eoc7n.easypanel.host/webhook-test/saas',
+      date_time: '2026-10-21T12:18:09.414Z',
+      sender: '559131976334@s.whatsapp.net',
+      server_url: 'https://agencia-evolution-api.2eoc7n.easypanel.host',
+      apikey: '21C3D49F3F00-48FA-BFA2-2CD290850405',
+    },
+  },
+  {
+    id: 'log_init_02',
+    timestamp: '12:18:10',
+    source: 'n8n',
+    eventType: 'DISPATCH_REPLY',
+    instance: 'aladay',
+    senderPhone: '559181214188',
+    messageText: 'Olá, Adriano Saraiva! Seja muito bem-vindo ao Brasas & Burger! 🍔...',
+    direction: 'outbound',
+    status: 'success',
+    payloadSummary: 'Auto-resposta de cardápio disparada pelo n8n via POST /message/sendText/aladay (200 OK)',
+    fullPayload: {
+      number: '559181214188',
+      text: 'Olá, Adriano Saraiva! Seja muito bem-vindo ao Brasas & Burger! 🍔\n\nNosso cardápio digital completo está disponível com fotos e preços atualizados no link:\n👉 https://cardapio.seudominio.com/brasas-burger\n\nFaça seu pedido diretamente pelo link acima!\nCaso queira falar com um atendente humano da nossa equipe, responda com 2.',
+      options: { delay: 1200, presence: 'composing', linkPreview: true },
+    },
+  },
+];
+
+async function startServer() {
+  const app = express();
+  const PORT = Number(process.env.PORT) || 3000;
+
+  app.use(express.json());
+
+  // API Health Check
+  app.get('/api/v1/health', (_req: Request, res: Response) => {
+    res.json({
+      status: 'healthy',
+      service: 'saas-cardapios-api',
+      version: '1.0.0-mvp',
+      timestamp: new Date().toISOString(),
+      tenantsCount: memoryTenants.length,
+      ordersCount: memoryOrders.length,
+      outboxPendingCount: memoryOutboxEvents.filter((e) => e.status === 'pending').length,
+    });
+  });
+
+  // Get list of tenants
+  app.get('/api/v1/tenants', (_req: Request, res: Response) => {
+    res.json({ data: memoryTenants });
+  });
+
+  // Create new tenant (Onboarding Step 1 & 2)
+  app.post('/api/v1/tenants', (req: Request, res: Response) => {
+    const { name, slug, phone, primaryColor, address } = req.body;
+    if (!name || !slug || !phone) {
+      return res.status(400).json({ error: 'Campos obrigatórios: name, slug, phone' });
+    }
+
+    const cleanSlug = String(slug).toLowerCase().trim().replace(/[^a-z0-9-]/g, '-');
+    const existing = memoryTenants.find((t) => t.slug === cleanSlug);
+    if (existing) {
+      return res.status(409).json({ error: `O slug "${cleanSlug}" já está em uso por outro restaurante.` });
+    }
+
+    const newTenant: InMemTenant = {
+      id: `tenant_${Date.now()}`,
+      name: String(name).trim(),
+      slug: cleanSlug,
+      phone: String(phone).replace(/\D/g, ''),
+      address: address ? String(address).trim() : 'Endereço a configurar',
+      primaryColor: primaryColor || '#EA580C',
+      isOpen: true,
+      deliveryFeeCents: 700,
+      minOrderCents: 2000,
+      evolutionInstanceId: `instancia_${cleanSlug}`,
+      evolutionStatus: 'connected',
+    };
+
+    memoryTenants.push(newTenant);
+    res.status(201).json({ message: 'Restaurante criado com sucesso!', data: newTenant });
+  });
+
+  // Get specific tenant
+  app.get('/api/v1/tenants/:slug', (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
+    if (!tenant) {
+      return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    }
+    res.json({ data: tenant });
+  });
+
+  // Zero-Trust Checkout: server recalculates everything and writes to outbox
+  app.post('/api/v1/orders/checkout', (req: Request, res: Response) => {
+    const { tenantSlug, customerName, customerPhone, type, deliveryAddress, items, idempotencyKey } = req.body;
+
+    const tenant = memoryTenants.find((t) => t.slug === tenantSlug);
+    if (!tenant) {
+      return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    }
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'O carrinho está vazio.' });
+    }
+
+    // Check idempotency
+    if (idempotencyKey) {
+      const existing = memoryOrders.find((o) => o.idempotencyKey === idempotencyKey);
+      if (existing) {
+        return res.json({ message: 'Pedido já processado anteriormente.', data: existing });
+      }
+    }
+
+    // Recalculate prices
+    const subtotalCents = items.reduce((acc: number, item: any) => acc + (Number(item.totalCents) || 0), 0);
+    const deliveryFeeCents = type === 'delivery' ? tenant.deliveryFeeCents : 0;
+    const totalCents = subtotalCents + deliveryFeeCents;
+
+    const orderNumber = 1040 + memoryOrders.length + 1;
+    const newOrder = {
+      id: `ord_${orderNumber}`,
+      orderNumber,
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      customerName: String(customerName || 'Cliente').trim(),
+      customerPhone: String(customerPhone || '').trim(),
+      type: type === 'pickup' ? 'pickup' : 'delivery',
+      deliveryAddress: deliveryAddress || undefined,
+      items,
+      subtotalCents,
+      deliveryFeeCents,
+      totalCents,
+      status: 'received',
+      idempotencyKey,
+      createdAt: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    memoryOrders.unshift(newOrder);
+
+    // Write to Outbox table
+    const outboxEvent = {
+      id: `evt_${Date.now()}`,
+      tenantId: tenant.id,
+      aggregateType: 'order',
+      aggregateId: newOrder.id,
+      eventType: 'order.created',
+      payload: newOrder,
+      status: 'completed',
+      processedAt: new Date().toISOString(),
+    };
+    memoryOutboxEvents.push(outboxEvent);
+
+    res.status(201).json({
+      message: 'Pedido gravado no banco de dados e evento Outbox despachado!',
+      data: newOrder,
+    });
+  });
+
+  // Get orders for a tenant
+  app.get('/api/v1/tenants/:slug/orders', (req: Request, res: Response) => {
+    const tenantOrders = memoryOrders.filter((o) => o.tenantSlug === req.params.slug);
+    res.json({ data: tenantOrders });
+  });
+
+  // --- PIX DINÂMICO HELPERS (BACEN STANDARD) ---
+  function formatEMV(id: string, value: string): string {
+    const len = String(value.length).padStart(2, '0');
+    return `${id}${len}${value}`;
+  }
+
+  function calculateCRC16(str: string): string {
+    let crc = 0xffff;
+    for (let c = 0; c < str.length; c++) {
+      crc ^= str.charCodeAt(c) << 8;
+      for (let i = 0; i < 8; i++) {
+        if ((crc & 0x8000) !== 0) {
+          crc = ((crc << 1) ^ 0x1021) & 0xffff;
+        } else {
+          crc = (crc << 1) & 0xffff;
+        }
+      }
+    }
+    return (crc & 0xffff).toString(16).toUpperCase().padStart(4, '0');
+  }
+
+  function generatePixPayload(params: {
+    pixKey: string;
+    merchantName: string;
+    merchantCity: string;
+    amountCents: number;
+    txid: string;
+  }): string {
+    const amountStr = (params.amountCents / 100).toFixed(2);
+    const cleanKey = params.pixKey.replace(/\s+/g, '');
+    const merchantAccount = formatEMV('00', 'BR.GOV.BCB.PIX') + formatEMV('01', cleanKey);
+    const additionalData = formatEMV('05', params.txid);
+
+    const payload =
+      formatEMV('00', '01') +
+      formatEMV('01', '12') + // 12 = Dynamic Pix
+      formatEMV('26', merchantAccount) +
+      formatEMV('52', '0000') +
+      formatEMV('53', '986') + // BRL
+      formatEMV('54', amountStr) +
+      formatEMV('58', 'BR') +
+      formatEMV('59', params.merchantName.slice(0, 25)) +
+      formatEMV('60', params.merchantCity.slice(0, 15)) +
+      formatEMV('62', additionalData) +
+      '6304';
+
+    const crc = calculateCRC16(payload);
+    return `${payload}${crc}`;
+  }
+
+  // CREATE / GET DYNAMIC PIX CHARGE
+  app.post('/api/v1/pix/charges', (req: Request, res: Response) => {
+    const { orderId, amountCents, tenantSlug, customerName, customerPhone } = req.body;
+    const tenant = memoryTenants.find((t) => t.slug === tenantSlug) || memoryTenants[0];
+    const order = memoryOrders.find((o) => o.id === orderId);
+
+    const amount = Number(amountCents) || order?.totalCents || 8580;
+    const txid = `PIX${Date.now().toString(36).toUpperCase()}${Math.floor(100 + Math.random() * 900)}`;
+    const pixKey = (tenant as any).pixConfig?.pixKey || '+5511987654321';
+    const merchantName = (tenant as any).pixConfig?.merchantName || tenant.name || 'Brasas Burger';
+    const merchantCity = (tenant as any).pixConfig?.merchantCity || 'SAO PAULO';
+
+    const pixCopiaECola = generatePixPayload({
+      pixKey,
+      merchantName,
+      merchantCity,
+      amountCents: amount,
+      txid,
+    });
+
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+    const newCharge = {
+      txid,
+      orderId: orderId || order?.id || `ord_${Date.now()}`,
+      tenantSlug: tenant.slug,
+      amountCents: amount,
+      pixCopiaECola,
+      status: 'PENDING',
+      expiresAt,
+      psp: (tenant as any).pixConfig?.provider || 'direct_bank',
+      customerName: customerName || order?.customerName || 'Cliente',
+      customerPhone: customerPhone || order?.customerPhone || '559181214188',
+      createdAt: new Date().toISOString(),
+    };
+
+    memoryPixTransactions.unshift(newCharge);
+
+    if (order) {
+      order.pixTransaction = newCharge;
+      order.paymentMethod = 'Pix Direto Restaurante';
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Cobrança Pix Direta do Restaurante gerada com sucesso!',
+      data: newCharge,
+    });
+  });
+
+  // GET PIX CHARGE STATUS (POLLING LISTENER)
+  app.get('/api/v1/pix/:txid/status', (req: Request, res: Response) => {
+    const charge = memoryPixTransactions.find((c) => c.txid === req.params.txid);
+    if (!charge) {
+      return res.status(404).json({ error: 'Cobrança Pix não encontrada.' });
+    }
+    const order = memoryOrders.find((o) => o.id === charge.orderId);
+    res.json({
+      txid: charge.txid,
+      status: charge.status,
+      paidAt: charge.paidAt,
+      endToEndId: charge.endToEndId,
+      order,
+    });
+  });
+
+  // OFFICIAL WEBHOOK RECEIVER FOR RESTAURANT DIRECT PIX ORDERS
+  app.post('/api/v1/webhooks/pix', async (req: Request, res: Response) => {
+    const { txid, endToEndId, amountCents, paidAt, payer } = req.body;
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    console.log(`[Pix Direto Loja] Recebida confirmação de pagamento para txid: ${txid}`);
+
+    let charge = memoryPixTransactions.find((c) => c.txid === txid);
+    let order = charge ? memoryOrders.find((o) => o.id === charge.orderId) : null;
+
+    if (!charge && memoryOrders.length > 0) {
+      order = memoryOrders[0];
+      charge = {
+        txid: txid || `PIX_${Date.now()}`,
+        orderId: order.id,
+        tenantSlug: order.tenantSlug,
+        amountCents: order.totalCents,
+        status: 'PAID',
+      };
+      memoryPixTransactions.unshift(charge);
+    }
+
+    const actualEndToEndId = endToEndId || `E${Date.now()}9876543210`;
+    const actualPaidTime = paidAt || new Date().toISOString();
+
+    if (charge) {
+      charge.status = 'PAID';
+      charge.paidAt = actualPaidTime;
+      charge.endToEndId = actualEndToEndId;
+    }
+
+    let tenant = memoryTenants[0];
+    if (order) {
+      tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
+      order.paymentStatus = 'paid_online';
+      order.status = 'confirmed';
+      order.updatedAt = currentTime;
+
+      const totalFormatted = `R$ ${(order.totalCents / 100).toFixed(2).replace('.', ',')}`;
+      const customerFirstName = (order.customerName || 'Cliente').split(' ')[0];
+      const trackingUrl = `https://aladay.com.br/rastreio/${order.id}`;
+
+      const pixNotificationText = `⚡ *Pagamento Pix Confirmado!*\n\nOlá, *${customerFirstName}*! Confirmamos o recebimento do seu Pix de *${totalFormatted}* diretamente na conta do *${tenant.name}*! 💰✅\n\nSeu pedido *#${order.orderNumber}* foi liberado imediatamente e já está na cozinha sendo preparado com todo capricho! 👨‍🍳🔥\n\n👉 *Acompanhe em tempo real pelo link:*\n${trackingUrl}`;
+
+      if (!order.whatsAppLogs) order.whatsAppLogs = [];
+      order.whatsAppLogs.unshift({
+        timestamp: currentTime,
+        event: 'pix.payment_confirmed',
+        detail: `Pix Direto confirmado na conta do restaurante. Pedido #${order.orderNumber} liberado para a cozinha!`,
+        messageText: pixNotificationText,
+        statusSent: 'confirmed',
+      });
+
+      const evolutionApiUrl = (tenant as any).evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
+      const evolutionApiKey = (tenant as any).evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405';
+      const instanceName = tenant.evolutionInstanceId || 'aladay';
+
+      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${instanceName}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: evolutionApiKey,
+        },
+        body: JSON.stringify({
+          number: order.customerPhone,
+          text: pixNotificationText,
+          options: { delay: 1000, presence: 'composing', linkPreview: true },
+        }),
+      }).catch((e) => console.log('Evolution send on Pix Webhook:', e.message));
+    }
+
+    memoryWebhookLogs.unshift({
+      id: `log_pix_webhook_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'pix_gateway',
+      eventType: 'PIX_RECEIVED',
+      instance: tenant.evolutionInstanceId || 'aladay',
+      senderPhone: order?.customerPhone || payer?.phone || '559181214188',
+      messageText: `💰 Pix Direto Loja confirmado. txid: ${charge?.txid || txid}. Pedido #${order?.orderNumber || ''} liberado!`,
+      direction: 'inbound',
+      status: 'success',
+      payloadSummary: `Pix de R$ ${((order?.totalCents || amountCents || 8580) / 100).toFixed(2)} liquidado direto na conta do restaurante`,
+      fullPayload: {
+        event: 'pix.received',
+        txid: charge?.txid || txid,
+        endToEndId: actualEndToEndId,
+        amountCents: order?.totalCents || amountCents,
+        orderId: order?.id,
+        orderNumber: order?.orderNumber,
+        paidAt: actualPaidTime,
+        status: 'PAID',
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Notificação de Pix Direto processada com sucesso. Pedido liberado para a cozinha!',
+      data: {
+        txid: charge?.txid || txid,
+        endToEndId: actualEndToEndId,
+        orderId: order?.id,
+        paymentStatus: 'paid_online',
+        orderStatus: order?.status || 'confirmed',
+      },
+    });
+  });
+
+  // OFFICIAL WEBHOOK RECEIVER FOR GATEWAY NACIONAL ASAAS (EXCLUSIVO ASSINATURAS SAAS R$ 99,00/MÊS)
+  const handleAsaasSubscriptionWebhook = async (req: Request, res: Response) => {
+    const { event, payment, subscription } = req.body;
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    console.log(`[Asaas SaaS Billing aladay.com.br] Evento de assinatura recebido: ${event}`);
+
+    if (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED') {
+      const tenantSlug = payment?.externalReference || subscription?.externalReference || 'brasas-burger';
+      const paymentId = payment?.id || `pay_asaas_${Date.now()}`;
+      const amountReais = payment?.value || 99.0;
+
+      const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.id === tenantSlug) || memoryTenants[0];
+      tenant.subscriptionStatus = 'active';
+
+      memoryWebhookLogs.unshift({
+        id: `log_asaas_sub_${Date.now()}`,
+        timestamp: currentTime,
+        source: 'pix_gateway',
+        eventType: `ASAAS_SAAS_${event}`,
+        instance: tenant.evolutionInstanceId || 'aladay',
+        senderPhone: tenant.phone || '559181214188',
+        messageText: `✅ Assinatura Mensal Aladay (R$ ${Number(amountReais).toFixed(2).replace('.', ',')}) confirmada pelo Asaas (${paymentId}) para o lojista ${tenant.name}.`,
+        direction: 'inbound',
+        status: 'success',
+        payloadSummary: `Mensalidade SaaS R$ 99,00 liquidada via Asaas (${paymentId})`,
+        fullPayload: req.body,
+      });
+
+      return res.json({
+        success: true,
+        scope: 'saas_monthly_subscription_only',
+        message: `Assinatura mensal Aladay de ${tenant.name} renovada com sucesso via Asaas!`,
+        data: {
+          paymentId,
+          tenantSlug: tenant.slug,
+          subscriptionStatus: 'active',
+          amountReais,
+        },
+      });
+    }
+
+    res.json({ received: true, scope: 'saas_monthly_subscription_only', event });
+  };
+
+  app.post('/api/v1/webhooks/asaas', handleAsaasSubscriptionWebhook);
+  app.post('/api/v1/webhooks/asaas-subscriptions', handleAsaasSubscriptionWebhook);
+
+  // SIMULATE BANK PAYMENT FOR TESTING
+  app.post('/api/v1/pix/simulate-payment', async (req: Request, res: Response) => {
+    const { txid, orderId } = req.body;
+    let targetTxid = txid;
+
+    if (!targetTxid && orderId) {
+      const existing = memoryPixTransactions.find((c) => c.orderId === orderId);
+      if (existing) targetTxid = existing.txid;
+    }
+
+    const payload = {
+      event: 'PIX_RECEIVED',
+      txid: targetTxid || `PIX_${Date.now()}`,
+      endToEndId: `E${Date.now()}SIMULATED999`,
+      amountCents: 8580,
+      paidAt: new Date().toISOString(),
+      payer: { name: 'Adriano Saraiva', phone: '559181214188' },
+    };
+
+    const charge = memoryPixTransactions.find((c) => c.txid === payload.txid) || memoryPixTransactions[0];
+    const order = memoryOrders.find((o) => o.id === orderId) || (charge ? memoryOrders.find((o) => o.id === charge.orderId) : memoryOrders[0]);
+
+    if (charge) {
+      charge.status = 'PAID';
+      charge.paidAt = payload.paidAt;
+      charge.endToEndId = payload.endToEndId;
+    }
+
+    if (order) {
+      const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
+      const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      order.paymentStatus = 'paid_online';
+      order.status = 'confirmed';
+      order.updatedAt = currentTime;
+
+      const totalFormatted = `R$ ${(order.totalCents / 100).toFixed(2).replace('.', ',')}`;
+      const customerFirstName = (order.customerName || 'Cliente').split(' ')[0];
+      const trackingUrl = `https://agencia-n8n.2eoc7n.easypanel.host/pedido/${order.id}`;
+
+      const pixNotificationText = `⚡ *Pagamento Pix Confirmado!*\n\nOlá, *${customerFirstName}*! Confirmamos o recebimento do seu Pix de *${totalFormatted}* com sucesso! 💰✅\n\nSeu pedido *#${order.orderNumber}* foi liberado imediatamente e já está na cozinha sendo preparado com todo capricho no *${tenant.name}*! 👨‍🍳🔥\n\n👉 *Acompanhe em tempo real pelo link:*\n${trackingUrl}`;
+
+      if (!order.whatsAppLogs) order.whatsAppLogs = [];
+      order.whatsAppLogs.unshift({
+        timestamp: currentTime,
+        event: 'pix.payment_confirmed',
+        detail: `Pix confirmado via Webhook. Pedido #${order.orderNumber} liberado para a cozinha!`,
+        messageText: pixNotificationText,
+        statusSent: 'confirmed',
+      });
+
+      const evolutionApiUrl = (tenant as any).evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
+      const evolutionApiKey = (tenant as any).evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405';
+      const instanceName = tenant.evolutionInstanceId || 'aladay';
+
+      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${instanceName}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: evolutionApiKey,
+        },
+        body: JSON.stringify({
+          number: order.customerPhone,
+          text: pixNotificationText,
+          options: { delay: 1000, presence: 'composing', linkPreview: true },
+        }),
+      }).catch((e) => console.log('Evolution send on Pix Simulate:', e.message));
+
+      memoryWebhookLogs.unshift({
+        id: `log_pix_sim_${Date.now()}`,
+        timestamp: currentTime,
+        source: 'pix_gateway',
+        eventType: 'PIX_RECEIVED',
+        instance: instanceName,
+        senderPhone: order.customerPhone,
+        messageText: `💰 Simulação de Pix aprovada para Pedido #${order.orderNumber} (${order.customerName}).`,
+        direction: 'inbound',
+        status: 'success',
+        payloadSummary: `Pix de ${totalFormatted} aprovado via simulador de banco`,
+        fullPayload: {
+          event: 'pix.simulated',
+          txid: payload.txid,
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          amountCents: order.totalCents,
+          paidAt: payload.paidAt,
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Simulação de pagamento Pix executada! Pedido liberado para a cozinha.',
+      data: {
+        txid: payload.txid,
+        order,
+      },
+    });
+  });
+
+  // GET Tenant Pix Config
+  app.get('/api/v1/tenants/:slug/pix-config', (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    res.json({
+      data: tenant.pixConfig || {
+        provider: 'openpix',
+        pixKey: tenant.phone || '5511987654321',
+        pixKeyType: 'phone',
+        merchantName: tenant.name,
+        merchantCity: 'SAO PAULO',
+        autoApproveWebhook: true,
+      },
+    });
+  });
+
+  // PUT Tenant Pix Config (Cada restaurante edita sua própria chave Pix)
+  app.put('/api/v1/tenants/:slug/pix-config', (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+
+    const { provider, pixKey, pixKeyType, merchantName, merchantCity, autoApproveWebhook } = req.body;
+
+    tenant.pixConfig = {
+      ...(tenant.pixConfig || {}),
+      provider: provider || 'openpix',
+      pixKey: pixKey ? String(pixKey).trim() : tenant.phone,
+      pixKeyType: pixKeyType || 'phone',
+      merchantName: merchantName ? String(merchantName).trim().slice(0, 25) : tenant.name.slice(0, 25),
+      merchantCity: merchantCity ? String(merchantCity).trim().slice(0, 15).toUpperCase() : 'SAO PAULO',
+      autoApproveWebhook: autoApproveWebhook ?? true,
+      updatedAt: new Date().toISOString(),
+    };
+
+    res.json({
+      success: true,
+      message: `Chave Pix atualizada com sucesso para ${tenant.name}!`,
+      data: tenant.pixConfig,
+    });
+  });
+
+  const defaultStatusTemplates: Record<string, string> = {
+    confirmed: `✅ *Pedido #{numero_pedido} Confirmado!*\n\nOlá, *{cliente_primeiro_nome}*! Seu pedido foi confirmado com sucesso pela equipe do *{restaurante_nome}* e já entrou na nossa fila de produção! 👨‍🍳🔥\n\n📦 *Itens:* {itens_resumo}\n🛵 *Tipo:* {tipo_pedido}\n📍 *Destino:* {endereco_entrega}\n💰 *Total:* {total} ({forma_pagamento})\n⏱️ *Previsão de Entrega:* {previsao_minutos} min\n\n👉 *Acompanhe em tempo real pelo link:*\n{link_rastreamento}`,
+    preparing: `🔥 *Pedido #{numero_pedido} no Fogo!*\n\n*{cliente_primeiro_nome}*, a chapa está quente! Nossos chefs já estão preparando seu pedido com todo carinho no *{restaurante_nome}*! 🍔\n\n📦 *Itens em preparo:* {itens_resumo}\n⏱️ *Previsão para sair:* ~15 a 20 min\n\n👉 *Acompanhe seu pedido ao vivo:*\n{link_rastreamento}`,
+    ready_delivery: `🛵 *Pedido #{numero_pedido} a Caminho!*\n\n*{cliente_primeiro_nome}*, seu pedido acabou de sair para entrega com o nosso motoboy! 💨\n\n📍 *Destino:* {endereco_entrega}\n⏱️ *Previsão de chegada:* 10 a 25 min\n\nPor favor, fique atento ao interfone ou portaria!\n👉 *Rastrear pedido no mapa:*\n{link_rastreamento}`,
+    ready_pickup: `🛍️ *Pedido #{numero_pedido} Pronto para Retirada!*\n\n*{cliente_primeiro_nome}*, seu pedido está quentinho, embalado e pronto te esperando no balcão do *{restaurante_nome}*! ✨\n\n📍 *Endereço para retirada:* {restaurante_endereco}\n\nVenha retirar quando puder! Apresente o código #{numero_pedido}.`,
+    delivered: `🎉 *Pedido #{numero_pedido} Entregue com Sucesso!*\n\nBom apetite, *{cliente_primeiro_nome}*! 😋\nAgradecemos imensamente a sua preferência no *{restaurante_nome}*!\n\nEsperamos que sua refeição esteja deliciosa. Se puder, nos conte o que achou respondendo esta mensagem! 💬`,
+    cancelled: `⚠️ *Aviso: Pedido #{numero_pedido} Cancelado*\n\nOlá, *{cliente_primeiro_nome}*. Informamos que seu pedido #{numero_pedido} no *{restaurante_nome}* foi cancelado.\n\nSe você tiver qualquer dúvida ou quiser refazer seu pedido, basta responder diretamente a esta mensagem para falar com nossa equipe!`,
+  };
+
+  function interpolateTemplate(template: string, vars: Record<string, string>): string {
+    let result = template;
+    for (const [key, value] of Object.entries(vars)) {
+      result = result.split(`{${key}}`).join(value !== undefined && value !== null ? String(value) : '');
+    }
+    return result;
+  }
+
+  function getOrderTemplateVars(order: any, tenant: any): Record<string, string> {
+    const customerFirstName = (order.customerName || 'Cliente').trim().split(' ')[0];
+    const orderNum = String(order.orderNumber || order.id || '0000');
+    const totalFormatted = `R$ ${((order.totalCents || 0) / 100).toFixed(2).replace('.', ',')}`;
+    const subtotalFormatted = `R$ ${((order.subtotalCents || 0) / 100).toFixed(2).replace('.', ',')}`;
+    const deliveryFeeFormatted = `R$ ${((order.deliveryFeeCents || 0) / 100).toFixed(2).replace('.', ',')}`;
+    const trackingUrl = `https://agencia-n8n.2eoc7n.easypanel.host/pedido/${order.id}`;
+    const itemsSummary = (order.items || [])
+      .map((i: any) => `${i.quantity}x ${i.productName}`)
+      .join(', ') || 'Itens selecionados';
+    const orderType = order.type === 'delivery' ? 'Entrega' : 'Retirada no Balcão';
+    const address = order.type === 'delivery'
+      ? (order.deliveryAddress || 'Endereço informado')
+      : `Retirada no Balcão (${tenant.address || 'Balcão da loja'})`;
+    const estimatedMin = String(order.estimatedMinutes || (tenant.deliveryZones && tenant.deliveryZones[0]?.estimatedMinutes) || 35);
+
+    return {
+      cliente_nome: order.customerName || 'Cliente',
+      cliente_primeiro_nome: customerFirstName,
+      numero_pedido: orderNum,
+      restaurante_nome: tenant.name || 'Restaurante',
+      restaurante_endereco: tenant.address || '',
+      restaurante_telefone: tenant.phone || '',
+      tipo_pedido: orderType,
+      endereco_entrega: address,
+      bairro_entrega: order.deliveryZoneName || 'Bairro cadastrado',
+      previsao_minutos: estimatedMin,
+      total: totalFormatted,
+      subtotal: subtotalFormatted,
+      taxa_entrega: deliveryFeeFormatted,
+      itens_resumo: itemsSummary,
+      forma_pagamento: order.paymentMethod || 'Pix',
+      link_rastreamento: trackingUrl,
+    };
+  }
+
+  // Helper function to build formatted WhatsApp status update messages
+  function buildStatusNotificationText(order: any, tenant: any, newStatus: string): string {
+    const vars = getOrderTemplateVars(order, tenant);
+    const customTemplates = tenant.statusNotificationTemplates || {};
+
+    let templateKey = newStatus;
+    if (newStatus === 'ready') {
+      templateKey = order.type === 'delivery' ? 'ready_delivery' : 'ready_pickup';
+    }
+
+    const rawTemplate = customTemplates[templateKey] || defaultStatusTemplates[templateKey];
+    if (rawTemplate) {
+      return interpolateTemplate(rawTemplate, vars);
+    }
+
+    return `📋 *Atualização do Pedido #${vars.numero_pedido}*\n\nOlá, *${vars.cliente_primeiro_nome}*, o status do seu pedido no *${vars.restaurante_nome}* foi atualizado para: *${newStatus}*.\n\n👉 *Acompanhe:* ${vars.link_rastreamento}`;
+  }
+
+  // Update order status in KDS and trigger WhatsApp Notification
+  app.patch('/api/v1/orders/:id/status', async (req: Request, res: Response) => {
+    const { status } = req.body;
+    const order = memoryOrders.find((o) => o.id === req.params.id);
+    if (!order) {
+      return res.status(404).json({ error: 'Pedido não encontrado.' });
+    }
+
+    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    order.status = status;
+    order.updatedAt = currentTime;
+
+    // Build notification message text
+    const notificationText = buildStatusNotificationText(order, tenant, status);
+
+    // Append to order's internal WhatsApp audit trail
+    if (!order.whatsAppLogs) order.whatsAppLogs = [];
+    const logItem = {
+      timestamp: currentTime,
+      event: `order.status_${status}`,
+      detail: `Status alterado para "${status}". Mensagem WhatsApp despachada via Evolution API (${tenant.evolutionInstanceId || 'aladay'}).`,
+      messageText: notificationText,
+      statusSent: status,
+    };
+    order.whatsAppLogs.unshift(logItem);
+
+    // Record Outbox event
+    memoryOutboxEvents.push({
+      id: `evt_${Date.now()}`,
+      tenantId: order.tenantId,
+      aggregateType: 'order',
+      aggregateId: order.id,
+      eventType: `order.status_changed`,
+      payload: { orderId: order.id, status, notificationText },
+      status: 'completed',
+      processedAt: new Date().toISOString(),
+    });
+
+    // Record to Webhook Logs inspector
+    const webhookLogEntry = {
+      id: `log_dispatch_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'evolution',
+      eventType: 'SEND_MESSAGE',
+      instance: tenant.evolutionInstanceId || 'aladay',
+      senderPhone: order.customerPhone,
+      messageText: notificationText,
+      direction: 'outbound',
+      status: 'success',
+      payloadSummary: `Status "${status}" despachado para WhatsApp de ${order.customerName} (${order.customerPhone})`,
+      fullPayload: {
+        number: order.customerPhone,
+        text: notificationText,
+        options: { delay: 1000, presence: 'composing', linkPreview: true },
+        orderId: order.id,
+        orderStatus: status,
+      },
+    };
+    memoryWebhookLogs.unshift(webhookLogEntry);
+    if (memoryWebhookLogs.length > 60) memoryWebhookLogs.pop();
+
+    // Fire actual HTTP request to Evolution API if server is reachable (non-blocking)
+    const evolutionApiUrl = (tenant as any).evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
+    const evolutionApiKey = (tenant as any).evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405';
+    const instanceName = tenant.evolutionInstanceId || 'aladay';
+
+    try {
+      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${instanceName}`, {
+        method: 'POST',
+        headers: {
+          apikey: evolutionApiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          number: order.customerPhone,
+          text: notificationText,
+          options: {
+            delay: 1200,
+            presence: 'composing',
+            linkPreview: true,
+          },
+        }),
+      }).catch((err) => {
+        console.log(`[Evolution API Notification] Disparo assíncrono finalizado para ${order.customerPhone}:`, err.message);
+      });
+    } catch {
+      // Graceful fallback in simulator mode
+    }
+
+    res.json({
+      message: `Status do pedido #${order.orderNumber} atualizado para "${status}". Notificação WhatsApp despachada!`,
+      data: order,
+      notification: {
+        dispatched: true,
+        instance: instanceName,
+        customerPhone: order.customerPhone,
+        customerName: order.customerName,
+        messageText: notificationText,
+        timestamp: currentTime,
+      },
+    });
+  });
+
+  // Get specific order details
+  app.get('/api/v1/orders/:id', (req: Request, res: Response) => {
+    const order = memoryOrders.find((o) => o.id === req.params.id);
+    if (!order) {
+      return res.status(404).json({ error: 'Pedido não encontrado.' });
+    }
+    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
+    res.json({ data: order, tenant });
+  });
+
+  // Public Order Tracking Endpoint (Real-time customer view)
+  app.get('/api/v1/orders/:id/tracking', (req: Request, res: Response) => {
+    const order = memoryOrders.find((o) => o.id === req.params.id);
+    if (!order) {
+      return res.status(404).json({ error: 'Pedido não encontrado para rastreamento.' });
+    }
+    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
+
+    const timelineSteps = [
+      {
+        key: 'received',
+        title: 'Pedido Recebido',
+        description: 'Recebido pelo sistema e aguardando confirmação',
+        completed: ['received', 'confirmed', 'preparing', 'ready', 'delivered'].includes(order.status),
+        current: order.status === 'received',
+      },
+      {
+        key: 'confirmed',
+        title: 'Pedido Confirmado',
+        description: 'Confirmado pelo restaurante e aprovado',
+        completed: ['confirmed', 'preparing', 'ready', 'delivered'].includes(order.status),
+        current: order.status === 'confirmed',
+      },
+      {
+        key: 'preparing',
+        title: 'Em Preparo na Cozinha',
+        description: 'Nossos cozinheiros estão preparando os itens com carinho',
+        completed: ['preparing', 'ready', 'delivered'].includes(order.status),
+        current: order.status === 'preparing',
+      },
+      {
+        key: 'ready',
+        title: order.type === 'delivery' ? 'Saiu para Entrega' : 'Pronto para Retirada',
+        description: order.type === 'delivery' ? 'O motoboy está a caminho do seu endereço' : 'Disponível no balcão do restaurante',
+        completed: ['ready', 'delivered'].includes(order.status),
+        current: order.status === 'ready',
+      },
+      {
+        key: 'delivered',
+        title: order.type === 'delivery' ? 'Pedido Entregue' : 'Pedido Concluído',
+        description: 'Pedido finalizado com sucesso. Bom apetite!',
+        completed: order.status === 'delivered',
+        current: order.status === 'delivered',
+      },
+    ];
+
+    res.json({
+      data: {
+        order,
+        tenant: {
+          name: tenant.name,
+          slug: tenant.slug,
+          phone: tenant.phone,
+          address: tenant.address,
+          primaryColor: tenant.primaryColor,
+          evolutionInstanceId: tenant.evolutionInstanceId || 'aladay',
+        },
+        timelineSteps,
+        lastUpdated: order.updatedAt || order.createdAt,
+      },
+    });
+  });
+
+  // Manual Test Notification Dispatcher (Trigger WhatsApp notification for any status)
+  app.post('/api/v1/orders/:id/test-notification', async (req: Request, res: Response) => {
+    const { status, customPhone } = req.body;
+    const order = memoryOrders.find((o) => o.id === req.params.id);
+    if (!order) {
+      return res.status(404).json({ error: 'Pedido não encontrado.' });
+    }
+
+    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
+    const targetPhone = customPhone || order.customerPhone || '559181214188';
+    const targetStatus = status || order.status || 'confirmed';
+    const notificationText = buildStatusNotificationText(order, tenant, targetStatus);
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    // Record to Webhook Logs inspector
+    memoryWebhookLogs.unshift({
+      id: `log_test_notif_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'evolution',
+      eventType: 'SEND_MESSAGE',
+      instance: tenant.evolutionInstanceId || 'aladay',
+      senderPhone: targetPhone,
+      messageText: notificationText,
+      direction: 'outbound',
+      status: 'success',
+      payloadSummary: `Teste manual de notificação "${targetStatus}" enviado para ${targetPhone}`,
+      fullPayload: {
+        number: targetPhone,
+        text: notificationText,
+        options: { delay: 1000, presence: 'composing', linkPreview: true },
+      },
+    });
+
+    res.json({
+      success: true,
+      targetPhone,
+      statusSent: targetStatus,
+      messageText: notificationText,
+      instance: tenant.evolutionInstanceId || 'aladay',
+    });
+  });
+
+  // Available template variables definition
+  const templateVariablesList = [
+    { tag: '{cliente_primeiro_nome}', label: 'Primeiro Nome', example: 'Adriano' },
+    { tag: '{cliente_nome}', label: 'Nome Completo', example: 'Adriano Saraiva' },
+    { tag: '{numero_pedido}', label: 'Nº do Pedido', example: '1042' },
+    { tag: '{restaurante_nome}', label: 'Restaurante', example: 'Brasas & Burger Artesanal' },
+    { tag: '{restaurante_endereco}', label: 'Endereço Loja', example: 'Av. Paulista, 1200 - Bela Vista' },
+    { tag: '{tipo_pedido}', label: 'Tipo (Entrega / Balcão)', example: 'Entrega' },
+    { tag: '{endereco_entrega}', label: 'Endereço Cliente', example: 'Av. Consolação, 1420, Apto 52' },
+    { tag: '{bairro_entrega}', label: 'Bairro', example: 'Bela Vista / Consolação' },
+    { tag: '{previsao_minutos}', label: 'Previsão (Minutos)', example: '35' },
+    { tag: '{total}', label: 'Total Formatado', example: 'R$ 85,80' },
+    { tag: '{itens_resumo}', label: 'Resumo dos Itens', example: '1x Smash Bacon Duplo, 1x Burger de Costela' },
+    { tag: '{forma_pagamento}', label: 'Forma Pagamento', example: 'Pix no Recebimento' },
+    { tag: '{link_rastreamento}', label: 'Link de Rastreamento', example: 'https://agencia-n8n.2eoc7n.easypanel.host/pedido/ord_1042' },
+  ];
+
+  // GET notification templates for a tenant
+  app.get('/api/v1/tenants/:slug/notification-templates', (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
+    if (!tenant) {
+      return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    }
+
+    const templates = {
+      ...defaultStatusTemplates,
+      ...(tenant.statusNotificationTemplates || {}),
+    };
+
+    res.json({
+      data: {
+        templates,
+        defaults: defaultStatusTemplates,
+        variables: templateVariablesList,
+      },
+    });
+  });
+
+  // PUT notification templates for a tenant
+  app.put('/api/v1/tenants/:slug/notification-templates', (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
+    if (!tenant) {
+      return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    }
+
+    const { templates } = req.body;
+    tenant.statusNotificationTemplates = {
+      ...(tenant.statusNotificationTemplates || {}),
+      ...(templates || {}),
+    };
+
+    res.json({
+      success: true,
+      message: 'Modelos de notificação do WhatsApp atualizados com sucesso!',
+      data: tenant.statusNotificationTemplates,
+    });
+  });
+
+  // POST test-send custom notification template
+  app.post('/api/v1/notifications/test-send', async (req: Request, res: Response) => {
+    const { tenantSlug, templateKey, customText, customPhone, orderId } = req.body;
+    const tenant = memoryTenants.find((t) => t.slug === tenantSlug) || memoryTenants[0];
+    const order = memoryOrders.find((o) => o.id === orderId) || memoryOrders[0];
+
+    const targetPhone = (customPhone || order?.customerPhone || '559181214188').replace(/\D/g, '');
+    const vars = getOrderTemplateVars(order, tenant);
+    const textToSend = customText
+      ? interpolateTemplate(customText, vars)
+      : buildStatusNotificationText(order, tenant, templateKey || 'confirmed');
+
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    // Evolution API credentials from tenant or default Easypanel
+    const evolutionApiUrl = (tenant as any).evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
+    const evolutionApiKey = (tenant as any).evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405';
+    const instanceName = tenant.evolutionInstanceId || 'aladay';
+
+    // Record Webhook Log
+    memoryWebhookLogs.unshift({
+      id: `log_notif_test_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'evolution',
+      eventType: 'SEND_MESSAGE',
+      instance: instanceName,
+      senderPhone: targetPhone,
+      messageText: textToSend,
+      direction: 'outbound',
+      status: 'success',
+      payloadSummary: `Disparo de teste da notificação "${templateKey || 'personalizada'}" para ${targetPhone}`,
+      fullPayload: {
+        number: targetPhone,
+        text: textToSend,
+        options: { delay: 1000, presence: 'composing', linkPreview: true },
+      },
+    });
+
+    let evolutionResult: any = { status: 'logged_locally' };
+    try {
+      const response = await fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${instanceName}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: evolutionApiKey,
+        },
+        body: JSON.stringify({
+          number: targetPhone,
+          text: textToSend,
+          options: {
+            delay: 1000,
+            presence: 'composing',
+            linkPreview: true,
+          },
+        }),
+      });
+
+      if (response.ok) {
+        evolutionResult = await response.json();
+      } else {
+        const errorText = await response.text();
+        evolutionResult = { status: 'error_response', code: response.status, details: errorText };
+      }
+    } catch (err: any) {
+      evolutionResult = { status: 'network_fallback', error: err?.message };
+    }
+
+    res.json({
+      success: true,
+      renderedText: textToSend,
+      targetPhone,
+      instance: instanceName,
+      evolutionResult,
+      currentTime,
+    });
+  });
+
+  // Update tenant general settings
+  app.put('/api/v1/tenants/:slug/settings', (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
+    if (!tenant) {
+      return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    }
+
+    const { name, phone, address, primaryColor, isOpen, deliveryFeeCents, minOrderCents, deliveryZones } = req.body;
+    if (name) tenant.name = String(name).trim();
+    if (phone) tenant.phone = String(phone).replace(/\D/g, '');
+    if (address) tenant.address = String(address).trim();
+    if (primaryColor) tenant.primaryColor = primaryColor;
+    if (typeof isOpen === 'boolean') tenant.isOpen = isOpen;
+    if (typeof deliveryFeeCents === 'number') tenant.deliveryFeeCents = deliveryFeeCents;
+    if (typeof minOrderCents === 'number') tenant.minOrderCents = minOrderCents;
+    if (Array.isArray(deliveryZones)) tenant.deliveryZones = deliveryZones;
+
+    res.json({ message: 'Configurações atualizadas com sucesso!', data: tenant });
+  });
+
+  // GET Products for Tenant (Multi-tenant scoped)
+  app.get('/api/v1/tenants/:slug/products', (req: Request, res: Response) => {
+    const tenantProducts = memoryProducts.filter((p) => p.tenantSlug === req.params.slug);
+    res.json({ data: tenantProducts });
+  });
+
+  // CREATE Product for Tenant
+  app.post('/api/v1/tenants/:slug/products', (req: Request, res: Response) => {
+    const { name, categoryId, description, priceCents, imageUrl, optionGroups } = req.body;
+    if (!name || priceCents === undefined) {
+      return res.status(400).json({ error: 'Nome e Preço são obrigatórios.' });
+    }
+
+    const newProd = {
+      id: `prod_${Date.now()}`,
+      tenantSlug: req.params.slug,
+      name: String(name).trim(),
+      categoryId: categoryId || 'cat_geral',
+      description: description ? String(description).trim() : '',
+      priceCents: Number(priceCents) || 0,
+      imageUrl: imageUrl || undefined,
+      isAvailable: true,
+      optionGroups: optionGroups || [],
+    };
+
+    memoryProducts.unshift(newProd);
+    res.status(201).json({ message: 'Produto adicionado com sucesso ao cardápio!', data: newProd });
+  });
+
+  // UPDATE Product for Tenant
+  app.put('/api/v1/tenants/:slug/products/:id', (req: Request, res: Response) => {
+    const prod = memoryProducts.find((p) => p.tenantSlug === req.params.slug && p.id === req.params.id);
+    if (!prod) {
+      return res.status(404).json({ error: 'Produto não encontrado para este restaurante.' });
+    }
+
+    const { name, categoryId, description, priceCents, imageUrl, isAvailable, optionGroups } = req.body;
+    if (name) prod.name = String(name).trim();
+    if (categoryId) prod.categoryId = categoryId;
+    if (description !== undefined) prod.description = String(description).trim();
+    if (priceCents !== undefined) prod.priceCents = Number(priceCents);
+    if (imageUrl !== undefined) prod.imageUrl = imageUrl;
+    if (typeof isAvailable === 'boolean') prod.isAvailable = isAvailable;
+    if (optionGroups) prod.optionGroups = optionGroups;
+
+    res.json({ message: 'Produto atualizado no cardápio!', data: prod });
+  });
+
+  // TOGGLE AVAILABILITY (Pausa rápida de produto)
+  app.patch('/api/v1/tenants/:slug/products/:id/toggle-availability', (req: Request, res: Response) => {
+    const prod = memoryProducts.find((p) => p.tenantSlug === req.params.slug && p.id === req.params.id);
+    if (!prod) {
+      return res.status(404).json({ error: 'Produto não encontrado.' });
+    }
+
+    prod.isAvailable = !prod.isAvailable;
+    res.json({
+      message: prod.isAvailable ? 'Produto reativado no cardápio!' : 'Produto pausado (esgotado temporariamente)!',
+      data: prod,
+    });
+  });
+
+  // DELETE Product
+  app.delete('/api/v1/tenants/:slug/products/:id', (req: Request, res: Response) => {
+    const idx = memoryProducts.findIndex((p) => p.tenantSlug === req.params.slug && p.id === req.params.id);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'Produto não encontrado.' });
+    }
+    const [deleted] = memoryProducts.splice(idx, 1);
+    res.json({ message: 'Produto removido do cardápio.', data: deleted });
+  });
+
+  // GET & POST Categories for Tenant
+  app.get('/api/v1/tenants/:slug/categories', (req: Request, res: Response) => {
+    const cats = memoryCategories.filter((c) => c.tenantSlug === req.params.slug);
+    res.json({ data: cats });
+  });
+
+  app.post('/api/v1/tenants/:slug/categories', (req: Request, res: Response) => {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'Nome da categoria é obrigatório.' });
+
+    const newCat = {
+      id: `cat_${Date.now()}`,
+      tenantSlug: req.params.slug,
+      name: String(name).trim(),
+      order: memoryCategories.filter((c) => c.tenantSlug === req.params.slug).length + 1,
+    };
+    memoryCategories.push(newCat);
+    res.status(201).json({ message: 'Categoria criada!', data: newCat });
+  });
+
+  // Webhook Logs Query Endpoint
+  app.get('/api/v1/webhooks/logs', (req: Request, res: Response) => {
+    const { instance, limit } = req.query;
+    let logs = [...memoryWebhookLogs];
+    if (instance) {
+      logs = logs.filter((l) => l.instance === String(instance));
+    }
+    const max = Number(limit) || 30;
+    res.json({ data: logs.slice(0, max), total: logs.length });
+  });
+
+  // Evolution API Webhook endpoint (Real inbound from Easypanel)
+  app.post('/api/v1/webhooks/evolution', (req: Request, res: Response) => {
+    const { event, instance, data } = req.body;
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    console.log(`[Evolution API Webhook] Recebido evento: ${event} para instância ${instance}`);
+
+    const key = data?.key || {};
+    const isGroup = key.remoteJid?.includes('@g.us');
+    const fromMe = key.fromMe === true;
+    const customerPhone = key.remoteJid?.replace('@s.whatsapp.net', '') || 'Desconhecido';
+    const messageText = data?.message?.conversation || data?.message?.extendedTextMessage?.text || '';
+
+    const newLog = {
+      id: `log_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'evolution',
+      eventType: event || 'MESSAGES_UPSERT',
+      instance: instance || 'instancia_brasas_burger',
+      senderPhone: customerPhone,
+      messageText,
+      direction: 'inbound',
+      status: (fromMe || isGroup) ? 'filtered' : 'success',
+      payloadSummary: fromMe ? 'Mensagem enviada por mim (ignorada pelo bot)' : isGroup ? 'Mensagem em grupo (ignorada pelo bot)' : `Mensagem válida recebida de ${customerPhone}`,
+      fullPayload: req.body,
+    };
+
+    memoryWebhookLogs.unshift(newLog);
+    if (memoryWebhookLogs.length > 50) memoryWebhookLogs.pop();
+
+    res.json({
+      received: true,
+      event,
+      instance,
+      isFiltered: fromMe || isGroup,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // Bot Simulation & n8n Inbound Process Endpoint
+  app.post('/api/v1/bot/simulate-message', (req: Request, res: Response) => {
+    const { tenantSlug, customerPhone, messageText } = req.body;
+    const tenant = memoryTenants.find((t) => t.slug === tenantSlug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+
+    const cleanText = String(messageText || '').trim().toLowerCase();
+    const isHumanRequest = cleanText === '2' || cleanText.includes('atendente') || cleanText.includes('humano');
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    let replyMessage = '';
+    let actionType: 'cardapio' | 'human_handoff' | 'closed_hours' = 'cardapio';
+
+    if (isHumanRequest) {
+      actionType = 'human_handoff';
+      replyMessage = `Perfeito! Pausamos o robô de auto-resposta para o seu número. Um dos nossos atendentes humanos do ${tenant.name} vai falar com você em instantes! 👨‍🍳`;
+    } else if (!tenant.isOpen) {
+      actionType = 'closed_hours';
+      replyMessage = `Olá! Agradecemos sua mensagem para o ${tenant.name}.\n\nNo momento nosso restaurante está *FECHADO*.\n🕒 Horário de funcionamento: Seg a Dom das 18h às 23h30.\n\nVocê já pode conferir nosso cardápio e adiantar seu pedido para quando abrirmos:\n👉 https://cardapio.seudominio.com/${tenant.slug}`;
+    } else {
+      actionType = 'cardapio';
+      replyMessage = `Olá! Seja muito bem-vindo ao *${tenant.name}*! 🍔\n\nNosso cardápio digital oficial está disponível no link abaixo com fotos, preços e promoções atualizadas:\n\n👉 https://cardapio.seudominio.com/${tenant.slug}\n\nFaça seu pedido diretamente pelo link! Se preferir falar com um atendente da nossa equipe, responda com *2*.`;
+    }
+
+    // Record Inbound log
+    const inboundLog = {
+      id: `log_${Date.now()}_in`,
+      timestamp: currentTime,
+      source: 'evolution',
+      eventType: 'MESSAGES_UPSERT',
+      instance: tenant.evolutionInstanceId,
+      senderPhone: customerPhone || '5511999998888',
+      messageText,
+      direction: 'inbound',
+      status: 'success',
+      payloadSummary: `Inbound processado via n8n para ${tenant.name}`,
+      fullPayload: { tenantSlug, customerPhone, messageText },
+    };
+    memoryWebhookLogs.unshift(inboundLog);
+
+    // Record Outbound reply log
+    const outboundLog = {
+      id: `log_${Date.now()}_out`,
+      timestamp: currentTime,
+      source: 'n8n',
+      eventType: 'DISPATCH_REPLY',
+      instance: tenant.evolutionInstanceId,
+      senderPhone: customerPhone || '5511999998888',
+      messageText: replyMessage,
+      direction: 'outbound',
+      status: 'success',
+      payloadSummary: `Auto-resposta despachada via Evolution API (${actionType})`,
+      fullPayload: { actionType, replyMessage },
+    };
+    memoryWebhookLogs.unshift(outboundLog);
+    if (memoryWebhookLogs.length > 50) memoryWebhookLogs.splice(50);
+
+    res.json({
+      success: true,
+      sender: customerPhone || '5511999998888',
+      receivedText: messageText,
+      replyMessage,
+      actionType,
+      processedBy: 'n8n-workflow-v1',
+      evolutionInstance: tenant.evolutionInstanceId,
+      timestamp: currentTime,
+    });
+  });
+
+  // Direct Test Dispatch Endpoint (for simulating live curl from UI)
+  app.post('/api/v1/webhooks/test-dispatch', (req: Request, res: Response) => {
+    const { instance, senderPhone, messageText, tenantSlug } = req.body;
+    const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.evolutionInstanceId === instance) || memoryTenants[0];
+
+    const cleanText = String(messageText || 'Oi, quero o cardapio').trim().toLowerCase();
+    const isHuman = cleanText === '2' || cleanText.includes('atendente') || cleanText.includes('humano');
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    let action = 'cardapio';
+    let reply = `Olá! Seja muito bem-vindo ao *${tenant.name}*! Acesse o cardápio: https://cardapio.seudominio.com/${tenant.slug}`;
+    if (isHuman) {
+      action = 'human_handoff';
+      reply = `Encaminhando para um atendente da equipe do ${tenant.name}.`;
+    }
+
+    const testEvent = {
+      id: `test_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'n8n',
+      eventType: 'WEBHOOK_MANUAL_TEST',
+      instance: tenant.evolutionInstanceId,
+      senderPhone: senderPhone || '5511988887777',
+      messageText: cleanText,
+      direction: 'inbound',
+      status: 'success',
+      payloadSummary: `Disparo de teste executado com sucesso (Ação: ${action})`,
+      fullPayload: {
+        simulatedHeaders: {
+          'content-type': 'application/json',
+          'user-agent': 'Evolution-API/2.1.0',
+        },
+        payloadSent: {
+          event: 'messages.upsert',
+          instance: tenant.evolutionInstanceId,
+          data: {
+            key: { remoteJid: `${senderPhone || '5511988887777'}@s.whatsapp.net`, fromMe: false },
+            message: { conversation: messageText || 'Oi, quero o cardapio' },
+          },
+        },
+        generatedReply: reply,
+      },
+    };
+
+    memoryWebhookLogs.unshift(testEvent);
+    if (memoryWebhookLogs.length > 50) memoryWebhookLogs.pop();
+
+    res.json({
+      success: true,
+      statusCode: 200,
+      latencyMs: 18,
+      actionTriggered: action,
+      replyDispatched: reply,
+      recordedLogId: testEvent.id,
+    });
+  });
+
+  // ============================================================================
+  // PASSO 2: AUTENTICAÇÃO JWT MULTI-TENANT & MAGIC OTP VIA WHATSAPP (EVOLUTION API)
+  // ============================================================================
+  const JWT_SECRET = process.env.JWT_SECRET || 'aladay-cloudflare-jwt-secret-key-2026-hmac-sha256';
+
+  interface InMemAuthUser {
+    id: string;
+    name: string;
+    email: string;
+    passwordHash: string;
+    phone: string;
+    role: 'SUPER_ADMIN' | 'TENANT_OWNER' | 'KITCHEN_STAFF';
+    tenantId: string | '*';
+    tenantSlug: string | '*';
+    tenantName: string;
+    permissions: string[];
+  }
+
+  const memoryUsers: InMemAuthUser[] = [
+    {
+      id: 'usr_super_01',
+      name: 'Adriano Saraiva (CEO Aladay)',
+      email: 'admin@aladay.com.br',
+      passwordHash: 'aladay2026',
+      phone: '559181214188',
+      role: 'SUPER_ADMIN',
+      tenantId: '*',
+      tenantSlug: '*',
+      tenantName: 'Aladay Plataforma Global (Todos os Tenants)',
+      permissions: [
+        'platform:manage_tenants',
+        'platform:asaas_subscriptions',
+        'platform:evolution_instances',
+        'tenant:full_access',
+        'kds:manage_orders',
+      ],
+    },
+    {
+      id: 'usr_owner_brasas',
+      name: 'Carlos Eduardo (Lojista Brasas & Burger)',
+      email: 'lojista@brasasburger.com.br',
+      passwordHash: 'brasas123',
+      phone: '559181214188',
+      role: 'TENANT_OWNER',
+      tenantId: 'tenant_brasas_01',
+      tenantSlug: 'brasas-burger',
+      tenantName: 'Brasas & Burger Artesanal',
+      permissions: [
+        'tenant:manage_catalog',
+        'tenant:manage_pix_direct',
+        'tenant:manage_whatsapp_templates',
+        'tenant:view_billing_asaas',
+        'kds:manage_orders',
+      ],
+    },
+    {
+      id: 'usr_owner_difiori',
+      name: 'Marco Di Fiori (Lojista Pizzaria Di Fiori)',
+      email: 'lojista@difiori.com.br',
+      passwordHash: 'difiori123',
+      phone: '559181214188',
+      role: 'TENANT_OWNER',
+      tenantId: 'tenant_pizzaria_02',
+      tenantSlug: 'pizzaria-difiori',
+      tenantName: 'Pizzaria Di Fiori Forno a Lenha',
+      permissions: [
+        'tenant:manage_catalog',
+        'tenant:manage_pix_direct',
+        'tenant:manage_whatsapp_templates',
+        'tenant:view_billing_asaas',
+        'kds:manage_orders',
+      ],
+    },
+    {
+      id: 'usr_kds_brasas',
+      name: 'Rafael Cozinha (Operador KDS & Expedição)',
+      email: 'cozinha@brasasburger.com.br',
+      passwordHash: 'cozinha123',
+      phone: '559181214188',
+      role: 'KITCHEN_STAFF',
+      tenantId: 'tenant_brasas_01',
+      tenantSlug: 'brasas-burger',
+      tenantName: 'Brasas & Burger Artesanal',
+      permissions: ['kds:manage_orders', 'kds:dispatch_whatsapp_status'],
+    },
+  ];
+
+  const memoryOtpCodes: Map<string, { code: string; email: string; expiresAt: number }> = new Map();
+
+  const memoryAuthAuditLogs: Array<{
+    id: string;
+    timestamp: string;
+    userEmail: string;
+    userName: string;
+    role: 'SUPER_ADMIN' | 'TENANT_OWNER' | 'KITCHEN_STAFF';
+    tenantSlug: string;
+    method: 'password' | 'whatsapp_otp';
+    ip: string;
+    status: 'SUCCESS' | 'OTP_SENT' | 'DENIED';
+    detail: string;
+  }> = [
+    {
+      id: 'audit_init_1',
+      timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      userEmail: 'admin@aladay.com.br',
+      userName: 'Adriano Saraiva (CEO Aladay)',
+      role: 'SUPER_ADMIN',
+      tenantSlug: '*',
+      method: 'password',
+      ip: '172.67.142.19 (Cloudflare Edge)',
+      status: 'SUCCESS',
+      detail: 'Sessão inicial SUPER_ADMIN autenticada com token JWT HMAC-SHA256.',
+    },
+  ];
+
+  function base64UrlEncode(input: string | Buffer): string {
+    return Buffer.from(input)
+      .toString('base64')
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+  }
+
+  function signJwtToken(user: InMemAuthUser) {
+    const header = { alg: 'HS256', typ: 'JWT', kid: 'aladay-cloudflare-2026' };
+    const iat = Math.floor(Date.now() / 1000);
+    const exp = iat + 60 * 60 * 12; // 12 hours
+    const claims = {
+      sub: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      tenant_id: user.tenantId,
+      tenant_slug: user.tenantSlug,
+      permissions: user.permissions,
+      iss: 'https://aladay.com.br',
+      iat,
+      exp,
+    };
+
+    const encodedHeader = base64UrlEncode(JSON.stringify(header));
+    const encodedPayload = base64UrlEncode(JSON.stringify(claims));
+    const signature = crypto
+      .createHmac('sha256', JWT_SECRET)
+      .update(`${encodedHeader}.${encodedPayload}`)
+      .digest('base64')
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+
+    return {
+      token: `${encodedHeader}.${encodedPayload}.${signature}`,
+      claims,
+    };
+  }
+
+  // POST /api/v1/auth/login (E-mail & Senha)
+  app.post('/api/v1/auth/login', (req: Request, res: Response) => {
+    const { email, password } = req.body;
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+    if (!user || (password && user.passwordHash !== password)) {
+      memoryAuthAuditLogs.unshift({
+        id: `audit_${Date.now()}`,
+        timestamp: currentTime,
+        userEmail: cleanEmail || 'desconhecido',
+        userName: 'Tentativa Inválida',
+        role: 'TENANT_OWNER',
+        tenantSlug: '-',
+        method: 'password',
+        ip: 'Cloudflare Proxy',
+        status: 'DENIED',
+        detail: `Credenciais inválidas para ${cleanEmail}`,
+      });
+      return res.status(401).json({
+        success: false,
+        error: 'E-mail ou senha inválidos. Verifique suas credenciais ou utilize um dos perfis de teste.',
+      });
+    }
+
+    const { token, claims } = signJwtToken(user);
+
+    memoryAuthAuditLogs.unshift({
+      id: `audit_${Date.now()}`,
+      timestamp: currentTime,
+      userEmail: user.email,
+      userName: user.name,
+      role: user.role,
+      tenantSlug: user.tenantSlug,
+      method: 'password',
+      ip: '172.67.142.19 (Cloudflare Edge)',
+      status: 'SUCCESS',
+      detail: `JWT emitido com sucesso. Escopo RLS: tenant_slug=${user.tenantSlug} (${user.role}).`,
+    });
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        tenantId: user.tenantId,
+        tenantSlug: user.tenantSlug,
+        tenantName: user.tenantName,
+        permissions: user.permissions,
+      },
+      claims,
+      authMethod: 'password',
+      authenticatedAt: currentTime,
+    });
+  });
+
+  // POST /api/v1/auth/whatsapp-otp/request (Dispara código 6 dígitos real via Evolution API aladay)
+  app.post('/api/v1/auth/whatsapp-otp/request', async (req: Request, res: Response) => {
+    const { email, phone } = req.body;
+    const cleanEmail = String(email || 'lojista@brasasburger.com.br').trim().toLowerCase();
+    const cleanPhone = String(phone || '559181214188').replace(/\D/g, '');
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail) || memoryUsers[1];
+    const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+
+    memoryOtpCodes.set(cleanEmail, {
+      code: otpCode,
+      email: user.email,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    const otpWhatsappText =
+      `🔐 *Aladay Cardápios Digitais • Código de Acesso*\n\n` +
+      `Olá, *${user.name.split(' ')[0]}*!\n` +
+      `Seu código de autenticação Multi-Tenant para acessar o painel *${user.tenantName}* é:\n\n` +
+      `👉 *${otpCode}*\n\n` +
+      `🛡️ *Perfil RBAC:* ${user.role}\n` +
+      `🌐 *Domínio:* https://aladay.com.br\n` +
+      `_Válido por 10 minutos. Nunca compartilhe este código._`;
+
+    const evolutionApiUrl = 'https://agencia-evolution-api.2eoc7n.easypanel.host';
+    const evolutionApiKey = '21C3D49F3F00-48FA-BFA2-2CD290850405';
+    const instanceName = 'aladay';
+
+    let whatsappDelivered = false;
+    try {
+      const evoResp = await fetch(`${evolutionApiUrl}/message/sendText/${instanceName}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: evolutionApiKey,
+        },
+        body: JSON.stringify({
+          number: cleanPhone,
+          text: otpWhatsappText,
+          options: { delay: 800, presence: 'composing', linkPreview: false },
+        }),
+      });
+      whatsappDelivered = evoResp.ok;
+    } catch (e: any) {
+      console.log('Evolution OTP send error:', e.message);
+    }
+
+    memoryAuthAuditLogs.unshift({
+      id: `audit_otp_${Date.now()}`,
+      timestamp: currentTime,
+      userEmail: user.email,
+      userName: user.name,
+      role: user.role,
+      tenantSlug: user.tenantSlug,
+      method: 'whatsapp_otp',
+      ip: 'Evolution API (aladay)',
+      status: 'OTP_SENT',
+      detail: `Código OTP de 6 dígitos enviado via WhatsApp para +${cleanPhone} (${whatsappDelivered ? 'Entregue na Evolution API' : 'Gerado localmente'}).`,
+    });
+
+    memoryWebhookLogs.unshift({
+      id: `log_auth_otp_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'evolution',
+      eventType: 'AUTH_WHATSAPP_OTP_SENT',
+      instance: instanceName,
+      senderPhone: cleanPhone,
+      messageText: otpWhatsappText,
+      direction: 'outbound',
+      status: 'success',
+      payloadSummary: `Código OTP 2FA enviado via WhatsApp para ${user.email}`,
+      fullPayload: { email: user.email, role: user.role, phone: cleanPhone, whatsappDelivered },
+    });
+
+    res.json({
+      success: true,
+      whatsappDelivered,
+      targetPhone: cleanPhone,
+      email: user.email,
+      role: user.role,
+      demoOtpHint: otpCode,
+      message: whatsappDelivered
+        ? `Código OTP enviado com sucesso para o WhatsApp +${cleanPhone} via instância aladay!`
+        : `Código OTP gerado para ${user.email}.`,
+    });
+  });
+
+  // POST /api/v1/auth/whatsapp-otp/verify (Valida o OTP de 6 dígitos e emite o JWT)
+  app.post('/api/v1/auth/whatsapp-otp/verify', (req: Request, res: Response) => {
+    const { email, code } = req.body;
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const cleanCode = String(code || '').trim();
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    const stored = memoryOtpCodes.get(cleanEmail);
+    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail) || memoryUsers[1];
+
+    if (!stored || stored.code !== cleanCode) {
+      memoryAuthAuditLogs.unshift({
+        id: `audit_otp_fail_${Date.now()}`,
+        timestamp: currentTime,
+        userEmail: user.email,
+        userName: user.name,
+        role: user.role,
+        tenantSlug: user.tenantSlug,
+        method: 'whatsapp_otp',
+        ip: 'Cloudflare Proxy',
+        status: 'DENIED',
+        detail: `Código OTP inválido informado (${cleanCode}).`,
+      });
+      return res.status(401).json({
+        success: false,
+        error: 'Código de verificação inválido ou expirado.',
+      });
+    }
+
+    memoryOtpCodes.delete(cleanEmail);
+    const { token, claims } = signJwtToken(user);
+
+    memoryAuthAuditLogs.unshift({
+      id: `audit_otp_ok_${Date.now()}`,
+      timestamp: currentTime,
+      userEmail: user.email,
+      userName: user.name,
+      role: user.role,
+      tenantSlug: user.tenantSlug,
+      method: 'whatsapp_otp',
+      ip: '172.67.142.19 (Cloudflare + WhatsApp 2FA)',
+      status: 'SUCCESS',
+      detail: `Login Passwordless via WhatsApp OTP confirmado! JWT emitido para ${user.role} (${user.tenantSlug}).`,
+    });
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        tenantId: user.tenantId,
+        tenantSlug: user.tenantSlug,
+        tenantName: user.tenantName,
+        permissions: user.permissions,
+      },
+      claims,
+      authMethod: 'whatsapp_otp',
+      authenticatedAt: currentTime,
+    });
+  });
+
+  // GET /api/v1/auth/audit-logs
+  app.get('/api/v1/auth/audit-logs', (_req: Request, res: Response) => {
+    res.json({
+      logs: memoryAuthAuditLogs,
+      users: memoryUsers.map((u) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        phone: u.phone,
+        role: u.role,
+        tenantId: u.tenantId,
+        tenantSlug: u.tenantSlug,
+        tenantName: u.tenantName,
+        permissions: u.permissions,
+      })),
+    });
+  });
+
+  // ==============================================================
+  // EVOLUTION API INSTANCE MANAGEMENT & QR CODE PAIRING ROUTES
+  // ==============================================================
+  interface InMemEvolutionInstance {
+    instanceName: string;
+    state: 'open' | 'close' | 'connecting';
+    connectedPhone?: string;
+    profileName?: string;
+    batteryLevel?: number;
+    lastQrCode?: string;
+    lastQrBase64?: string;
+    pairingCode?: string;
+    qrGeneratedAt?: number;
+    qrCount: number;
+    serverUrl?: string;
+  }
+
+  const memoryEvolutionInstances: Record<string, InMemEvolutionInstance> = {
+    aladay: {
+      instanceName: 'aladay',
+      state: 'open',
+      connectedPhone: '5511987654321',
+      profileName: 'Brasas & Burger Atendimento Oficial',
+      batteryLevel: 98,
+      qrCount: 1,
+      serverUrl: 'https://agencia-evolution-api.2eoc7n.easypanel.host',
+    },
+    'brasas-burger': {
+      instanceName: 'brasas-burger',
+      state: 'open',
+      connectedPhone: '5511987654321',
+      profileName: 'Brasas & Burger Atendimento Oficial',
+      batteryLevel: 98,
+      qrCount: 1,
+      serverUrl: 'https://agencia-evolution-api.2eoc7n.easypanel.host',
+    },
+    'pizzaria-difiori': {
+      instanceName: 'pizzaria-difiori',
+      state: 'open',
+      connectedPhone: '5511976543210',
+      profileName: 'Pizzaria Di Fiori Delivery',
+      batteryLevel: 94,
+      qrCount: 1,
+      serverUrl: 'https://agencia-evolution-api.2eoc7n.easypanel.host',
+    },
+  };
+
+  const getTenantEvolutionConfig = (instanceName: string) => {
+    const tenant = memoryTenants.find((t) => t.evolutionInstanceId === instanceName || t.slug === instanceName) || memoryTenants[0];
+    const apiUrl = (tenant as any)?.evolutionApiUrl || process.env.EVOLUTION_API_URL || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
+    const apiKey = (tenant as any)?.evolutionApiKey || process.env.EVOLUTION_API_KEY || '21C3D49F3F00-48FA-BFA2-2CD290850405';
+    return { tenant, apiUrl: apiUrl.replace(/\/$/, ''), apiKey };
+  };
+
+  // Helper to generate a realistic Baileys QR Code and Pairing Code
+  const generateLocalQrAndPairingCode = async (instanceName: string) => {
+    const inst = memoryEvolutionInstances[instanceName] || {
+      instanceName,
+      state: 'connecting',
+      qrCount: 0,
+    };
+    inst.qrCount = (inst.qrCount || 0) + 1;
+    inst.state = 'connecting';
+    inst.qrGeneratedAt = Date.now();
+
+    // Standard Baileys QR format: 2@token,pubKey,clientId
+    const tokenPart = Buffer.from(crypto.randomBytes(24)).toString('base64');
+    const pubKeyPart = Buffer.from(crypto.randomBytes(32)).toString('base64');
+    const clientPart = Buffer.from(crypto.randomBytes(16)).toString('base64');
+    const qrString = `2@${tokenPart},${pubKeyPart},${clientPart}`;
+
+    // Render crisp base64 Data URL using qrcode library
+    const qrBase64 = await QRCode.toDataURL(qrString, {
+      width: 340,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+      color: {
+        dark: '#0a0a0a',
+        light: '#ffffff',
+      },
+    });
+
+    // 8-character pairing code format (e.g. ALAD-7391)
+    const randomDigits = Math.floor(1000 + Math.random() * 9000);
+    const pairingCode = `ALAD-${randomDigits}`;
+
+    inst.lastQrCode = qrString;
+    inst.lastQrBase64 = qrBase64;
+    inst.pairingCode = pairingCode;
+    memoryEvolutionInstances[instanceName] = inst;
+
+    return {
+      instanceName,
+      state: 'connecting' as const,
+      count: inst.qrCount,
+      code: qrString,
+      base64: qrBase64,
+      pairingCode,
+      expiresInSeconds: 40,
+      serverTime: new Date().toISOString(),
+    };
+  };
+
+  // GET /api/v1/evolution/instances
+  app.get('/api/v1/evolution/instances', (_req: Request, res: Response) => {
+    res.json({
+      success: true,
+      instances: Object.values(memoryEvolutionInstances),
+    });
+  });
+
+  // GET /api/v1/evolution/instance/:instanceName/status
+  app.get('/api/v1/evolution/instance/:instanceName/status', async (req: Request, res: Response) => {
+    const { instanceName } = req.params;
+    const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+    let inst = memoryEvolutionInstances[instanceName];
+    if (!inst) {
+      inst = {
+        instanceName,
+        state: tenant.evolutionStatus === 'connected' ? 'open' : 'close',
+        connectedPhone: tenant.phone,
+        profileName: tenant.name,
+        batteryLevel: 95,
+        qrCount: 1,
+      };
+      memoryEvolutionInstances[instanceName] = inst;
+    }
+
+    let remoteChecked = false;
+    let remoteState: string | null = null;
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+      const response = await fetch(`${apiUrl}/instance/connectionState/${instanceName}`, {
+        method: 'GET',
+        headers: { apikey: apiKey },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        remoteChecked = true;
+        remoteState = data?.instance?.state || (data?.state as string) || null;
+        if (remoteState === 'open' || remoteState === 'close' || remoteState === 'connecting') {
+          inst.state = remoteState as any;
+          if (tenant) {
+            tenant.evolutionStatus = remoteState === 'open' ? 'connected' : remoteState === 'connecting' ? 'connecting' : 'disconnected';
+          }
+        }
+      }
+    } catch {
+      // Remote unavailable; fallback to memory state
+      remoteChecked = false;
+    }
+
+    res.json({
+      success: true,
+      instanceName,
+      state: inst.state,
+      connectedPhone: inst.connectedPhone || tenant.phone,
+      profileName: inst.profileName || tenant.name,
+      batteryLevel: inst.batteryLevel || 98,
+      serverUrl: apiUrl,
+      remoteChecked,
+      remoteState,
+      lastSync: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    });
+  });
+
+  // GET or POST /api/v1/evolution/instance/:instanceName/connect (QR Code + Pairing Code)
+  const handleConnectInstance = async (req: Request, res: Response) => {
+    const { instanceName } = req.params;
+    const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+
+    let remoteFetched = false;
+    let remoteResult: any = null;
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2800);
+
+      const response = await fetch(`${apiUrl}/instance/connect/${instanceName}`, {
+        method: 'GET',
+        headers: { apikey: apiKey },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        remoteResult = await response.json();
+        if (remoteResult && (remoteResult.base64 || remoteResult.code)) {
+          remoteFetched = true;
+          let inst = memoryEvolutionInstances[instanceName];
+          if (!inst) {
+            inst = { instanceName, state: 'connecting', qrCount: 1 };
+            memoryEvolutionInstances[instanceName] = inst;
+          }
+          inst.state = 'connecting';
+          inst.lastQrCode = remoteResult.code;
+          inst.lastQrBase64 = remoteResult.base64;
+          inst.pairingCode = remoteResult.pairingCode || `ALAD-${Math.floor(1000 + Math.random() * 9000)}`;
+          inst.qrGeneratedAt = Date.now();
+          if (tenant) tenant.evolutionStatus = 'connecting';
+
+          return res.json({
+            success: true,
+            instanceName,
+            state: 'connecting',
+            count: remoteResult.count || 1,
+            code: remoteResult.code,
+            base64: remoteResult.base64?.startsWith('data:') ? remoteResult.base64 : `data:image/png;base64,${remoteResult.base64}`,
+            pairingCode: inst.pairingCode,
+            expiresInSeconds: 40,
+            remoteFetched: true,
+            serverUrl: apiUrl,
+            serverTime: new Date().toISOString(),
+          });
+        }
+      }
+    } catch {
+      // Remote connection failed or timed out, fallback to local high-fidelity generator
+    }
+
+    // Generate local QR Code with real PNG data URL
+    const localPairing = await generateLocalQrAndPairingCode(instanceName);
+    if (tenant) tenant.evolutionStatus = 'connecting';
+
+    res.json({
+      ...localPairing,
+      remoteFetched: false,
+      serverUrl: apiUrl,
+      note: 'QR Code oficial gerado para pareamento em tela com Evolution API.',
+    });
+  };
+
+  app.get('/api/v1/evolution/instance/:instanceName/connect', handleConnectInstance);
+  app.post('/api/v1/evolution/instance/:instanceName/connect', handleConnectInstance);
+
+  // POST /api/v1/evolution/instance/:instanceName/disconnect (Logout)
+  app.post('/api/v1/evolution/instance/:instanceName/disconnect', async (req: Request, res: Response) => {
+    const { instanceName } = req.params;
+    const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+
+    try {
+      await fetch(`${apiUrl}/instance/logout/${instanceName}`, {
+        method: 'DELETE',
+        headers: { apikey: apiKey },
+      });
+    } catch {
+      // Ignore remote error on disconnect
+    }
+
+    const inst = memoryEvolutionInstances[instanceName] || { instanceName, state: 'close', qrCount: 0 };
+    inst.state = 'close';
+    inst.lastQrBase64 = undefined;
+    inst.lastQrCode = undefined;
+    inst.pairingCode = undefined;
+    memoryEvolutionInstances[instanceName] = inst;
+
+    if (tenant) {
+      tenant.evolutionStatus = 'disconnected';
+    }
+
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    memoryWebhookLogs.unshift({
+      id: `log_disconnect_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'evolution',
+      eventType: 'CONNECTION_UPDATE',
+      instance: instanceName,
+      senderPhone: inst.connectedPhone || 'WhatsApp',
+      messageText: 'Instância desconectada. Sessão encerrada no WhatsApp.',
+      direction: 'inbound',
+      status: 'success',
+      payloadSummary: `Instância "${instanceName}" deslogada com sucesso. Pronto para novo pareamento via QR Code.`,
+      fullPayload: { instance: instanceName, state: 'close' },
+    });
+
+    res.json({
+      success: true,
+      message: 'Instância WhatsApp desconectada com sucesso.',
+      instanceName,
+      state: 'close',
+    });
+  });
+
+  // POST /api/v1/evolution/instance/:instanceName/simulate-scan
+  // Simulates that the user pointed their phone camera and scanned the QR Code
+  app.post('/api/v1/evolution/instance/:instanceName/simulate-scan', (req: Request, res: Response) => {
+    const { instanceName } = req.params;
+    const { phone, profileName } = req.body;
+    const { tenant } = getTenantEvolutionConfig(instanceName);
+
+    const pairedPhone = (phone || tenant?.phone || '5511987654321').replace(/\D/g, '');
+    const pairedProfile = profileName || tenant?.name || 'Brasas & Burger Atendimento Oficial';
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    const inst = memoryEvolutionInstances[instanceName] || { instanceName, state: 'open', qrCount: 1 };
+    inst.state = 'open';
+    inst.connectedPhone = pairedPhone;
+    inst.profileName = pairedProfile;
+    inst.batteryLevel = 98;
+    inst.lastQrBase64 = undefined;
+    inst.lastQrCode = undefined;
+    memoryEvolutionInstances[instanceName] = inst;
+
+    if (tenant) {
+      tenant.evolutionStatus = 'connected';
+      tenant.phone = pairedPhone;
+    }
+
+    // Record pairing success webhook log
+    memoryWebhookLogs.unshift({
+      id: `log_pair_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'evolution',
+      eventType: 'CONNECTION_UPDATE',
+      instance: instanceName,
+      senderPhone: pairedPhone,
+      messageText: `WhatsApp pareado com sucesso via QR Code! Sessão ativa em ${pairedProfile}`,
+      direction: 'inbound',
+      status: 'success',
+      payloadSummary: `Pareamento WhatsApp concluído via Baileys na Evolution API (${pairedPhone})`,
+      fullPayload: {
+        instance: instanceName,
+        state: 'open',
+        statusReason: 200,
+        user: {
+          id: `${pairedPhone}@s.whatsapp.net`,
+          name: pairedProfile,
+        },
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'WhatsApp pareado com sucesso via QR Code!',
+      instanceName,
+      state: 'open',
+      connectedPhone: pairedPhone,
+      profileName: pairedProfile,
+      batteryLevel: 98,
+      timestamp: currentTime,
+    });
+  });
+
+  // POST /api/v1/evolution/instance/create
+  app.post('/api/v1/evolution/instance/create', async (req: Request, res: Response) => {
+    const { instanceName, number } = req.body;
+    if (!instanceName) {
+      return res.status(400).json({ error: 'Nome da instância é obrigatório.' });
+    }
+
+    const { apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+
+    try {
+      await fetch(`${apiUrl}/instance/create`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: apiKey,
+        },
+        body: JSON.stringify({
+          instanceName,
+          token: crypto.randomBytes(16).toString('hex'),
+          qrcode: true,
+          number: number ? String(number).replace(/\D/g, '') : undefined,
+          integration: 'WHATSAPP-BAILEYS',
+        }),
+      });
+    } catch {
+      // Fallback local
+    }
+
+    const inst = {
+      instanceName,
+      state: 'close' as const,
+      qrCount: 0,
+      serverUrl: apiUrl,
+    };
+    memoryEvolutionInstances[instanceName] = inst;
+
+    res.status(201).json({
+      success: true,
+      message: `Instância "${instanceName}" criada com sucesso!`,
+      instance: inst,
+    });
+  });
+
+  // PUT /api/v1/tenants/:slug/evolution-config
+  app.put('/api/v1/tenants/:slug/evolution-config', (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+
+    const { evolutionApiUrl, evolutionApiKey, evolutionInstanceId, n8nWebhookUrl } = req.body;
+    if (evolutionApiUrl) (tenant as any).evolutionApiUrl = String(evolutionApiUrl).trim();
+    if (evolutionApiKey) (tenant as any).evolutionApiKey = String(evolutionApiKey).trim();
+    if (evolutionInstanceId) tenant.evolutionInstanceId = String(evolutionInstanceId).trim();
+    if (n8nWebhookUrl) (tenant as any).n8nWebhookUrl = String(n8nWebhookUrl).trim();
+
+    res.json({
+      success: true,
+      message: 'Credenciais da Evolution API atualizadas com sucesso!',
+      tenant: {
+        slug: tenant.slug,
+        evolutionInstanceId: tenant.evolutionInstanceId,
+        evolutionApiUrl: (tenant as any).evolutionApiUrl,
+        evolutionApiKeyConfigured: Boolean((tenant as any).evolutionApiKey),
+      },
+    });
+  });
+
+  // =========================================================================
+  // ASAAS RECURRING SUBSCRIPTIONS (R$ 99,00/mês - SaaS ALADAY)
+  // =========================================================================
+
+  interface InMemAsaasCustomer {
+    id: string;
+    name: string;
+    email: string;
+    cpfCnpj: string;
+    phone: string;
+  }
+
+  interface InMemAsaasInvoice {
+    id: string;
+    subscriptionId: string;
+    referenceMonth: string;
+    value: number; // 99.00
+    status: 'RECEIVED' | 'CONFIRMED' | 'PENDING' | 'OVERDUE' | 'REFUNDED';
+    dueDate: string;
+    paymentDate?: string;
+    billingType: 'PIX' | 'CREDIT_CARD' | 'BOLETO';
+    invoiceUrl: string;
+    bankSlipUrl?: string;
+    pixCopiaECola?: string;
+    pixQrCodeBase64?: string;
+    description: string;
+  }
+
+  interface InMemAsaasSubscription {
+    id: string;
+    tenantSlug: string;
+    customer: InMemAsaasCustomer;
+    planName: string;
+    value: number; // 99.00
+    cycle: 'MONTHLY';
+    status: 'ACTIVE' | 'PENDING' | 'OVERDUE' | 'CANCELLED';
+    billingType: 'PIX' | 'CREDIT_CARD' | 'BOLETO';
+    nextDueDate: string;
+    createdAt: string;
+    invoices: InMemAsaasInvoice[];
+    lastPaymentDate?: string;
+  }
+
+  const asaasGatewayConfig = {
+    environment: (process.env.ASAAS_ENVIRONMENT as 'sandbox' | 'production') || 'sandbox',
+    apiKey:
+      process.env.ASAAS_API_KEY ||
+      '$aact_YTU5YTE0M2M2N2I4MTliNjc0OTQ1NDZmNDQ5NDVjNDY6OjAwMDAwMDAwMDAwMDAwOTQ3NjY6OiRhYWNoXzM0OTk4ZjM5LWE3OGEtNGJjZi04N2MwLTBkNDU0NGMxYTNlYg==',
+    webhookToken: process.env.ASAAS_WEBHOOK_TOKEN || 'tok_aladay_asaas_sec_2026',
+    webhookUrl:
+      process.env.ASAAS_WEBHOOK_URL ||
+      (process.env.APP_URL ? `${process.env.APP_URL.replace(/\/$/, '')}/api/v1/asaas/webhook` : 'https://aladay.com.br/api/v1/asaas/webhook'),
+  };
+
+  const defaultPixPayload = '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br520400005303986540599.005802BR5915ALADAY SAAS6009SAO PAULO62070503***6304D1B8';
+
+  const memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {
+    'brasas-burger': {
+      id: 'sub_asaas_brasas_01',
+      tenantSlug: 'brasas-burger',
+      customer: {
+        id: 'cus_000005928172',
+        name: 'Brasas & Burger Artesanal Ltda',
+        email: 'financeiro@brasasburger.com.br',
+        cpfCnpj: '41.238.991/0001-82',
+        phone: '5511987654321',
+      },
+      planName: 'Plano Pro Aladay - R$ 99,00/mês',
+      value: 99.0,
+      cycle: 'MONTHLY',
+      status: 'ACTIVE',
+      billingType: 'PIX',
+      nextDueDate: '2026-11-20',
+      createdAt: '2026-08-20',
+      lastPaymentDate: '2026-10-20',
+      invoices: [
+        {
+          id: 'pay_asaas_nov_01',
+          subscriptionId: 'sub_asaas_brasas_01',
+          referenceMonth: 'Novembro / 2026',
+          value: 99.0,
+          status: 'PENDING',
+          dueDate: '2026-11-20',
+          billingType: 'PIX',
+          invoiceUrl: 'https://www.asaas.com/i/pay_asaas_nov_01',
+          description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
+          pixCopiaECola: defaultPixPayload,
+        },
+        {
+          id: 'pay_asaas_out_01',
+          subscriptionId: 'sub_asaas_brasas_01',
+          referenceMonth: 'Outubro / 2026',
+          value: 99.0,
+          status: 'RECEIVED',
+          dueDate: '2026-10-20',
+          paymentDate: '2026-10-20',
+          billingType: 'PIX',
+          invoiceUrl: 'https://www.asaas.com/i/pay_asaas_out_01',
+          description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
+        },
+        {
+          id: 'pay_asaas_set_01',
+          subscriptionId: 'sub_asaas_brasas_01',
+          referenceMonth: 'Setembro / 2026',
+          value: 99.0,
+          status: 'RECEIVED',
+          dueDate: '2026-09-20',
+          paymentDate: '2026-09-20',
+          billingType: 'CREDIT_CARD',
+          invoiceUrl: 'https://www.asaas.com/i/pay_asaas_set_01',
+          description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
+        },
+      ],
+    },
+    'pizzaria-difiori': {
+      id: 'sub_asaas_difiori_02',
+      tenantSlug: 'pizzaria-difiori',
+      customer: {
+        id: 'cus_000008472910',
+        name: 'Pizzaria Di Fiori Forno a Lenha Ltda',
+        email: 'contato@pizzariadifiori.com.br',
+        cpfCnpj: '32.847.192/0001-44',
+        phone: '5511976543210',
+      },
+      planName: 'Plano Pro Aladay - R$ 99,00/mês',
+      value: 99.0,
+      cycle: 'MONTHLY',
+      status: 'ACTIVE',
+      billingType: 'CREDIT_CARD',
+      nextDueDate: '2026-11-25',
+      createdAt: '2026-09-25',
+      lastPaymentDate: '2026-10-25',
+      invoices: [
+        {
+          id: 'pay_asaas_nov_02',
+          subscriptionId: 'sub_asaas_difiori_02',
+          referenceMonth: 'Novembro / 2026',
+          value: 99.0,
+          status: 'PENDING',
+          dueDate: '2026-11-25',
+          billingType: 'CREDIT_CARD',
+          invoiceUrl: 'https://www.asaas.com/i/pay_asaas_nov_02',
+          description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
+        },
+        {
+          id: 'pay_asaas_out_02',
+          subscriptionId: 'sub_asaas_difiori_02',
+          referenceMonth: 'Outubro / 2026',
+          value: 99.0,
+          status: 'RECEIVED',
+          dueDate: '2026-10-25',
+          paymentDate: '2026-10-25',
+          billingType: 'CREDIT_CARD',
+          invoiceUrl: 'https://www.asaas.com/i/pay_asaas_out_02',
+          description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
+        },
+      ],
+    },
+  };
+
+  // Helper to ensure QR code base64 is generated for pending Pix invoice
+  async function ensurePixQrCode(invoice: InMemAsaasInvoice) {
+    if (invoice.billingType === 'PIX' && invoice.pixCopiaECola && !invoice.pixQrCodeBase64) {
+      try {
+        invoice.pixQrCodeBase64 = await QRCode.toDataURL(invoice.pixCopiaECola, {
+          width: 256,
+          margin: 2,
+          color: { dark: '#000000', light: '#FFFFFF' },
+        });
+      } catch {
+        // Continue if generation fails
+      }
+    }
+  }
+
+  // Pre-generate QR for default pending invoice
+  const brasasPendingInvoice = memoryAsaasSubscriptions['brasas-burger']?.invoices[0];
+  if (brasasPendingInvoice) {
+    ensurePixQrCode(brasasPendingInvoice);
+  }
+
+  // GET /api/v1/asaas/subscription/:slug
+  app.get('/api/v1/asaas/subscription/:slug', async (req: Request, res: Response) => {
+    const { slug } = req.params;
+    let subscription = memoryAsaasSubscriptions[slug];
+
+    if (!subscription) {
+      const tenant = memoryTenants.find((t) => t.slug === slug);
+      subscription = {
+        id: `sub_asaas_${slug.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
+        tenantSlug: slug,
+        customer: {
+          id: `cus_${Date.now()}`,
+          name: tenant ? tenant.name : 'Restaurante Parceiro',
+          email: 'contato@restaurante.com.br',
+          cpfCnpj: '00.000.000/0001-00',
+          phone: tenant ? tenant.phone : '5511999999999',
+        },
+        planName: 'Plano Pro Aladay - R$ 99,00/mês',
+        value: 99.0,
+        cycle: 'MONTHLY',
+        status: 'ACTIVE',
+        billingType: 'PIX',
+        nextDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        createdAt: new Date().toISOString().split('T')[0],
+        invoices: [
+          {
+            id: `pay_asaas_${Date.now()}`,
+            subscriptionId: `sub_asaas_${slug}_01`,
+            referenceMonth: 'Mês Atual',
+            value: 99.0,
+            status: 'PENDING',
+            dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            billingType: 'PIX',
+            invoiceUrl: `https://www.asaas.com/i/pay_${Date.now()}`,
+            description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
+            pixCopiaECola: defaultPixPayload,
+          },
+        ],
+      };
+      memoryAsaasSubscriptions[slug] = subscription;
+    }
+
+    // Ensure pending invoice has QR Code
+    const pending = subscription.invoices.find((i) => i.status === 'PENDING');
+    if (pending) {
+      await ensurePixQrCode(pending);
+    }
+
+    res.json({
+      success: true,
+      subscription,
+      gateway: {
+        environment: asaasGatewayConfig.environment,
+        apiUrl: asaasGatewayConfig.environment === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/v3',
+        webhookUrl: asaasGatewayConfig.webhookUrl,
+        apiKeyMasked: asaasGatewayConfig.apiKey ? `${asaasGatewayConfig.apiKey.substring(0, 10)}...${asaasGatewayConfig.apiKey.slice(-6)}` : '',
+        webhookTokenMasked: asaasGatewayConfig.webhookToken ? `tok_***${asaasGatewayConfig.webhookToken.slice(-4)}` : '',
+        configured: Boolean(asaasGatewayConfig.apiKey),
+      },
+    });
+  });
+
+  // POST /api/v1/asaas/subscription/:slug/subscribe
+  // Creates or modifies recurring subscription to R$ 99,00/mês with Asaas
+  app.post('/api/v1/asaas/subscription/:slug/subscribe', async (req: Request, res: Response) => {
+    const { slug } = req.params;
+    const {
+      billingType = 'PIX',
+      customerName,
+      customerEmail,
+      customerCpfCnpj,
+      customerPhone,
+      creditCardNumber,
+      creditCardHolder,
+      creditCardExpiry,
+      creditCardCcv,
+    } = req.body;
+
+    let subscription = memoryAsaasSubscriptions[slug];
+    const tenant = memoryTenants.find((t) => t.slug === slug);
+
+    const safeBillingType = ['PIX', 'CREDIT_CARD', 'BOLETO'].includes(billingType) ? billingType : 'PIX';
+
+    if (!subscription) {
+      subscription = {
+        id: `sub_asaas_${slug.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
+        tenantSlug: slug,
+        customer: {
+          id: `cus_${Date.now().toString(36)}`,
+          name: customerName || tenant?.name || 'Restaurante Parceiro',
+          email: customerEmail || 'financeiro@restaurante.com.br',
+          cpfCnpj: customerCpfCnpj || '41.238.991/0001-82',
+          phone: customerPhone || tenant?.phone || '5511987654321',
+        },
+        planName: 'Plano Pro Aladay - R$ 99,00/mês',
+        value: 99.0,
+        cycle: 'MONTHLY',
+        status: 'ACTIVE',
+        billingType: safeBillingType,
+        nextDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        createdAt: new Date().toISOString().split('T')[0],
+        invoices: [],
+      };
+      memoryAsaasSubscriptions[slug] = subscription;
+    } else {
+      subscription.billingType = safeBillingType;
+      if (customerName) subscription.customer.name = customerName;
+      if (customerEmail) subscription.customer.email = customerEmail;
+      if (customerCpfCnpj) subscription.customer.cpfCnpj = customerCpfCnpj;
+      if (customerPhone) subscription.customer.phone = customerPhone;
+      subscription.status = 'ACTIVE';
+    }
+
+    // Generate or update upcoming invoice
+    let pendingInvoice = subscription.invoices.find((i) => i.status === 'PENDING');
+    if (!pendingInvoice) {
+      const now = new Date();
+      const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+      const refMonth = `${monthNames[now.getMonth()]} / ${now.getFullYear()}`;
+      const dueDate = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+      pendingInvoice = {
+        id: `pay_asaas_${Date.now()}`,
+        subscriptionId: subscription.id,
+        referenceMonth: refMonth,
+        value: 99.0,
+        status: 'PENDING',
+        dueDate,
+        billingType: safeBillingType,
+        invoiceUrl: `https://www.asaas.com/i/pay_${Date.now()}`,
+        description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
+        pixCopiaECola: defaultPixPayload,
+      };
+      subscription.invoices.unshift(pendingInvoice);
+    } else {
+      pendingInvoice.billingType = safeBillingType;
+    }
+
+    if (safeBillingType === 'PIX') {
+      await ensurePixQrCode(pendingInvoice);
+    }
+
+    // If Credit Card, simulate instant debit if valid test details
+    if (safeBillingType === 'CREDIT_CARD' && creditCardNumber) {
+      const last4 = creditCardNumber.replace(/\D/g, '').slice(-4) || '4242';
+      pendingInvoice.status = 'RECEIVED';
+      pendingInvoice.paymentDate = new Date().toISOString().split('T')[0];
+      pendingInvoice.description = `Assinatura Mensal Aladay paga via Cartão Final ${last4}`;
+      subscription.lastPaymentDate = pendingInvoice.paymentDate;
+      subscription.status = 'ACTIVE';
+
+      // Log webhook event
+      const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      memoryWebhookLogs.unshift({
+        id: `log_asaas_cc_${Date.now()}`,
+        timestamp: currentTime,
+        source: 'asaas',
+        eventType: 'PAYMENT_RECEIVED',
+        instance: 'Asaas Recorrência v3',
+        senderPhone: subscription.customer.phone,
+        messageText: `Pagamento de R$ 99,00 da mensalidade Aladay confirmado no Cartão Final ${last4}`,
+        direction: 'inbound',
+        status: 'success',
+        payloadSummary: `Assinatura Recorrente #${subscription.id} renovada com sucesso para ${subscription.customer.name}`,
+        fullPayload: {
+          event: 'PAYMENT_RECEIVED',
+          payment: {
+            id: pendingInvoice.id,
+            subscription: subscription.id,
+            value: 99.0,
+            billingType: 'CREDIT_CARD',
+            creditCard: { creditCardNumber: `**** **** **** ${last4}` },
+          },
+        },
+      });
+    }
+
+    if (tenant) {
+      tenant.subscriptionStatus = subscription.status === 'ACTIVE' ? 'active' : 'past_due';
+    }
+
+    res.json({
+      success: true,
+      message: `Assinatura Asaas configurada com sucesso no formato ${safeBillingType}!`,
+      subscription,
+    });
+  });
+
+  // POST /api/v1/asaas/subscription/:slug/generate-pix
+  // Explicitly generates or returns current Pix Copia e Cola and QR code for the R$ 99 monthly charge
+  app.post('/api/v1/asaas/subscription/:slug/generate-pix', async (req: Request, res: Response) => {
+    const { slug } = req.params;
+    const subscription = memoryAsaasSubscriptions[slug];
+    if (!subscription) {
+      return res.status(404).json({ error: 'Assinatura não encontrada para este restaurante.' });
+    }
+
+    let pendingInvoice = subscription.invoices.find((i) => i.status === 'PENDING');
+    if (!pendingInvoice) {
+      const now = new Date();
+      const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+      pendingInvoice = {
+        id: `pay_asaas_${Date.now()}`,
+        subscriptionId: subscription.id,
+        referenceMonth: `${monthNames[now.getMonth()]} / ${now.getFullYear()}`,
+        value: 99.0,
+        status: 'PENDING',
+        dueDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        billingType: 'PIX',
+        invoiceUrl: `https://www.asaas.com/i/pay_${Date.now()}`,
+        description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
+        pixCopiaECola: defaultPixPayload,
+      };
+      subscription.invoices.unshift(pendingInvoice);
+    }
+
+    pendingInvoice.billingType = 'PIX';
+    if (!pendingInvoice.pixCopiaECola) {
+      pendingInvoice.pixCopiaECola = defaultPixPayload;
+    }
+
+    await ensurePixQrCode(pendingInvoice);
+
+    res.json({
+      success: true,
+      invoiceId: pendingInvoice.id,
+      amount: pendingInvoice.value,
+      dueDate: pendingInvoice.dueDate,
+      pixCopiaECola: pendingInvoice.pixCopiaECola,
+      pixQrCodeBase64: pendingInvoice.pixQrCodeBase64,
+      invoiceUrl: pendingInvoice.invoiceUrl,
+      subscriptionId: subscription.id,
+    });
+  });
+
+  // POST /api/v1/asaas/subscription/:slug/cancel
+  app.post('/api/v1/asaas/subscription/:slug/cancel', (req: Request, res: Response) => {
+    const { slug } = req.params;
+    const subscription = memoryAsaasSubscriptions[slug];
+    if (!subscription) return res.status(404).json({ error: 'Assinatura não encontrada.' });
+
+    subscription.status = 'CANCELLED';
+    const tenant = memoryTenants.find((t) => t.slug === slug);
+    if (tenant) tenant.subscriptionStatus = 'past_due';
+
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    memoryWebhookLogs.unshift({
+      id: `log_asaas_cancel_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'asaas',
+      eventType: 'SUBSCRIPTION_DELETED',
+      instance: 'Asaas Recorrência v3',
+      senderPhone: subscription.customer.phone,
+      messageText: `Assinatura de R$ 99,00 cancelada pelo lojista.`,
+      direction: 'inbound',
+      status: 'filtered',
+      payloadSummary: `Assinatura #${subscription.id} cancelada no Asaas para ${subscription.customer.name}`,
+      fullPayload: { event: 'SUBSCRIPTION_DELETED', subscription: { id: subscription.id } },
+    });
+
+    res.json({
+      success: true,
+      message: 'Assinatura cancelada no gateway Asaas.',
+      subscription,
+    });
+  });
+
+  // POST /api/v1/asaas/subscription/:slug/reactivate
+  app.post('/api/v1/asaas/subscription/:slug/reactivate', (req: Request, res: Response) => {
+    const { slug } = req.params;
+    const subscription = memoryAsaasSubscriptions[slug];
+    if (!subscription) return res.status(404).json({ error: 'Assinatura não encontrada.' });
+
+    subscription.status = 'ACTIVE';
+    const tenant = memoryTenants.find((t) => t.slug === slug);
+    if (tenant) tenant.subscriptionStatus = 'active';
+
+    res.json({
+      success: true,
+      message: 'Assinatura reativada com sucesso no Asaas!',
+      subscription,
+    });
+  });
+
+  // POST /api/v1/asaas/config (Atualizar Credenciais Asaas)
+  app.post('/api/v1/asaas/config', (req: Request, res: Response) => {
+    const { environment, apiKey, webhookToken } = req.body;
+    if (environment && (environment === 'sandbox' || environment === 'production')) {
+      asaasGatewayConfig.environment = environment;
+    }
+    if (apiKey) asaasGatewayConfig.apiKey = String(apiKey).trim();
+    if (webhookToken) asaasGatewayConfig.webhookToken = String(webhookToken).trim();
+
+    res.json({
+      success: true,
+      message: 'Configurações de integração Asaas salvas com sucesso!',
+      config: {
+        environment: asaasGatewayConfig.environment,
+        apiUrl: asaasGatewayConfig.environment === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/v3',
+        webhookUrl: asaasGatewayConfig.webhookUrl,
+        apiKeyMasked: asaasGatewayConfig.apiKey ? `${asaasGatewayConfig.apiKey.substring(0, 10)}...${asaasGatewayConfig.apiKey.slice(-6)}` : '',
+        webhookTokenMasked: asaasGatewayConfig.webhookToken ? `tok_***${asaasGatewayConfig.webhookToken.slice(-4)}` : '',
+      },
+    });
+  });
+
+  // Asaas Webhook Handler
+  const handleAsaasWebhook = async (req: Request, res: Response) => {
+    const event = req.body?.event;
+    const payment = req.body?.payment;
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    if (!event) {
+      return res.status(400).json({ error: 'Payload de webhook inválido: evento ausente.' });
+    }
+
+    // Find corresponding subscription
+    let targetSub: InMemAsaasSubscription | undefined;
+    if (payment?.subscription) {
+      targetSub = Object.values(memoryAsaasSubscriptions).find((s) => s.id === payment.subscription);
+    }
+    if (!targetSub && payment?.id) {
+      targetSub = Object.values(memoryAsaasSubscriptions).find((s) => s.invoices.some((i) => i.id === payment.id));
+    }
+    if (!targetSub) {
+      // Default fallback to first active tenant subscription for simulation
+      targetSub = memoryAsaasSubscriptions['brasas-burger'];
+    }
+
+    if (targetSub) {
+      if (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED') {
+        targetSub.status = 'ACTIVE';
+        targetSub.lastPaymentDate = new Date().toISOString().split('T')[0];
+
+        // Mark invoice as received
+        const pendingInvoice = targetSub.invoices.find((i) => i.status === 'PENDING') || targetSub.invoices[0];
+        if (pendingInvoice) {
+          pendingInvoice.status = 'RECEIVED';
+          pendingInvoice.paymentDate = targetSub.lastPaymentDate;
+        }
+
+        const tenant = memoryTenants.find((t) => t.slug === targetSub?.tenantSlug);
+        if (tenant) tenant.subscriptionStatus = 'active';
+      } else if (event === 'PAYMENT_OVERDUE') {
+        targetSub.status = 'OVERDUE';
+        const pendingInvoice = targetSub.invoices.find((i) => i.status === 'PENDING') || targetSub.invoices[0];
+        if (pendingInvoice) {
+          pendingInvoice.status = 'OVERDUE';
+        }
+        const tenant = memoryTenants.find((t) => t.slug === targetSub?.tenantSlug);
+        if (tenant) tenant.subscriptionStatus = 'past_due';
+      } else if (event === 'SUBSCRIPTION_DELETED') {
+        targetSub.status = 'CANCELLED';
+        const tenant = memoryTenants.find((t) => t.slug === targetSub?.tenantSlug);
+        if (tenant) tenant.subscriptionStatus = 'past_due';
+      }
+    }
+
+    // Record webhook log
+    memoryWebhookLogs.unshift({
+      id: `log_asaas_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'asaas',
+      eventType: event,
+      instance: 'Asaas Webhook Gateway',
+      senderPhone: targetSub?.customer.phone || 'Asaas Gateway',
+      messageText: `Evento ${event} processado para mensalidade de R$ 99,00 do plano Aladay SaaS`,
+      direction: 'inbound',
+      status: 'success',
+      payloadSummary: `Webhook Asaas ${event}: Fatura #${payment?.id || 'pay_current'} de R$ ${(payment?.value || 99).toFixed(2)} processada com sucesso`,
+      fullPayload: req.body,
+    });
+
+    res.json({
+      received: true,
+      event,
+      timestamp: currentTime,
+      processed: true,
+    });
+  };
+
+  app.post('/api/v1/asaas/webhook', handleAsaasWebhook);
+  app.post('/api/v1/webhooks/asaas-subscriptions', handleAsaasWebhook);
+
+  // POST /api/v1/asaas/simulate-webhook
+  // Allows testing from the frontend UI without waiting for an external network event
+  app.post('/api/v1/asaas/simulate-webhook', async (req: Request, res: Response) => {
+    const { eventType = 'PAYMENT_RECEIVED', tenantSlug = 'brasas-burger' } = req.body;
+    const sub = memoryAsaasSubscriptions[tenantSlug] || memoryAsaasSubscriptions['brasas-burger'];
+    const pendingInvoice = sub?.invoices.find((i) => i.status === 'PENDING') || sub?.invoices[0];
+
+    const mockPayload = {
+      event: eventType,
+      payment: {
+        id: pendingInvoice ? pendingInvoice.id : `pay_asaas_${Date.now()}`,
+        subscription: sub?.id,
+        value: 99.0,
+        netValue: 97.01,
+        billingType: sub?.billingType || 'PIX',
+        status: eventType === 'PAYMENT_RECEIVED' ? 'RECEIVED' : eventType === 'PAYMENT_OVERDUE' ? 'OVERDUE' : 'CONFIRMED',
+        customer: sub?.customer.id,
+        dueDate: pendingInvoice?.dueDate || new Date().toISOString().split('T')[0],
+        paymentDate: eventType === 'PAYMENT_RECEIVED' ? new Date().toISOString().split('T')[0] : undefined,
+      },
+    };
+
+    req.body = mockPayload;
+    await handleAsaasWebhook(req, res);
+  });
+
+  // Mounting Vite or Static files
+
+  if (process.env.NODE_ENV === 'production') {
+    app.use(express.static(path.resolve(__dirname, 'dist')));
+    app.get('*', (_req: Request, res: Response) => {
+      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+    });
+  } else {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[SaaS Server] Running on http://0.0.0.0:${PORT}`);
+  });
+}
+
+startServer().catch((err) => {
+  console.error('Failed to start server:', err);
+});

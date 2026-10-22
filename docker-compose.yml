@@ -1,0 +1,26 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: saas_cardapios_app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - APP_URL=${APP_URL:-https://cardapio.seudominio.com.br}
+      - EVOLUTION_API_URL=${EVOLUTION_API_URL:-https://agencia-evolution-api.2eoc7n.easypanel.host}
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-21C3D49F3F00-48FA-BFA2-2CD290850405}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-https://agencia-n8n.2eoc7n.easypanel.host/webhook-test/saas}
+      - ASAAS_ENVIRONMENT=${ASAAS_ENVIRONMENT:-sandbox}
+      - ASAAS_API_KEY=${ASAAS_API_KEY}
+      - ASAAS_WEBHOOK_TOKEN=${ASAAS_WEBHOOK_TOKEN:-tok_aladay_asaas_sec_2026}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
