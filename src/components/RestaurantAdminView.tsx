@@ -397,9 +397,14 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
         autoApproveWebhook: true,
       };
 
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (authSession?.token) {
+        headers['Authorization'] = `Bearer ${authSession.token}`;
+      }
+
       await fetch(`/api/v1/tenants/${tenant.slug}/pix-config`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload),
       });
 
@@ -1530,9 +1535,13 @@ ETag: "catalog_version_1729482930"`}
                   type="button"
                   onClick={async () => {
                     try {
+                      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+                      if (authSession?.token) {
+                        headers['Authorization'] = `Bearer ${authSession.token}`;
+                      }
                       const res = await fetch('/api/v1/pix/simulate-payment', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers,
                         body: JSON.stringify({ orderId: orders[0]?.id || 'ord_1042' }),
                       });
                       if (res.ok) {
@@ -2161,6 +2170,7 @@ ETag: "catalog_version_1729482930"`}
             orders={orders}
             onUpdateTenant={onUpdateTenant}
             onSimulateEvolutionReconnect={onSimulateEvolutionReconnect}
+            authSession={authSession}
           />
         )}
 

@@ -85,6 +85,104 @@ async function startServer() {
 
   app.use(express.json());
 
+  // ============================================================================
+  // SECURITY & MULTI-TENANT AUTHENTICATION GUARDS (OWASP / LGPD COMPLIANCE)
+  // ============================================================================
+  const JWT_SECRET = process.env.JWT_SECRET || 'aladay-cloudflare-jwt-secret-key-2026-hmac-sha256';
+
+  function base64UrlEncode(input: string | Buffer): string {
+    return Buffer.from(input)
+      .toString('base64')
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+  }
+
+  function verifyJwtToken(token: string): any | null {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
+      const [headerB64, payloadB64, signature] = parts;
+      const expectedSignature = crypto
+        .createHmac('sha256', JWT_SECRET)
+        .update(`${headerB64}.${payloadB64}`)
+        .digest('base64')
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_');
+
+      const sigBuf = Buffer.from(signature);
+      const expBuf = Buffer.from(expectedSignature);
+      if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+        return null;
+      }
+
+      const claims = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf-8'));
+      if (claims.exp && claims.exp < Math.floor(Date.now() / 1000)) {
+        return null; // Expired token
+      }
+      return claims;
+    } catch {
+      return null;
+    }
+  }
+
+  const authenticateToken = (req: Request, res: Response, next: express.NextFunction) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!token) {
+      return res.status(401).json({ error: 'Acesso não autorizado: token JWT ausente.' });
+    }
+    const claims = verifyJwtToken(token);
+    if (!claims) {
+      return res.status(401).json({ error: 'Token JWT inválido ou expirado.' });
+    }
+    (req as any).user = claims;
+    next();
+  };
+
+  const requireSuperAdmin = (req: Request, res: Response, next: express.NextFunction) => {
+    authenticateToken(req, res, () => {
+      const user = (req as any).user;
+      if (user.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({ error: 'Acesso negado: privilégios de Super Admin necessários.' });
+      }
+      next();
+    });
+  };
+
+  const requireTenantAccess = (paramName = 'slug') => {
+    return (req: Request, res: Response, next: express.NextFunction) => {
+      authenticateToken(req, res, () => {
+        const user = (req as any).user;
+        const targetSlug = req.params[paramName] || req.body?.tenantSlug;
+        if (user.role === 'SUPER_ADMIN' || user.tenant_slug === '*') {
+          return next();
+        }
+        if (user.tenant_slug === targetSlug || user.tenant_id === targetSlug) {
+          return next();
+        }
+        return res.status(403).json({ error: 'Acesso negado: você não tem permissão para acessar os dados deste restaurante.' });
+      });
+    };
+  };
+
+  // In-Memory Rate Limiter for brute-force prevention
+  const ipRateLimits = new Map<string, { count: number; resetAt: number }>();
+  function checkRateLimit(key: string, maxRequests: number, windowMs: number): boolean {
+    const now = Date.now();
+    const record = ipRateLimits.get(key);
+    if (!record || now > record.resetAt) {
+      ipRateLimits.set(key, { count: 1, resetAt: now + windowMs });
+      return true;
+    }
+    if (record.count >= maxRequests) {
+      return false;
+    }
+    record.count += 1;
+    return true;
+  }
+
   // API Health Check
   app.get('/api/v1/health', (_req: Request, res: Response) => {
     res.json({
@@ -164,9 +262,37 @@ async function startServer() {
       }
     }
 
-    // Recalculate prices
-    const subtotalCents = items.reduce((acc: number, item: any) => acc + (Number(item.totalCents) || 0), 0);
-    const deliveryFeeCents = type === 'delivery' ? tenant.deliveryFeeCents : 0;
+    // Server-Side Price Verification (Prevents Client-Side Price Tampering)
+    let subtotalCents = 0;
+    const validatedItems = items.map((item: any) => {
+      const catalogProduct = memoryProducts.find((p) => p.id === item.productId);
+      const unitPriceCents = catalogProduct
+        ? catalogProduct.priceCents
+        : Math.max(0, parseInt(item.unitPriceCents, 10) || 0);
+      const quantity = Math.max(1, Math.min(99, parseInt(item.quantity, 10) || 1));
+
+      let optionsTotalCents = 0;
+      if (Array.isArray(item.selectedOptions)) {
+        optionsTotalCents = item.selectedOptions.reduce(
+          (acc: number, opt: any) => acc + Math.max(0, parseInt(opt.priceCents, 10) || 0),
+          0
+        );
+      }
+
+      const calculatedItemTotal = (unitPriceCents + optionsTotalCents) * quantity;
+      subtotalCents += calculatedItemTotal;
+
+      return {
+        ...item,
+        productId: String(item.productId || ''),
+        productName: String(item.productName || 'Item').slice(0, 100),
+        unitPriceCents,
+        quantity,
+        totalCents: calculatedItemTotal,
+      };
+    });
+
+    const deliveryFeeCents = type === 'delivery' ? Math.max(0, tenant.deliveryFeeCents || 0) : 0;
     const totalCents = subtotalCents + deliveryFeeCents;
 
     const orderNumber = 1040 + memoryOrders.length + 1;
@@ -175,11 +301,11 @@ async function startServer() {
       orderNumber,
       tenantId: tenant.id,
       tenantSlug: tenant.slug,
-      customerName: String(customerName || 'Cliente').trim(),
-      customerPhone: String(customerPhone || '').trim(),
+      customerName: String(customerName || 'Cliente').trim().slice(0, 80),
+      customerPhone: String(customerPhone || '').replace(/\D/g, '').slice(0, 15),
       type: type === 'pickup' ? 'pickup' : 'delivery',
-      deliveryAddress: deliveryAddress || undefined,
-      items,
+      deliveryAddress: deliveryAddress ? String(deliveryAddress).trim().slice(0, 200) : undefined,
+      items: validatedItems,
       subtotalCents,
       deliveryFeeCents,
       totalCents,
@@ -209,8 +335,8 @@ async function startServer() {
     });
   });
 
-  // Get orders for a tenant
-  app.get('/api/v1/tenants/:slug/orders', (req: Request, res: Response) => {
+  // Get orders for a tenant (Protected by Multi-Tenant JWT Guard)
+  app.get('/api/v1/tenants/:slug/orders', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const tenantOrders = memoryOrders.filter((o) => o.tenantSlug === req.params.slug);
     res.json({ data: tenantOrders });
   });
@@ -440,6 +566,14 @@ async function startServer() {
 
   // OFFICIAL WEBHOOK RECEIVER FOR GATEWAY NACIONAL ASAAS (EXCLUSIVO ASSINATURAS SAAS R$ 99,00/MÊS)
   const handleAsaasSubscriptionWebhook = async (req: Request, res: Response) => {
+    // SECURITY: Validate Asaas Access Token Header
+    const receivedToken = (req.headers['asaas-access-token'] as string) || '';
+    const configuredToken = process.env.ASAAS_WEBHOOK_TOKEN || asaasGatewayConfig.webhookToken;
+    if (configuredToken && receivedToken !== configuredToken) {
+      console.warn(`[Segurança Asaas] Tentativa de webhook rejeitada por token inválido ou ausente.`);
+      return res.status(401).json({ error: 'Acesso não autorizado: token de webhook Asaas inválido.' });
+    }
+
     const { event, payment, subscription } = req.body;
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -486,8 +620,20 @@ async function startServer() {
   app.post('/api/v1/webhooks/asaas', handleAsaasSubscriptionWebhook);
   app.post('/api/v1/webhooks/asaas-subscriptions', handleAsaasSubscriptionWebhook);
 
-  // SIMULATE BANK PAYMENT FOR TESTING
+  // SIMULATE BANK PAYMENT FOR TESTING (PROTECTED IN PRODUCTION)
   app.post('/api/v1/pix/simulate-payment', async (req: Request, res: Response) => {
+    // In production, block simulation unless authenticated as SUPER_ADMIN
+    if (process.env.NODE_ENV === 'production') {
+      const authHeader = req.headers['authorization'];
+      const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+      const claims = token ? verifyJwtToken(token) : null;
+      if (!claims || claims.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({
+          error: 'Simulação de pagamento desativada em ambiente de produção para segurança dos dados.',
+        });
+      }
+    }
+
     const { txid, orderId } = req.body;
     let targetTxid = txid;
 
@@ -601,8 +747,8 @@ async function startServer() {
     });
   });
 
-  // PUT Tenant Pix Config (Cada restaurante edita sua própria chave Pix)
-  app.put('/api/v1/tenants/:slug/pix-config', (req: Request, res: Response) => {
+  // PUT Tenant Pix Config (Protected by Tenant JWT Guard)
+  app.put('/api/v1/tenants/:slug/pix-config', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
 
@@ -697,12 +843,18 @@ async function startServer() {
     return `📋 *Atualização do Pedido #${vars.numero_pedido}*\n\nOlá, *${vars.cliente_primeiro_nome}*, o status do seu pedido no *${vars.restaurante_nome}* foi atualizado para: *${newStatus}*.\n\n👉 *Acompanhe:* ${vars.link_rastreamento}`;
   }
 
-  // Update order status in KDS and trigger WhatsApp Notification
-  app.patch('/api/v1/orders/:id/status', async (req: Request, res: Response) => {
+  // Update order status in KDS and trigger WhatsApp Notification (Protected by JWT Guard)
+  app.patch('/api/v1/orders/:id/status', authenticateToken, async (req: Request, res: Response) => {
+    const user = (req as any).user;
     const { status } = req.body;
     const order = memoryOrders.find((o) => o.id === req.params.id);
     if (!order) {
       return res.status(404).json({ error: 'Pedido não encontrado.' });
+    }
+
+    // RBAC: Super Admin or tenant staff of the order
+    if (user.role !== 'SUPER_ADMIN' && user.tenant_slug !== '*' && user.tenant_slug !== order.tenantSlug) {
+      return res.status(403).json({ error: 'Acesso negado: você não tem permissão para alterar pedidos deste restaurante.' });
     }
 
     const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
@@ -1342,8 +1494,6 @@ async function startServer() {
   // ============================================================================
   // PASSO 2: AUTENTICAÇÃO JWT MULTI-TENANT & MAGIC OTP VIA WHATSAPP (EVOLUTION API)
   // ============================================================================
-  const JWT_SECRET = process.env.JWT_SECRET || 'aladay-cloudflare-jwt-secret-key-2026-hmac-sha256';
-
   interface InMemAuthUser {
     id: string;
     name: string;
@@ -1393,14 +1543,6 @@ async function startServer() {
     detail: string;
   }> = [];
 
-  function base64UrlEncode(input: string | Buffer): string {
-    return Buffer.from(input)
-      .toString('base64')
-      .replace(/=/g, '')
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_');
-  }
-
   function signJwtToken(user: InMemAuthUser) {
     const header = { alg: 'HS256', typ: 'JWT', kid: 'aladay-cloudflare-2026' };
     const iat = Math.floor(Date.now() / 1000);
@@ -1434,14 +1576,31 @@ async function startServer() {
     };
   }
 
-  // POST /api/v1/auth/login (E-mail & Senha)
+  // POST /api/v1/auth/login (E-mail & Senha com Rate Limiting e Proteção Timing-Safe)
   app.post('/api/v1/auth/login', (req: Request, res: Response) => {
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(`login_${clientIp}`, 5, 5 * 60 * 1000)) {
+      return res.status(429).json({
+        success: false,
+        error: 'Muitas tentativas de login consecutivas. Por favor, aguarde 5 minutos antes de tentar novamente.',
+      });
+    }
+
     const { email, password } = req.body;
     const cleanEmail = String(email || '').trim().toLowerCase();
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-    if (!user || (password && user.passwordHash !== password)) {
+    let passwordMatches = false;
+    if (user && password) {
+      const passBuf = Buffer.from(String(password));
+      const hashBuf = Buffer.from(String(user.passwordHash));
+      if (passBuf.length === hashBuf.length && crypto.timingSafeEqual(passBuf, hashBuf)) {
+        passwordMatches = true;
+      }
+    }
+
+    if (!user || !passwordMatches) {
       memoryAuthAuditLogs.unshift({
         id: `audit_${Date.now()}`,
         timestamp: currentTime,
@@ -1450,13 +1609,13 @@ async function startServer() {
         role: 'TENANT_OWNER',
         tenantSlug: '-',
         method: 'password',
-        ip: 'Cloudflare Proxy',
+        ip: clientIp,
         status: 'DENIED',
         detail: `Credenciais inválidas para ${cleanEmail}`,
       });
       return res.status(401).json({
         success: false,
-        error: 'E-mail ou senha inválidos. Verifique suas credenciais ou utilize um dos perfis de teste.',
+        error: 'E-mail ou senha inválidos. Verifique suas credenciais.',
       });
     }
 
@@ -1497,6 +1656,14 @@ async function startServer() {
 
   // POST /api/v1/auth/whatsapp-otp/request (Dispara código 6 dígitos real via Evolution API aladay)
   app.post('/api/v1/auth/whatsapp-otp/request', async (req: Request, res: Response) => {
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(`otp_${clientIp}`, 3, 10 * 60 * 1000)) {
+      return res.status(429).json({
+        success: false,
+        error: 'Limite de solicitações de código excedido. Por favor, aguarde 10 minutos para solicitar outro código.',
+      });
+    }
+
     const { email, phone } = req.body;
     const cleanEmail = String(email || 'admin@aladay.com.br').trim().toLowerCase();
     const cleanPhone = String(phone || '').replace(/\D/g, '');
@@ -2105,10 +2272,8 @@ async function startServer() {
 
   const asaasGatewayConfig = {
     environment: (process.env.ASAAS_ENVIRONMENT as 'sandbox' | 'production') || 'sandbox',
-    apiKey:
-      process.env.ASAAS_API_KEY ||
-      '$aact_YTU5YTE0M2M2N2I4MTliNjc0OTQ1NDZmNDQ5NDVjNDY6OjAwMDAwMDAwMDAwMDAwOTQ3NjY6OiRhYWNoXzM0OTk4ZjM5LWE3OGEtNGJjZi04N2MwLTBkNDU0NGMxYTNlYg==',
-    webhookToken: process.env.ASAAS_WEBHOOK_TOKEN || 'tok_aladay_asaas_sec_2026',
+    apiKey: process.env.ASAAS_API_KEY || '',
+    webhookToken: process.env.ASAAS_WEBHOOK_TOKEN || '',
     webhookUrl:
       process.env.ASAAS_WEBHOOK_URL ||
       (process.env.APP_URL ? `${process.env.APP_URL.replace(/\/$/, '')}/api/v1/asaas/webhook` : 'https://aladay.com.br/api/v1/asaas/webhook'),
@@ -2467,6 +2632,14 @@ async function startServer() {
 
   // Asaas Webhook Handler
   const handleAsaasWebhook = async (req: Request, res: Response) => {
+    // SECURITY: Validate Asaas Access Token Header
+    const receivedToken = (req.headers['asaas-access-token'] as string) || '';
+    const configuredToken = process.env.ASAAS_WEBHOOK_TOKEN || asaasGatewayConfig.webhookToken;
+    if (configuredToken && receivedToken !== configuredToken) {
+      console.warn(`[Segurança Asaas] Tentativa de webhook rejeitada por token inválido ou ausente.`);
+      return res.status(401).json({ error: 'Acesso não autorizado: token de webhook Asaas inválido.' });
+    }
+
     const event = req.body?.event;
     const payment = req.body?.payment;
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -2542,9 +2715,21 @@ async function startServer() {
   app.post('/api/v1/asaas/webhook', handleAsaasWebhook);
   app.post('/api/v1/webhooks/asaas-subscriptions', handleAsaasWebhook);
 
-  // POST /api/v1/asaas/simulate-webhook
+  // POST /api/v1/asaas/simulate-webhook (PROTECTED IN PRODUCTION)
   // Allows testing from the frontend UI without waiting for an external network event
   app.post('/api/v1/asaas/simulate-webhook', async (req: Request, res: Response) => {
+    // In production, block simulation unless authenticated as SUPER_ADMIN
+    if (process.env.NODE_ENV === 'production') {
+      const authHeader = req.headers['authorization'];
+      const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+      const claims = token ? verifyJwtToken(token) : null;
+      if (!claims || claims.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({
+          error: 'Simulação de webhook desativada em ambiente de produção para segurança dos dados.',
+        });
+      }
+    }
+
     const { eventType = 'PAYMENT_RECEIVED', tenantSlug = 'aladay' } = req.body;
     const sub = memoryAsaasSubscriptions[tenantSlug] || memoryAsaasSubscriptions['aladay'];
     const pendingInvoice = sub?.invoices.find((i) => i.status === 'PENDING') || sub?.invoices[0];

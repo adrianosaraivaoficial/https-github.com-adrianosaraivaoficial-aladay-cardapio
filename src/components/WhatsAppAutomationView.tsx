@@ -33,7 +33,7 @@ import {
   LogOut,
   BatteryCharging
 } from 'lucide-react';
-import { Order, RestaurantTenant, WebhookLogEvent, EvolutionQrConnectResponse } from '../types';
+import { Order, RestaurantTenant, WebhookLogEvent, EvolutionQrConnectResponse, AuthSession } from '../types';
 import { NotificationTemplatesEditor } from './NotificationTemplatesEditor';
 import { WhatsAppQrPairingModal } from './WhatsAppQrPairingModal';
 
@@ -43,6 +43,7 @@ interface WhatsAppAutomationViewProps {
   initialSubTab?: 'qrcode_pairing' | 'status_notifications' | 'simulator' | 'n8n_workflow' | 'templates' | 'easypanel' | 'logs';
   onUpdateTenant: (updatedTenant: RestaurantTenant) => void;
   onSimulateEvolutionReconnect: () => void;
+  authSession?: AuthSession;
 }
 
 interface ChatMessage {
@@ -59,7 +60,9 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   initialSubTab,
   onUpdateTenant,
   onSimulateEvolutionReconnect,
+  authSession,
 }) => {
+  const isSuperAdmin = authSession ? authSession.user.role === 'SUPER_ADMIN' : true;
   const [subTab, setSubTab] = useState<'qrcode_pairing' | 'status_notifications' | 'simulator' | 'n8n_workflow' | 'templates' | 'easypanel' | 'logs'>(
     initialSubTab || 'qrcode_pairing'
   );
@@ -548,6 +551,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
 
         {/* Sub-tabs strip */}
         <div className="flex items-center gap-2 pt-3 overflow-x-auto text-xs font-medium">
+          {/* Lojista / Restaurante Functions */}
           <button
             onClick={() => setSubTab('qrcode_pairing')}
             className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
@@ -579,33 +583,6 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
           >
             <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
             <span>Notificações de Status do Pedido (KDS)</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700 font-bold border border-emerald-500/30">
-              Passo 1
-            </span>
-          </button>
-
-          <button
-            onClick={() => setSubTab('simulator')}
-            className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              subTab === 'simulator'
-                ? 'bg-neutral-900 text-white font-semibold'
-                : 'text-neutral-600 hover:bg-neutral-100'
-            }`}
-          >
-            <Smartphone className="w-3.5 h-3.5" />
-            <span>Simulador de Resposta (Chat ao Vivo)</span>
-          </button>
-
-          <button
-            onClick={() => setSubTab('n8n_workflow')}
-            className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              subTab === 'n8n_workflow'
-                ? 'bg-neutral-900 text-white font-semibold'
-                : 'text-neutral-600 hover:bg-neutral-100'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>Workflow do n8n (JSON Pronto)</span>
           </button>
 
           <button
@@ -621,28 +598,74 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
           </button>
 
           <button
-            onClick={() => setSubTab('easypanel')}
+            onClick={() => setSubTab('simulator')}
             className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              subTab === 'easypanel'
+              subTab === 'simulator'
                 ? 'bg-neutral-900 text-white font-semibold'
                 : 'text-neutral-600 hover:bg-neutral-100'
             }`}
           >
-            <Terminal className="w-3.5 h-3.5" />
-            <span>Passo a Passo na VPS (Easypanel)</span>
+            <Smartphone className="w-3.5 h-3.5" />
+            <span>Simulador de Resposta (Chat ao Vivo)</span>
           </button>
 
-          <button
-            onClick={() => setSubTab('logs')}
-            className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              subTab === 'logs'
-                ? 'bg-neutral-900 text-white font-semibold'
-                : 'text-neutral-600 hover:bg-neutral-100'
-            }`}
-          >
-            <Radio className="w-3.5 h-3.5 text-emerald-500" />
-            <span>Logs &amp; Inspetor de Webhooks</span>
-          </button>
+          {/* Somente para o ADM (Super Admin da Plataforma) */}
+          {isSuperAdmin && (
+            <>
+              <div className="h-5 w-px bg-neutral-300 mx-1 shrink-0" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 shrink-0">
+                Somente ADM:
+              </span>
+
+              <button
+                onClick={() => setSubTab('n8n_workflow')}
+                className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer border ${
+                  subTab === 'n8n_workflow'
+                    ? 'bg-purple-900 text-white border-purple-800 font-semibold shadow-xs'
+                    : 'text-purple-700 bg-purple-50 hover:bg-purple-100 border-purple-200'
+                }`}
+                title="Workflow mestre do n8n em formato JSON (Somente para o Administrador da Plataforma)"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Workflow do n8n</span>
+                <span className="text-[9px] px-1 py-0.2 bg-purple-200 text-purple-900 rounded font-bold uppercase">
+                  ADM
+                </span>
+              </button>
+
+              <button
+                onClick={() => setSubTab('easypanel')}
+                className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer border ${
+                  subTab === 'easypanel'
+                    ? 'bg-indigo-900 text-white border-indigo-800 font-semibold shadow-xs'
+                    : 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border-indigo-200'
+                }`}
+                title="Configurações e comando cURL no Easypanel (Somente para o Administrador da Plataforma)"
+              >
+                <Terminal className="w-3.5 h-3.5" />
+                <span>Passo a Passo na VPS</span>
+                <span className="text-[9px] px-1 py-0.2 bg-indigo-200 text-indigo-900 rounded font-bold uppercase">
+                  ADM
+                </span>
+              </button>
+
+              <button
+                onClick={() => setSubTab('logs')}
+                className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer border ${
+                  subTab === 'logs'
+                    ? 'bg-emerald-900 text-white border-emerald-800 font-semibold shadow-xs'
+                    : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border-emerald-200'
+                }`}
+                title="Inspetor técnico de Webhooks e tráfego HTTP em tempo real (Somente para o Administrador da Plataforma)"
+              >
+                <Radio className="w-3.5 h-3.5" />
+                <span>Logs &amp; Inspetor de Webhooks</span>
+                <span className="text-[9px] px-1 py-0.2 bg-emerald-200 text-emerald-900 rounded font-bold uppercase">
+                  ADM
+                </span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -1240,10 +1263,32 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
         </div>
       )}
 
+      {/* Access Denied Card for Non-Admin trying to access infrastructure tools */}
+      {!isSuperAdmin && (subTab === 'n8n_workflow' || subTab === 'easypanel' || subTab === 'logs') && (
+        <div className="bg-white border border-amber-200 rounded-xl p-8 text-center space-y-3 shadow-2xs">
+          <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto font-bold text-lg">
+            🛡️
+          </div>
+          <h4 className="text-base font-bold text-neutral-900">Ferramenta de Infraestrutura (Exclusivo ADM)</h4>
+          <p className="text-xs text-neutral-600 max-w-md mx-auto">
+            Esta área (Workflow do n8n, Passo a Passo na VPS e Logs de Webhooks) é de controle exclusivo da equipe técnica e do Administrador Geral da plataforma Aladay.
+          </p>
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => setSubTab('qrcode_pairing')}
+              className="px-4 py-2 bg-neutral-900 text-white rounded-lg text-xs font-semibold hover:bg-neutral-800 transition-colors cursor-pointer"
+            >
+              Voltar para o Pareamento da Loja
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ============================================================== */}
-      {/* SUB-TAB 2: N8N WORKFLOW JSON EXPORT                            */}
+      {/* SUB-TAB 2: N8N WORKFLOW JSON EXPORT (Somente ADM)              */}
       {/* ============================================================== */}
-      {subTab === 'n8n_workflow' && (
+      {isSuperAdmin && subTab === 'n8n_workflow' && (
         <div className="space-y-5">
           <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-2xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-neutral-100">
@@ -1448,9 +1493,9 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
       )}
 
       {/* ============================================================== */}
-      {/* SUB-TAB 4: EASYPANEL & HOSTINGER SETUP GUIDE                   */}
+      {/* SUB-TAB 4: EASYPANEL & HOSTINGER SETUP GUIDE (Somente ADM)     */}
       {/* ============================================================== */}
-      {subTab === 'easypanel' && (
+      {isSuperAdmin && subTab === 'easypanel' && (
         <div className="space-y-6">
           <div className="bg-white border border-neutral-200 rounded-xl p-6 shadow-2xs space-y-5">
             <div>
@@ -1543,9 +1588,9 @@ EXECUTIONS_DATA_MAX_AGE=168`}
       )}
 
       {/* ============================================================== */}
-      {/* SUB-TAB 5: LOGS & WEBHOOK INSPECTOR                            */}
+      {/* SUB-TAB 5: LOGS & WEBHOOK INSPECTOR (Somente ADM)              */}
       {/* ============================================================== */}
-      {subTab === 'logs' && (
+      {isSuperAdmin && subTab === 'logs' && (
         <div className="space-y-6">
           {/* Header & Controls */}
           <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">

@@ -292,9 +292,13 @@ export default function App() {
   // Update order status in KDS and trigger WhatsApp Evolution API Notification
   const handleUpdateOrderStatus = (orderId: string, nextStatus: OrderStatus) => {
     // Sync with backend API to record outbox event and fire Evolution API notification
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (authSession?.token) {
+      headers['Authorization'] = `Bearer ${authSession.token}`;
+    }
     fetch(`/api/v1/orders/${orderId}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ status: nextStatus }),
     }).catch(() => {});
 
@@ -370,8 +374,8 @@ export default function App() {
             Aladay
           </button>
 
-          {/* Zone 2: 5 Concise Single-Line Navigation Links */}
-          <nav className="hidden md:flex items-center gap-6 text-xs font-medium text-neutral-600">
+          {/* Zone 2: Navigation Links separated by role */}
+          <nav className="hidden md:flex items-center gap-5 text-xs font-medium text-neutral-600">
             <button
               type="button"
               onClick={() => setCurrentView('home')}
@@ -397,7 +401,7 @@ export default function App() {
                 currentView === 'admin' ? 'text-neutral-950 font-semibold underline underline-offset-8' : ''
               }`}
             >
-              Painel &amp; KDS
+              Painel &amp; KDS (Loja)
             </button>
             <button
               type="button"
@@ -406,19 +410,33 @@ export default function App() {
                 currentView === 'whatsapp' ? 'text-neutral-950 font-semibold underline underline-offset-8' : ''
               }`}
             >
-              WhatsApp Real
+              WhatsApp
             </button>
           </nav>
 
-          {/* Zone 3: 1 Primary Action (Login Button) */}
-          <div className="flex items-center gap-3 shrink-0">
+          {/* Zone 3: Active Profile Badge & Login / Auth Portal */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            {authSession?.user?.role === 'SUPER_ADMIN' ? (
+              <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-purple-50 text-purple-800 border border-purple-200 text-[11px] font-bold">
+                <span>👑 Super Admin</span>
+              </span>
+            ) : authSession?.user?.role === 'TENANT_OWNER' ? (
+              <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold">
+                <span>🏪 Restaurante ({tenant.name})</span>
+              </span>
+            ) : (
+              <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold">
+                <span>🍳 Cozinha</span>
+              </span>
+            )}
+
             <button
               type="button"
               onClick={() => setCurrentView('auth')}
-              className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              className="flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-2xs"
             >
               <LogIn className="w-3.5 h-3.5" />
-              <span>Fazer Login</span>
+              <span>{authSession ? 'Sessão / Trocar' : 'Fazer Login'}</span>
             </button>
           </div>
         </div>
@@ -504,6 +522,7 @@ export default function App() {
             initialSubTab="status_notifications"
             onUpdateTenant={handleUpdateTenant}
             onSimulateEvolutionReconnect={handleSimulateEvolutionReconnect}
+            authSession={authSession}
           />
         )}
 
