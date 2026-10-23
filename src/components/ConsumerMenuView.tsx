@@ -31,9 +31,9 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
   const [cartItems, setCartItems] = useState<OrderItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [deliveryType, setDeliveryType] = useState<'delivery' | 'pickup'>('delivery');
-  const [customerName, setCustomerName] = useState<string>('Adriano Saraiva');
-  const [customerPhone, setCustomerPhone] = useState<string>('559181214188');
-  const [deliveryAddress, setDeliveryAddress] = useState<string>('Av. Consolação, 1420 - Apto 52');
+  const [customerName, setCustomerName] = useState<string>('');
+  const [customerPhone, setCustomerPhone] = useState<string>('');
+  const [deliveryAddress, setDeliveryAddress] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<string>('⚡ Pix Instantâneo (Aprovação Automática)');
 
   // Pix payment modal state

@@ -166,9 +166,9 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             {/* Quick Access Box for Existing Users */}
             <div className="pt-3 border-t border-neutral-800 flex items-center justify-between gap-3">
               <div className="text-xs">
-                <p className="text-neutral-400">Sessão atual demonstrativa:</p>
+                <p className="text-neutral-400">Acesso Direto ao Painel:</p>
                 <p className="font-semibold text-white truncate">
-                  {authSession.user.name} ({authSession.user.role})
+                  {authSession.user.name}
                 </p>
               </div>
               <button

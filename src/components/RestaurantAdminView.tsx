@@ -160,11 +160,11 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
   // Pix Key Editor state (Cada restaurante edita sua própria chave Pix direta)
   const [isEditingPixKey, setIsEditingPixKey] = useState(false);
-  const [pixKey, setPixKey] = useState(tenant.pixConfig?.pixKey || tenant.phone || '5511987654321');
+  const [pixKey, setPixKey] = useState(tenant.pixConfig?.pixKey || tenant.phone || '');
   const [pixKeyType, setPixKeyType] = useState<PixGatewayConfig['pixKeyType']>(tenant.pixConfig?.pixKeyType || 'phone');
-  const [pixMerchantName, setPixMerchantName] = useState(tenant.pixConfig?.merchantName || tenant.name || 'Brasas Burger');
+  const [pixMerchantName, setPixMerchantName] = useState(tenant.pixConfig?.merchantName || tenant.name || 'MEU RESTAURANTE');
   const [pixMerchantCity, setPixMerchantCity] = useState(tenant.pixConfig?.merchantCity || 'SAO PAULO');
-  const [pixBankName, setPixBankName] = useState(tenant.pixConfig?.bankName || 'Nubank PJ / Banco Inter');
+  const [pixBankName, setPixBankName] = useState(tenant.pixConfig?.bankName || 'Conta PJ');
   const [pixProvider, setPixProvider] = useState<PixGatewayConfig['provider']>(tenant.pixConfig?.provider || 'direct_bank');
   const [pixSaving, setPixSaving] = useState(false);
   const [pixSaveNotice, setPixSaveNotice] = useState<string | null>(null);
@@ -181,11 +181,11 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     setDeliveryZones(tenant.deliveryZones || []);
 
     // Sync Pix Config when tenant switches
-    setPixKey(tenant.pixConfig?.pixKey || tenant.phone || '5511987654321');
+    setPixKey(tenant.pixConfig?.pixKey || tenant.phone || '');
     setPixKeyType(tenant.pixConfig?.pixKeyType || 'phone');
-    setPixMerchantName(tenant.pixConfig?.merchantName || tenant.name || 'Brasas Burger');
+    setPixMerchantName(tenant.pixConfig?.merchantName || tenant.name || 'MEU RESTAURANTE');
     setPixMerchantCity(tenant.pixConfig?.merchantCity || 'SAO PAULO');
-    setPixBankName(tenant.pixConfig?.bankName || 'Nubank PJ / Banco Inter');
+    setPixBankName(tenant.pixConfig?.bankName || 'Conta PJ');
     setPixProvider(tenant.pixConfig?.provider || 'direct_bank');
     setIsEditingPixKey(false);
   }, [tenant]);

@@ -48,291 +48,36 @@ interface InMemTenant {
 
 const memoryTenants: InMemTenant[] = [
   {
-    id: 'tenant_brasas_01',
-    name: 'Brasas & Burger Artesanal',
-    slug: 'brasas-burger',
-    phone: '5511987654321',
-    address: 'Av. Paulista, 1200 - Bela Vista, São Paulo - SP',
+    id: 'tenant_aladay_01',
+    name: 'Meu Restaurante',
+    slug: 'aladay',
+    phone: '',
+    address: '',
     primaryColor: '#EA580C',
     isOpen: true,
-    deliveryFeeCents: 800,
-    minOrderCents: 2500,
-    deliveryZones: [
-      { id: 'zone_bela_vista', name: 'Bela Vista / Consolação', feeCents: 600, estimatedMinutes: 35, active: true },
-      { id: 'zone_paulista_jardins', name: 'Jardins / Cerqueira César', feeCents: 800, estimatedMinutes: 40, active: true },
-      { id: 'zone_pinheiros', name: 'Pinheiros / Vila Madalena', feeCents: 1100, estimatedMinutes: 45, active: true },
-      { id: 'zone_perdizes', name: 'Perdizes / Pacaembu', feeCents: 1200, estimatedMinutes: 50, active: true },
-      { id: 'zone_moema', name: 'Moema / Itaim Bibi', feeCents: 1400, estimatedMinutes: 55, active: true },
-    ],
-    evolutionInstanceId: 'aladay',
-    evolutionStatus: 'connected',
-    pixConfig: {
-      provider: 'direct_bank',
-      pixKey: '5511987654321',
-      pixKeyType: 'phone',
-      merchantName: 'Brasas & Burger Artesanal',
-      merchantCity: 'SAO PAULO',
-      bankName: 'Nubank PJ / Banco Inter',
-      autoApproveWebhook: true,
-    },
-  },
-  {
-    id: 'tenant_pizzaria_02',
-    name: 'Pizzaria Di Fiori Forno a Lenha',
-    slug: 'pizzaria-difiori',
-    phone: '5511976543210',
-    address: 'Rua Augusta, 1420 - Consolação, São Paulo - SP',
-    primaryColor: '#DC2626',
-    isOpen: true,
-    deliveryFeeCents: 900,
-    minOrderCents: 3500,
-    deliveryZones: [
-      { id: 'zone_consolacao', name: 'Consolação / Higienópolis', feeCents: 700, estimatedMinutes: 30, active: true },
-      { id: 'zone_santa_cecilia', name: 'Santa Cecília / Vila Buarque', feeCents: 850, estimatedMinutes: 35, active: true },
-      { id: 'zone_paulista', name: 'Bela Vista / Av. Paulista', feeCents: 900, estimatedMinutes: 40, active: true },
-      { id: 'zone_pinheiros_pizzaria', name: 'Pinheiros / Rebouças', feeCents: 1200, estimatedMinutes: 45, active: true },
-    ],
-    evolutionInstanceId: 'instancia_pizzaria_difiori',
-    evolutionStatus: 'connected',
-    pixConfig: {
-      provider: 'direct_bank',
-      pixKey: 'contato@pizzariadifiori.com.br',
-      pixKeyType: 'email',
-      merchantName: 'Pizzaria Di Fiori',
-      merchantCity: 'SAO PAULO',
-      bankName: 'Itaú Empresas',
-      autoApproveWebhook: true,
-    },
-  },
-];
-
-const memoryCategories: any[] = [
-  { id: 'cat_burgers', tenantSlug: 'brasas-burger', name: 'Burgers Artesanais', order: 1 },
-  { id: 'cat_combos', tenantSlug: 'brasas-burger', name: 'Combos Especiais', order: 2 },
-  { id: 'cat_sides', tenantSlug: 'brasas-burger', name: 'Porções & Acompanhamentos', order: 3 },
-  { id: 'cat_pizzas', tenantSlug: 'pizzaria-difiori', name: 'Pizzas Especiais Forno a Lenha', order: 1 },
-  { id: 'cat_calzones', tenantSlug: 'pizzaria-difiori', name: 'Calzones & Doces', order: 2 },
-];
-
-const memoryProducts: any[] = [
-  {
-    id: 'prod_smash_bacon',
-    tenantSlug: 'brasas-burger',
-    categoryId: 'cat_burgers',
-    name: 'Smash Bacon Duplo Especial',
-    description: 'Dois burgers artesanais 90g com crostinha na chapa, queijo cheddar inglês fundido e bacon crocante.',
-    priceCents: 3490,
-    isAvailable: true,
-  },
-  {
-    id: 'prod_costela_prime',
-    tenantSlug: 'brasas-burger',
-    categoryId: 'cat_burgers',
-    name: 'Burger de Costela Desfiada',
-    description: 'Hambúrguer 160g de costela bovina desfiada marinada na cerveja preta.',
-    priceCents: 3890,
-    isAvailable: true,
-  },
-  {
-    id: 'prod_margherita_gourmet',
-    tenantSlug: 'pizzaria-difiori',
-    categoryId: 'cat_pizzas',
-    name: 'Pizza Margherita Di Fiori',
-    description: 'Molho de tomate San Marzano, mozzarella de búfala e manjericão fresco.',
-    priceCents: 5890,
-    isAvailable: true,
-  },
-];
-
-const memoryOrders: any[] = [
-  {
-    id: 'ord_1042',
-    orderNumber: 1042,
-    tenantId: 'tenant_brasas_01',
-    tenantSlug: 'brasas-burger',
-    customerName: 'Adriano Saraiva',
-    customerPhone: '559181214188',
-    type: 'delivery',
-    deliveryAddress: 'Av. Consolação, 1420, Apto 52 - Bela Vista',
-    deliveryZoneName: 'Bela Vista / Consolação',
-    estimatedMinutes: 35,
-    items: [
-      {
-        productId: 'prod_smash_bacon',
-        productName: 'Smash Bacon Duplo Especial',
-        unitPriceCents: 3490,
-        quantity: 1,
-        selectedOptions: [
-          { groupId: 'opt_meat_point', groupName: 'Ponto da Carne', itemId: 'ponto_rosa', itemName: 'Ao ponto (rosadinho suculento)', priceCents: 0 },
-          { groupId: 'opt_extras', groupName: 'Adicionais', itemId: 'extra_bacon', itemName: 'Bacon Crocante Extra', priceCents: 600 },
-        ],
-        notes: 'Sem picles e caprichar no molho defumado por favor!',
-        totalCents: 4090,
-      },
-      {
-        productId: 'prod_costela_prime',
-        productName: 'Burger de Costela Desfiada',
-        unitPriceCents: 3890,
-        quantity: 1,
-        selectedOptions: [],
-        totalCents: 3890,
-      },
-    ],
-    subtotalCents: 7980,
-    deliveryFeeCents: 600,
-    totalCents: 8580,
-    status: 'received',
-    paymentStatus: 'pending',
-    paymentMethod: 'Pix no Recebimento',
-    whatsAppStatus: 'delivered',
-    whatsAppLogs: [
-      {
-        timestamp: '12:18:12',
-        event: 'order.created',
-        detail: 'Pedido registrado no sistema via Cardápio Digital.',
-        messageText: 'Olá, Adriano Saraiva! Recebemos seu pedido #1042 no Brasas & Burger Artesanal...',
-      },
-    ],
-    createdAt: '12:18',
-    updatedAt: '12:18',
-  },
-  {
-    id: 'ord_1041',
-    orderNumber: 1041,
-    tenantId: 'tenant_brasas_01',
-    tenantSlug: 'brasas-burger',
-    customerName: 'Mariana Duarte',
-    customerPhone: '5511991234567',
-    type: 'pickup',
-    items: [
-      {
-        productId: 'prod_costela_prime',
-        productName: 'Burger de Costela Desfiada',
-        unitPriceCents: 3890,
-        quantity: 2,
-        selectedOptions: [],
-        totalCents: 7780,
-      },
-    ],
-    subtotalCents: 7780,
     deliveryFeeCents: 0,
-    totalCents: 7780,
-    status: 'confirmed',
-    paymentStatus: 'paid_on_delivery',
-    paymentMethod: 'Cartão de Débito no Balcão',
-    whatsAppStatus: 'delivered',
-    whatsAppLogs: [
-      {
-        timestamp: '12:05:10',
-        event: 'order.status_confirmed',
-        detail: 'Pedido confirmado pela equipe de atendimento.',
-        messageText: '✅ Pedido #1041 Confirmado! Mariana, seu pedido já entrou na fila de produção.',
-      },
-    ],
-    createdAt: '12:01',
-    updatedAt: '12:05',
-  },
-  {
-    id: 'ord_1040',
-    orderNumber: 1040,
-    tenantId: 'tenant_brasas_01',
-    tenantSlug: 'brasas-burger',
-    customerName: 'Gabriel Pires',
-    customerPhone: '5511977778888',
-    type: 'delivery',
-    deliveryAddress: 'Alameda Santos, 800, Conj 41 - Cerqueira César',
-    deliveryZoneName: 'Jardins / Cerqueira César',
-    estimatedMinutes: 40,
-    items: [
-      {
-        productId: 'prod_smash_bacon',
-        productName: 'Smash Bacon Duplo Especial',
-        unitPriceCents: 3490,
-        quantity: 1,
-        selectedOptions: [],
-        totalCents: 3490,
-      },
-    ],
-    subtotalCents: 3490,
-    deliveryFeeCents: 800,
-    totalCents: 4290,
-    status: 'ready',
-    paymentStatus: 'paid_online',
-    paymentMethod: 'Pix Dinâmico Instantâneo',
-    whatsAppStatus: 'delivered',
-    whatsAppLogs: [
-      {
-        timestamp: '11:45:00',
-        event: 'order.status_ready',
-        detail: 'Pedido despachado para entrega com motoboy.',
-        messageText: '🛵 Pedido #1040 a Caminho! Gabriel, o motoboy já saiu com sua entrega.',
-      },
-    ],
-    createdAt: '11:15',
-    updatedAt: '11:45',
+    minOrderCents: 0,
+    deliveryZones: [],
+    evolutionInstanceId: 'aladay',
+    evolutionStatus: 'disconnected',
+    pixConfig: {
+      provider: 'direct_bank',
+      pixKey: '',
+      pixKeyType: 'cnpj',
+      merchantName: 'MEU RESTAURANTE',
+      merchantCity: 'SAO PAULO',
+      bankName: '',
+      autoApproveWebhook: true,
+    },
   },
 ];
+
+const memoryCategories: any[] = [];
+const memoryProducts: any[] = [];
+const memoryOrders: any[] = [];
 const memoryOutboxEvents: any[] = [];
 const memoryPixTransactions: any[] = [];
-const memoryWebhookLogs: any[] = [
-  {
-    id: 'log_init_01',
-    timestamp: '12:18:09',
-    source: 'evolution',
-    eventType: 'MESSAGES_UPSERT',
-    instance: 'aladay',
-    senderPhone: '559181214188',
-    messageText: 'Quero ver o cardápio',
-    direction: 'inbound',
-    status: 'success',
-    payloadSummary: 'Mensagem real recebida de Adriano Saraiva | Ozonteck (559181214188) via Easypanel',
-    fullPayload: {
-      event: 'messages.upsert',
-      instance: 'aladay',
-      data: {
-        key: {
-          remoteJid: '559181214188@s.whatsapp.net',
-          remoteJidAlt: '559181214188@s.whatsapp.net',
-          fromMe: true,
-          id: 'A56CC97BB6AC61D4C3C23750ABD44E67',
-          participant: '',
-          addressingMode: 'lid',
-        },
-        pushName: 'Adriano Saraiva | Ozonteck',
-        status: 'SERVER_ACK',
-        message: {
-          conversation: 'Quero ver o cardápio',
-        },
-        messageType: 'conversation',
-        messageTimestamp: 1792595889,
-        instanceId: 'c7471fde-eee3-4482-9213-fd69abafb165',
-        source: 'android',
-      },
-      destination: 'https://agencia-n8n.2eoc7n.easypanel.host/webhook-test/saas',
-      date_time: '2026-10-21T12:18:09.414Z',
-      sender: '559131976334@s.whatsapp.net',
-      server_url: 'https://agencia-evolution-api.2eoc7n.easypanel.host',
-      apikey: '21C3D49F3F00-48FA-BFA2-2CD290850405',
-    },
-  },
-  {
-    id: 'log_init_02',
-    timestamp: '12:18:10',
-    source: 'n8n',
-    eventType: 'DISPATCH_REPLY',
-    instance: 'aladay',
-    senderPhone: '559181214188',
-    messageText: 'Olá, Adriano Saraiva! Seja muito bem-vindo ao Brasas & Burger! 🍔...',
-    direction: 'outbound',
-    status: 'success',
-    payloadSummary: 'Auto-resposta de cardápio disparada pelo n8n via POST /message/sendText/aladay (200 OK)',
-    fullPayload: {
-      number: '559181214188',
-      text: 'Olá, Adriano Saraiva! Seja muito bem-vindo ao Brasas & Burger! 🍔\n\nNosso cardápio digital completo está disponível com fotos e preços atualizados no link:\n👉 https://cardapio.seudominio.com/brasas-burger\n\nFaça seu pedido diretamente pelo link acima!\nCaso queira falar com um atendente humano da nossa equipe, responda com 2.',
-      options: { delay: 1200, presence: 'composing', linkPreview: true },
-    },
-  },
-];
+const memoryWebhookLogs: any[] = [];
 
 async function startServer() {
   const app = express();
@@ -701,7 +446,7 @@ async function startServer() {
     console.log(`[Asaas SaaS Billing aladay.com.br] Evento de assinatura recebido: ${event}`);
 
     if (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED') {
-      const tenantSlug = payment?.externalReference || subscription?.externalReference || 'brasas-burger';
+      const tenantSlug = payment?.externalReference || subscription?.externalReference || 'aladay';
       const paymentId = payment?.id || `pay_asaas_${Date.now()}`;
       const amountReais = payment?.value || 99.0;
 
@@ -1615,14 +1360,14 @@ async function startServer() {
   const memoryUsers: InMemAuthUser[] = [
     {
       id: 'usr_super_01',
-      name: 'Adriano Saraiva (CEO Aladay)',
-      email: 'admin@aladay.com.br',
-      passwordHash: 'aladay2026',
-      phone: '559181214188',
+      name: 'Administrador Aladay',
+      email: process.env.ADMIN_EMAIL || 'admin@aladay.com.br',
+      passwordHash: process.env.ADMIN_PASSWORD || 'aladay2026',
+      phone: '',
       role: 'SUPER_ADMIN',
       tenantId: '*',
       tenantSlug: '*',
-      tenantName: 'Aladay Plataforma Global (Todos os Tenants)',
+      tenantName: 'Aladay Plataforma',
       permissions: [
         'platform:manage_tenants',
         'platform:asaas_subscriptions',
@@ -1630,54 +1375,6 @@ async function startServer() {
         'tenant:full_access',
         'kds:manage_orders',
       ],
-    },
-    {
-      id: 'usr_owner_brasas',
-      name: 'Carlos Eduardo (Lojista Brasas & Burger)',
-      email: 'lojista@brasasburger.com.br',
-      passwordHash: 'brasas123',
-      phone: '559181214188',
-      role: 'TENANT_OWNER',
-      tenantId: 'tenant_brasas_01',
-      tenantSlug: 'brasas-burger',
-      tenantName: 'Brasas & Burger Artesanal',
-      permissions: [
-        'tenant:manage_catalog',
-        'tenant:manage_pix_direct',
-        'tenant:manage_whatsapp_templates',
-        'tenant:view_billing_asaas',
-        'kds:manage_orders',
-      ],
-    },
-    {
-      id: 'usr_owner_difiori',
-      name: 'Marco Di Fiori (Lojista Pizzaria Di Fiori)',
-      email: 'lojista@difiori.com.br',
-      passwordHash: 'difiori123',
-      phone: '559181214188',
-      role: 'TENANT_OWNER',
-      tenantId: 'tenant_pizzaria_02',
-      tenantSlug: 'pizzaria-difiori',
-      tenantName: 'Pizzaria Di Fiori Forno a Lenha',
-      permissions: [
-        'tenant:manage_catalog',
-        'tenant:manage_pix_direct',
-        'tenant:manage_whatsapp_templates',
-        'tenant:view_billing_asaas',
-        'kds:manage_orders',
-      ],
-    },
-    {
-      id: 'usr_kds_brasas',
-      name: 'Rafael Cozinha (Operador KDS & Expedição)',
-      email: 'cozinha@brasasburger.com.br',
-      passwordHash: 'cozinha123',
-      phone: '559181214188',
-      role: 'KITCHEN_STAFF',
-      tenantId: 'tenant_brasas_01',
-      tenantSlug: 'brasas-burger',
-      tenantName: 'Brasas & Burger Artesanal',
-      permissions: ['kds:manage_orders', 'kds:dispatch_whatsapp_status'],
     },
   ];
 
@@ -1694,20 +1391,7 @@ async function startServer() {
     ip: string;
     status: 'SUCCESS' | 'OTP_SENT' | 'DENIED';
     detail: string;
-  }> = [
-    {
-      id: 'audit_init_1',
-      timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      userEmail: 'admin@aladay.com.br',
-      userName: 'Adriano Saraiva (CEO Aladay)',
-      role: 'SUPER_ADMIN',
-      tenantSlug: '*',
-      method: 'password',
-      ip: '172.67.142.19 (Cloudflare Edge)',
-      status: 'SUCCESS',
-      detail: 'Sessão inicial SUPER_ADMIN autenticada com token JWT HMAC-SHA256.',
-    },
-  ];
+  }> = [];
 
   function base64UrlEncode(input: string | Buffer): string {
     return Buffer.from(input)
@@ -1814,11 +1498,11 @@ async function startServer() {
   // POST /api/v1/auth/whatsapp-otp/request (Dispara código 6 dígitos real via Evolution API aladay)
   app.post('/api/v1/auth/whatsapp-otp/request', async (req: Request, res: Response) => {
     const { email, phone } = req.body;
-    const cleanEmail = String(email || 'lojista@brasasburger.com.br').trim().toLowerCase();
-    const cleanPhone = String(phone || '559181214188').replace(/\D/g, '');
+    const cleanEmail = String(email || 'admin@aladay.com.br').trim().toLowerCase();
+    const cleanPhone = String(phone || '').replace(/\D/g, '');
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail) || memoryUsers[1];
+    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail) || memoryUsers[0];
     const otpCode = String(Math.floor(100000 + Math.random() * 900000));
 
     memoryOtpCodes.set(cleanEmail, {
@@ -1907,7 +1591,7 @@ async function startServer() {
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     const stored = memoryOtpCodes.get(cleanEmail);
-    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail) || memoryUsers[1];
+    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail) || memoryUsers[0];
 
     if (!stored || stored.code !== cleanCode) {
       memoryAuthAuditLogs.unshift({
@@ -2002,30 +1686,9 @@ async function startServer() {
   const memoryEvolutionInstances: Record<string, InMemEvolutionInstance> = {
     aladay: {
       instanceName: 'aladay',
-      state: 'open',
-      connectedPhone: '5511987654321',
-      profileName: 'Brasas & Burger Atendimento Oficial',
-      batteryLevel: 98,
-      qrCount: 1,
-      serverUrl: 'https://agencia-evolution-api.2eoc7n.easypanel.host',
-    },
-    'brasas-burger': {
-      instanceName: 'brasas-burger',
-      state: 'open',
-      connectedPhone: '5511987654321',
-      profileName: 'Brasas & Burger Atendimento Oficial',
-      batteryLevel: 98,
-      qrCount: 1,
-      serverUrl: 'https://agencia-evolution-api.2eoc7n.easypanel.host',
-    },
-    'pizzaria-difiori': {
-      instanceName: 'pizzaria-difiori',
-      state: 'open',
-      connectedPhone: '5511976543210',
-      profileName: 'Pizzaria Di Fiori Delivery',
-      batteryLevel: 94,
-      qrCount: 1,
-      serverUrl: 'https://agencia-evolution-api.2eoc7n.easypanel.host',
+      state: 'close',
+      qrCount: 0,
+      serverUrl: process.env.EVOLUTION_API_URL || 'https://agencia-evolution-api.2eoc7n.easypanel.host',
     },
   };
 
@@ -2278,8 +1941,8 @@ async function startServer() {
     const { phone, profileName } = req.body;
     const { tenant } = getTenantEvolutionConfig(instanceName);
 
-    const pairedPhone = (phone || tenant?.phone || '5511987654321').replace(/\D/g, '');
-    const pairedProfile = profileName || tenant?.name || 'Brasas & Burger Atendimento Oficial';
+    const pairedPhone = (phone || tenant?.phone || '').replace(/\D/g, '');
+    const pairedProfile = profileName || tenant?.name || 'Restaurante Oficial';
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     const inst = memoryEvolutionInstances[instanceName] || { instanceName, state: 'open', qrCount: 1 };
@@ -2454,106 +2117,24 @@ async function startServer() {
   const defaultPixPayload = '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br520400005303986540599.005802BR5915ALADAY SAAS6009SAO PAULO62070503***6304D1B8';
 
   const memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {
-    'brasas-burger': {
-      id: 'sub_asaas_brasas_01',
-      tenantSlug: 'brasas-burger',
+    aladay: {
+      id: 'sub_asaas_aladay_01',
+      tenantSlug: 'aladay',
       customer: {
-        id: 'cus_000005928172',
-        name: 'Brasas & Burger Artesanal Ltda',
-        email: 'financeiro@brasasburger.com.br',
-        cpfCnpj: '41.238.991/0001-82',
-        phone: '5511987654321',
+        id: 'cus_aladay_01',
+        name: 'Meu Restaurante',
+        email: '',
+        cpfCnpj: '',
+        phone: '',
       },
       planName: 'Plano Pro Aladay - R$ 99,00/mês',
       value: 99.0,
       cycle: 'MONTHLY',
-      status: 'ACTIVE',
+      status: 'PENDING',
       billingType: 'PIX',
-      nextDueDate: '2026-11-20',
-      createdAt: '2026-08-20',
-      lastPaymentDate: '2026-10-20',
-      invoices: [
-        {
-          id: 'pay_asaas_nov_01',
-          subscriptionId: 'sub_asaas_brasas_01',
-          referenceMonth: 'Novembro / 2026',
-          value: 99.0,
-          status: 'PENDING',
-          dueDate: '2026-11-20',
-          billingType: 'PIX',
-          invoiceUrl: 'https://www.asaas.com/i/pay_asaas_nov_01',
-          description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
-          pixCopiaECola: defaultPixPayload,
-        },
-        {
-          id: 'pay_asaas_out_01',
-          subscriptionId: 'sub_asaas_brasas_01',
-          referenceMonth: 'Outubro / 2026',
-          value: 99.0,
-          status: 'RECEIVED',
-          dueDate: '2026-10-20',
-          paymentDate: '2026-10-20',
-          billingType: 'PIX',
-          invoiceUrl: 'https://www.asaas.com/i/pay_asaas_out_01',
-          description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
-        },
-        {
-          id: 'pay_asaas_set_01',
-          subscriptionId: 'sub_asaas_brasas_01',
-          referenceMonth: 'Setembro / 2026',
-          value: 99.0,
-          status: 'RECEIVED',
-          dueDate: '2026-09-20',
-          paymentDate: '2026-09-20',
-          billingType: 'CREDIT_CARD',
-          invoiceUrl: 'https://www.asaas.com/i/pay_asaas_set_01',
-          description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
-        },
-      ],
-    },
-    'pizzaria-difiori': {
-      id: 'sub_asaas_difiori_02',
-      tenantSlug: 'pizzaria-difiori',
-      customer: {
-        id: 'cus_000008472910',
-        name: 'Pizzaria Di Fiori Forno a Lenha Ltda',
-        email: 'contato@pizzariadifiori.com.br',
-        cpfCnpj: '32.847.192/0001-44',
-        phone: '5511976543210',
-      },
-      planName: 'Plano Pro Aladay - R$ 99,00/mês',
-      value: 99.0,
-      cycle: 'MONTHLY',
-      status: 'ACTIVE',
-      billingType: 'CREDIT_CARD',
-      nextDueDate: '2026-11-25',
-      createdAt: '2026-09-25',
-      lastPaymentDate: '2026-10-25',
-      invoices: [
-        {
-          id: 'pay_asaas_nov_02',
-          subscriptionId: 'sub_asaas_difiori_02',
-          referenceMonth: 'Novembro / 2026',
-          value: 99.0,
-          status: 'PENDING',
-          dueDate: '2026-11-25',
-          billingType: 'CREDIT_CARD',
-          invoiceUrl: 'https://www.asaas.com/i/pay_asaas_nov_02',
-          description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
-        },
-        {
-          id: 'pay_asaas_out_02',
-          subscriptionId: 'sub_asaas_difiori_02',
-          referenceMonth: 'Outubro / 2026',
-          value: 99.0,
-          status: 'RECEIVED',
-          dueDate: '2026-10-25',
-          paymentDate: '2026-10-25',
-          billingType: 'CREDIT_CARD',
-          invoiceUrl: 'https://www.asaas.com/i/pay_asaas_out_02',
-          description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
-        },
-      ],
+      nextDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      createdAt: new Date().toISOString().split('T')[0],
+      invoices: [],
     },
   };
 
@@ -2573,9 +2154,9 @@ async function startServer() {
   }
 
   // Pre-generate QR for default pending invoice
-  const brasasPendingInvoice = memoryAsaasSubscriptions['brasas-burger']?.invoices[0];
-  if (brasasPendingInvoice) {
-    ensurePixQrCode(brasasPendingInvoice);
+  const defaultPendingInvoice = memoryAsaasSubscriptions['aladay']?.invoices[0];
+  if (defaultPendingInvoice) {
+    ensurePixQrCode(defaultPendingInvoice);
   }
 
   // GET /api/v1/asaas/subscription/:slug
@@ -2903,8 +2484,7 @@ async function startServer() {
       targetSub = Object.values(memoryAsaasSubscriptions).find((s) => s.invoices.some((i) => i.id === payment.id));
     }
     if (!targetSub) {
-      // Default fallback to first active tenant subscription for simulation
-      targetSub = memoryAsaasSubscriptions['brasas-burger'];
+      targetSub = memoryAsaasSubscriptions['aladay'];
     }
 
     if (targetSub) {
@@ -2965,8 +2545,8 @@ async function startServer() {
   // POST /api/v1/asaas/simulate-webhook
   // Allows testing from the frontend UI without waiting for an external network event
   app.post('/api/v1/asaas/simulate-webhook', async (req: Request, res: Response) => {
-    const { eventType = 'PAYMENT_RECEIVED', tenantSlug = 'brasas-burger' } = req.body;
-    const sub = memoryAsaasSubscriptions[tenantSlug] || memoryAsaasSubscriptions['brasas-burger'];
+    const { eventType = 'PAYMENT_RECEIVED', tenantSlug = 'aladay' } = req.body;
+    const sub = memoryAsaasSubscriptions[tenantSlug] || memoryAsaasSubscriptions['aladay'];
     const pendingInvoice = sub?.invoices.find((i) => i.status === 'PENDING') || sub?.invoices[0];
 
     const mockPayload = {

@@ -206,22 +206,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   };
 
   // Live Chat Simulator state
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    {
-      id: 'msg_1',
-      sender: 'customer',
-      text: 'Quero ver o cardápio',
-      time: '12:18',
-      status: 'read',
-    },
-    {
-      id: 'msg_2',
-      sender: 'bot',
-      text: `Olá, Adriano Saraiva! Seja muito bem-vindo ao *${tenant.name}*! 🍔\n\nNosso cardápio digital completo está disponível com fotos e preços em tempo real:\n\n👉 https://cardapio.seudominio.com/${tenant.slug}\n\nFaça seu pedido diretamente pelo link! Se preferir falar com um atendente da nossa equipe, responda com *2*.`,
-      time: '12:18',
-      status: 'read',
-    },
-  ]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   const [customInput, setCustomInput] = useState('');
   const [isSimulatingResponse, setIsSimulatingResponse] = useState(false);
@@ -230,69 +215,11 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const [copiedWorkflow, setCopiedWorkflow] = useState(false);
   const [copiedCurl, setCopiedCurl] = useState(false);
 
-  // Webhook Logs & Live Inspector State (Pre-seeded with user's actual payload)
-  const [webhookLogs, setWebhookLogs] = useState<WebhookLogEvent[]>([
-    {
-      id: 'log_01',
-      timestamp: '12:18:09',
-      source: 'evolution',
-      eventType: 'MESSAGES_UPSERT',
-      instance: tenant.evolutionInstanceId || 'aladay',
-      senderPhone: '559181214188',
-      messageText: 'Quero ver o cardápio',
-      direction: 'inbound',
-      status: 'success',
-      payloadSummary: 'Mensagem real recebida de Adriano Saraiva | Ozonteck (559181214188)',
-      fullPayload: {
-        event: 'messages.upsert',
-        instance: 'aladay',
-        data: {
-          key: {
-            remoteJid: '559181214188@s.whatsapp.net',
-            remoteJidAlt: '559181214188@s.whatsapp.net',
-            fromMe: true,
-            id: 'A56CC97BB6AC61D4C3C23750ABD44E67',
-            participant: '',
-            addressingMode: 'lid',
-          },
-          pushName: 'Adriano Saraiva | Ozonteck',
-          status: 'SERVER_ACK',
-          message: {
-            conversation: 'Quero ver o cardápio',
-          },
-          messageType: 'conversation',
-          messageTimestamp: 1792595889,
-          instanceId: 'c7471fde-eee3-4482-9213-fd69abafb165',
-          source: 'android',
-        },
-        destination: 'https://agencia-n8n.2eoc7n.easypanel.host/webhook-test/saas',
-        date_time: '2026-10-21T12:18:09.414Z',
-        sender: '559131976334@s.whatsapp.net',
-        server_url: 'https://agencia-evolution-api.2eoc7n.easypanel.host',
-        apikey: '21C3D49F3F00-48FA-BFA2-2CD290850405',
-      },
-    },
-    {
-      id: 'log_02',
-      timestamp: '12:18:10',
-      source: 'n8n',
-      eventType: 'DISPATCH_REPLY',
-      instance: tenant.evolutionInstanceId || 'aladay',
-      senderPhone: '559181214188',
-      messageText: welcomeTemplate,
-      direction: 'outbound',
-      status: 'success',
-      payloadSummary: 'Auto-resposta de cardápio enviada com sucesso para Adriano Saraiva (200 OK)',
-      fullPayload: {
-        number: '559181214188',
-        text: welcomeTemplate,
-        options: { delay: 1200, presence: 'composing', linkPreview: true },
-      },
-    },
-  ]);
+  // Webhook Logs & Live Inspector State
+  const [webhookLogs, setWebhookLogs] = useState<WebhookLogEvent[]>([]);
   const [selectedLogForDetails, setSelectedLogForDetails] = useState<WebhookLogEvent | null>(null);
-  const [testWebhookText, setTestWebhookText] = useState('Quero ver o cardápio');
-  const [testSenderPhone, setTestSenderPhone] = useState('559181214188');
+  const [testWebhookText, setTestWebhookText] = useState('');
+  const [testSenderPhone, setTestSenderPhone] = useState('');
   const [isSendingTestWebhook, setIsSendingTestWebhook] = useState(false);
   const [testWebhookResult, setTestWebhookResult] = useState<any>(null);
 

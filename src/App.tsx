@@ -28,16 +28,16 @@ export default function App() {
 
   const [authSession, setAuthSession] = useState<AuthSession>({
     token:
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFsYWRheS1jbG91ZGZsYXJlLTIwMjYifQ.eyJzdWIiOiJ1c3Jfc3VwZXJfMDEiLCJuYW1lIjoiQWRyaWFubyBTYXJhaXZhIChDRU8gQWxhZGF5KSIsImVtYWlsIjoiYWRtaW5AYWxhZGF5LmNvbS5iciIsInJvbGUiOiJTVVBFUl9BRE1JTiIsInRlbmFudF9pZCI6IioiLCJ0ZW5hbnRfc2x1ZyI6IioiLCJpc3MiOiJodHRwczovL2FsYWRheS5jb20uYnIifQ.aladay_hmac_sha256_sig',
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFsYWRheS1jbG91ZGZsYXJlLTIwMjYifQ.eyJzdWIiOiJ1c3Jfc3VwZXJfMDEiLCJuYW1lIjoiQWRtaW5pc3RyYWRvciBBbGFkYXkiLCJlbWFpbCI6ImFkbWluQGFsYWRheS5jb20uYnIiLCJyb2xlIjoiU1VQRVJfQURNSU4iLCJ0ZW5hbnRfaWQiOiIqIiwidGVuYW50X3NsdWciOiIqIiwiaXNzIjoiaHR0cHM6Ly9hbGFkYXkuY29tLmJyIn0.aladay_hmac_sha256_sig',
     user: {
       id: 'usr_super_01',
-      name: 'Adriano Saraiva (CEO Aladay)',
+      name: 'Administrador Aladay',
       email: 'admin@aladay.com.br',
-      phone: '559181214188',
+      phone: '',
       role: 'SUPER_ADMIN',
       tenantId: '*',
       tenantSlug: '*',
-      tenantName: 'Aladay Plataforma Global (Todos os Tenants)',
+      tenantName: 'Aladay Plataforma',
       permissions: [
         'platform:manage_tenants',
         'platform:asaas_subscriptions',
@@ -48,7 +48,7 @@ export default function App() {
     },
     claims: {
       sub: 'usr_super_01',
-      name: 'Adriano Saraiva (CEO Aladay)',
+      name: 'Administrador Aladay',
       email: 'admin@aladay.com.br',
       role: 'SUPER_ADMIN',
       tenant_id: '*',
@@ -67,28 +67,64 @@ export default function App() {
     authMethod: 'password',
     authenticatedAt: 'Agora',
   });
-  
-  // Shared state between consumer cardápio and restaurant admin
-  const [tenantsList, setTenantsList] = useState<RestaurantTenant[]>(INITIAL_TENANTS_LIST);
-  const [tenant, setTenant] = useState<RestaurantTenant>(INITIAL_TENANT);
-  
+
+  // Shared state between consumer cardápio and restaurant admin (persisted in localStorage)
+  const [tenantsList, setTenantsList] = useState<RestaurantTenant[]>(() => {
+    try {
+      const saved = localStorage.getItem('aladay_prod_tenants_list_v2');
+      return saved ? JSON.parse(saved) : INITIAL_TENANTS_LIST;
+    } catch {
+      return INITIAL_TENANTS_LIST;
+    }
+  });
+
+  const [tenant, setTenant] = useState<RestaurantTenant>(() => {
+    try {
+      const saved = localStorage.getItem('aladay_prod_tenant_v2');
+      return saved ? JSON.parse(saved) : INITIAL_TENANT;
+    } catch {
+      return INITIAL_TENANT;
+    }
+  });
+
   // Catalogs indexed by tenant slug (Multi-tenancy isolated state)
   const [catalogsByTenant, setCatalogsByTenant] = useState<
     Record<string, { categories: Category[]; products: Product[]; orders: Order[] }>
-  >({
-    'brasas-burger': {
-      categories: INITIAL_CATEGORIES,
-      products: INITIAL_PRODUCTS,
-      orders: INITIAL_ORDERS,
-    },
-    'pizzaria-difiori': {
-      categories: PIZZARIA_CATEGORIES,
-      products: PIZZARIA_PRODUCTS,
-      orders: [],
-    },
+  >(() => {
+    try {
+      const saved = localStorage.getItem('aladay_prod_catalogs_v2');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // ignore
+    }
+    return {
+      [INITIAL_TENANT.slug]: {
+        categories: INITIAL_CATEGORIES,
+        products: INITIAL_PRODUCTS,
+        orders: INITIAL_ORDERS,
+      },
+    };
   });
 
-  const [customers, setCustomers] = useState<CustomerRecord[]>(INITIAL_CUSTOMERS);
+  const [customers, setCustomers] = useState<CustomerRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem('aladay_prod_customers_v2');
+      return saved ? JSON.parse(saved) : INITIAL_CUSTOMERS;
+    } catch {
+      return INITIAL_CUSTOMERS;
+    }
+  });
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('aladay_prod_tenant_v2', JSON.stringify(tenant));
+      localStorage.setItem('aladay_prod_tenants_list_v2', JSON.stringify(tenantsList));
+      localStorage.setItem('aladay_prod_catalogs_v2', JSON.stringify(catalogsByTenant));
+      localStorage.setItem('aladay_prod_customers_v2', JSON.stringify(customers));
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [tenant, tenantsList, catalogsByTenant, customers]);
 
   // Derived current tenant data
   const currentCatalog = catalogsByTenant[tenant.slug] || {
@@ -110,16 +146,7 @@ export default function App() {
           { id: `cat_${Date.now()}_1`, name: 'Pratos Principais', order: 1 },
           { id: `cat_${Date.now()}_2`, name: 'Bebidas', order: 2 },
         ],
-        products: [
-          {
-            id: `prod_${Date.now()}_1`,
-            categoryId: `cat_${Date.now()}_1`,
-            name: `${newTenant.name} Especial`,
-            description: 'Item exclusivo da casa preparado com ingredientes frescos selecionados.',
-            priceCents: 4200,
-            isAvailable: true,
-          },
-        ],
+        products: [],
         orders: [],
       },
     }));
@@ -361,7 +388,7 @@ export default function App() {
                 currentView === 'consumer' ? 'text-neutral-950 font-semibold underline underline-offset-8' : ''
               }`}
             >
-              Cardápio Demo
+              Cardápio Digital
             </button>
             <button
               type="button"
@@ -419,15 +446,6 @@ export default function App() {
 
         {currentView === 'consumer' && (
           <div className="py-2">
-            <div className="mb-4 text-center max-w-xl mx-auto">
-              <span className="text-xs text-neutral-500 font-mono">Visualização em Tempo Real do Consumidor</span>
-              <h2 className="text-lg font-bold text-neutral-900">
-                Cardápio Digital de {tenant.name}
-              </h2>
-              <p className="text-xs text-neutral-600 mt-0.5">
-                Qualquer produto adicionado ou editado na Área de Membros aparece aqui instantaneamente.
-              </p>
-            </div>
             <ConsumerMenuView
               tenant={tenant}
               categories={categories}
