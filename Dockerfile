@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package.json package-lock.json* bun.lock* ./
 
 # Install all dependencies (including devDependencies needed for vite build)
-RUN npm install
+RUN npm install --legacy-peer-deps
 
 # Copy application source code
 COPY . .
@@ -26,7 +26,7 @@ ENV PORT=3000
 
 # Copy package files and install only production dependencies
 COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
+RUN npm install --omit=dev --legacy-peer-deps
 
 # Copy compiled frontend from builder
 COPY --from=builder /app/dist ./dist
