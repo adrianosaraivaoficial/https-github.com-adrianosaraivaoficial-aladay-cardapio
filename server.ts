@@ -6,8 +6,11 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import fs from 'fs';
+import pg from 'pg';
 import QRCode from 'qrcode';
 
+const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -79,11 +82,284 @@ const memoryOutboxEvents: any[] = [];
 const memoryPixTransactions: any[] = [];
 const memoryWebhookLogs: any[] = [];
 
+// ============================================================================
+// EASYPANEL VPS POSTGRESQL CONNECTION & AUTO-MIGRATION ENGINE
+// ============================================================================
+let activeDatabaseUrl = process.env.DATABASE_URL || '';
+let pgPool: pg.Pool | null = null;
+let dbConnectionState: {
+  connected: boolean;
+  lastCheckedAt: string | null;
+  serverVersion: string | null;
+  error: string | null;
+  tablesInitialized: boolean;
+} = {
+  connected: false,
+  lastCheckedAt: null,
+  serverVersion: null,
+  error: null,
+  tablesInitialized: false,
+};
+
+function maskDatabaseUrl(url: string): string {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    if (parsed.password) {
+      parsed.password = '********';
+    }
+    return parsed.toString();
+  } catch {
+    return url.replace(/:([^:@/]+)@/, ':********@');
+  }
+}
+
+function getInitSqlScript(): string {
+  try {
+    const sqlPath = path.join(__dirname, 'database', 'easypanel-init.sql');
+    if (fs.existsSync(sqlPath)) {
+      return fs.readFileSync(sqlPath, 'utf-8');
+    }
+  } catch {
+    // Fallback inline DDL
+  }
+  return `
+CREATE TABLE IF NOT EXISTS tenants (
+  id VARCHAR(80) PRIMARY KEY,
+  name VARCHAR(150) NOT NULL,
+  slug VARCHAR(100) UNIQUE NOT NULL,
+  phone VARCHAR(30) NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
+  primary_color VARCHAR(20) NOT NULL DEFAULT '#EA580C',
+  is_open BOOLEAN NOT NULL DEFAULT TRUE,
+  delivery_fee_cents INTEGER NOT NULL DEFAULT 0,
+  min_order_cents INTEGER NOT NULL DEFAULT 0,
+  delivery_zones JSONB NOT NULL DEFAULT '[]'::jsonb,
+  evolution_instance_id VARCHAR(100) NOT NULL DEFAULT 'aladay',
+  evolution_status VARCHAR(30) NOT NULL DEFAULT 'disconnected',
+  subscription_status VARCHAR(30) NOT NULL DEFAULT 'active',
+  status_notification_templates JSONB NOT NULL DEFAULT '{}'::jsonb,
+  pix_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS categories (
+  id VARCHAR(80) PRIMARY KEY,
+  tenant_id VARCHAR(80) NOT NULL,
+  tenant_slug VARCHAR(100) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  display_order INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS products (
+  id VARCHAR(80) PRIMARY KEY,
+  tenant_id VARCHAR(80) NOT NULL,
+  tenant_slug VARCHAR(100) NOT NULL,
+  category_id VARCHAR(80) NOT NULL,
+  name VARCHAR(150) NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  price_cents INTEGER NOT NULL DEFAULT 0,
+  image_url TEXT,
+  is_available BOOLEAN NOT NULL DEFAULT TRUE,
+  is_featured BOOLEAN NOT NULL DEFAULT FALSE,
+  option_groups JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS orders (
+  id VARCHAR(80) PRIMARY KEY,
+  order_number INTEGER NOT NULL,
+  tenant_id VARCHAR(80) NOT NULL,
+  tenant_slug VARCHAR(100) NOT NULL,
+  customer_name VARCHAR(120) NOT NULL,
+  customer_phone VARCHAR(30) NOT NULL,
+  order_type VARCHAR(20) NOT NULL DEFAULT 'delivery',
+  delivery_address TEXT,
+  items JSONB NOT NULL DEFAULT '[]'::jsonb,
+  subtotal_cents INTEGER NOT NULL DEFAULT 0,
+  delivery_fee_cents INTEGER NOT NULL DEFAULT 0,
+  total_cents INTEGER NOT NULL DEFAULT 0,
+  status VARCHAR(30) NOT NULL DEFAULT 'received',
+  payment_status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  payment_method VARCHAR(60) NOT NULL DEFAULT 'Pix',
+  idempotency_key VARCHAR(120),
+  pix_transaction JSONB,
+  whatsapp_logs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS outbox_events (
+  id VARCHAR(80) PRIMARY KEY,
+  tenant_id VARCHAR(80) NOT NULL,
+  aggregate_type VARCHAR(50) NOT NULL,
+  aggregate_id VARCHAR(80) NOT NULL,
+  event_type VARCHAR(80) NOT NULL,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  processed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);`;
+}
+
+async function initializePostgresConnection(connectionString: string, runMigration = true): Promise<{
+  success: boolean;
+  version?: string;
+  counts?: Record<string, number>;
+  error?: string;
+}> {
+  if (!connectionString || !connectionString.trim()) {
+    const errMsg = 'Variável DATABASE_URL ainda não definida no EasyPanel.';
+    dbConnectionState = {
+      connected: false,
+      lastCheckedAt: new Date().toISOString(),
+      serverVersion: null,
+      error: errMsg,
+      tablesInitialized: false,
+    };
+    return { success: false, error: errMsg };
+  }
+
+  try {
+    const useSsl =
+      connectionString.includes('sslmode=require') ||
+      (process.env.PGSSLMODE === 'require');
+
+    const candidatePool = new Pool({
+      connectionString: connectionString.trim(),
+      ssl: useSsl ? { rejectUnauthorized: false } : false,
+      connectionTimeoutMillis: 6000,
+    });
+
+    const client = await candidatePool.connect();
+    try {
+      const versionRes = await client.query('SELECT version();');
+      const serverVersion = versionRes.rows[0]?.version || 'PostgreSQL';
+
+      if (runMigration) {
+        const ddl = getInitSqlScript();
+        await client.query(ddl);
+
+        // Sync memoryTenants to PostgreSQL if table is empty or upsert
+        for (const t of memoryTenants) {
+          await client.query(
+            `INSERT INTO tenants (id, name, slug, phone, address, primary_color, is_open, delivery_fee_cents, min_order_cents, delivery_zones, evolution_instance_id, evolution_status, pix_config)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13::jsonb)
+             ON CONFLICT (slug) DO UPDATE SET
+               name = EXCLUDED.name,
+               phone = EXCLUDED.phone,
+               address = EXCLUDED.address,
+               primary_color = EXCLUDED.primary_color,
+               is_open = EXCLUDED.is_open,
+               delivery_fee_cents = EXCLUDED.delivery_fee_cents,
+               min_order_cents = EXCLUDED.min_order_cents,
+               pix_config = EXCLUDED.pix_config,
+               updated_at = NOW();`,
+            [
+              t.id,
+              t.name,
+              t.slug,
+              t.phone || '',
+              t.address || '',
+              t.primaryColor || '#EA580C',
+              t.isOpen ?? true,
+              t.deliveryFeeCents || 0,
+              t.minOrderCents || 0,
+              JSON.stringify(t.deliveryZones || []),
+              t.evolutionInstanceId || 'aladay',
+              t.evolutionStatus || 'disconnected',
+              JSON.stringify(t.pixConfig || {}),
+            ]
+          );
+        }
+
+        // Load saved tenants from PostgreSQL into memoryTenants
+        const dbTenants = await client.query('SELECT * FROM tenants ORDER BY created_at ASC;');
+        dbTenants.rows.forEach((row) => {
+          const existingIdx = memoryTenants.findIndex((m) => m.slug === row.slug);
+          const mappedTenant: InMemTenant = {
+            id: row.id,
+            name: row.name,
+            slug: row.slug,
+            phone: row.phone || '',
+            address: row.address || '',
+            primaryColor: row.primary_color || '#EA580C',
+            isOpen: row.is_open ?? true,
+            deliveryFeeCents: Number(row.delivery_fee_cents) || 0,
+            minOrderCents: Number(row.min_order_cents) || 0,
+            deliveryZones: Array.isArray(row.delivery_zones) ? row.delivery_zones : [],
+            evolutionInstanceId: row.evolution_instance_id || 'aladay',
+            evolutionStatus: (row.evolution_status as any) || 'disconnected',
+            subscriptionStatus: (row.subscription_status as any) || 'active',
+            statusNotificationTemplates: row.status_notification_templates || {},
+            pixConfig: row.pix_config || undefined,
+          };
+          if (existingIdx >= 0) {
+            memoryTenants[existingIdx] = mappedTenant;
+          } else {
+            memoryTenants.push(mappedTenant);
+          }
+        });
+      }
+
+      const countsRes = await client.query(`
+        SELECT
+          (SELECT COUNT(*) FROM tenants)::int AS tenants,
+          (SELECT COUNT(*) FROM categories)::int AS categories,
+          (SELECT COUNT(*) FROM products)::int AS products,
+          (SELECT COUNT(*) FROM orders)::int AS orders,
+          (SELECT COUNT(*) FROM outbox_events)::int AS outbox_events;
+      `);
+      const counts = countsRes.rows[0] || {
+        tenants: 0,
+        categories: 0,
+        products: 0,
+        orders: 0,
+        outbox_events: 0,
+      };
+
+      if (pgPool && pgPool !== candidatePool) {
+        await pgPool.end().catch(() => {});
+      }
+      pgPool = candidatePool;
+      activeDatabaseUrl = connectionString.trim();
+
+      dbConnectionState = {
+        connected: true,
+        lastCheckedAt: new Date().toISOString(),
+        serverVersion,
+        error: null,
+        tablesInitialized: true,
+      };
+
+      console.log(`[PostgreSQL EasyPanel VPS] Conectado com sucesso: ${serverVersion}`);
+      return { success: true, version: serverVersion, counts };
+    } finally {
+      client.release();
+    }
+  } catch (err: any) {
+    const errorMsg = err?.message || 'Falha ao conectar ao PostgreSQL no EasyPanel.';
+    dbConnectionState = {
+      connected: false,
+      lastCheckedAt: new Date().toISOString(),
+      serverVersion: null,
+      error: errorMsg,
+      tablesInitialized: false,
+    };
+    console.warn(`[PostgreSQL EasyPanel VPS] Aviso de conexão: ${errorMsg}`);
+    return { success: false, error: errorMsg };
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
+
+  // Auto-initialize PostgreSQL if DATABASE_URL is set in EasyPanel Environment
+  if (process.env.DATABASE_URL) {
+    await initializePostgresConnection(process.env.DATABASE_URL, true);
+  }
 
   // ============================================================================
   // SECURITY & MULTI-TENANT AUTHENTICATION GUARDS (OWASP / LGPD COMPLIANCE)
@@ -229,7 +505,104 @@ async function startServer() {
     };
 
     memoryTenants.push(newTenant);
+
+    if (pgPool) {
+      pgPool
+        .query(
+          `INSERT INTO tenants (id, name, slug, phone, address, primary_color, is_open, delivery_fee_cents, min_order_cents, evolution_instance_id, evolution_status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           ON CONFLICT (slug) DO NOTHING;`,
+          [
+            newTenant.id,
+            newTenant.name,
+            newTenant.slug,
+            newTenant.phone,
+            newTenant.address,
+            newTenant.primaryColor,
+            newTenant.isOpen,
+            newTenant.deliveryFeeCents,
+            newTenant.minOrderCents,
+            newTenant.evolutionInstanceId,
+            newTenant.evolutionStatus,
+          ]
+        )
+        .catch(() => {});
+    }
+
     res.status(201).json({ message: 'Restaurante criado com sucesso!', data: newTenant });
+  });
+
+  // ============================================================================
+  // EASYPANEL VPS DATABASE MANAGEMENT ENDPOINTS (SUPER ADMIN ONLY)
+  // ============================================================================
+  app.get('/api/v1/admin/database/status', requireSuperAdmin, async (_req: Request, res: Response) => {
+    let counts = {
+      tenants: memoryTenants.length,
+      categories: memoryCategories.length,
+      products: memoryProducts.length,
+      orders: memoryOrders.length,
+      outbox_events: memoryOutboxEvents.length,
+    };
+
+    if (pgPool) {
+      try {
+        const resCounts = await pgPool.query(`
+          SELECT
+            (SELECT COUNT(*) FROM tenants)::int AS tenants,
+            (SELECT COUNT(*) FROM categories)::int AS categories,
+            (SELECT COUNT(*) FROM products)::int AS products,
+            (SELECT COUNT(*) FROM orders)::int AS orders,
+            (SELECT COUNT(*) FROM outbox_events)::int AS outbox_events;
+        `);
+        if (resCounts.rows[0]) {
+          counts = resCounts.rows[0];
+        }
+      } catch (e: any) {
+        dbConnectionState.connected = false;
+        dbConnectionState.error = e?.message || 'Conexão perdida com o PostgreSQL.';
+      }
+    }
+
+    res.json({
+      data: {
+        ...dbConnectionState,
+        configuredViaEnv: Boolean(process.env.DATABASE_URL),
+        maskedUrl: maskDatabaseUrl(activeDatabaseUrl),
+        counts,
+        initSqlScript: getInitSqlScript(),
+      },
+    });
+  });
+
+  app.post('/api/v1/admin/database/test-and-migrate', requireSuperAdmin, async (req: Request, res: Response) => {
+    const { databaseUrl } = req.body;
+    const targetUrl = (databaseUrl && String(databaseUrl).trim()) || process.env.DATABASE_URL || activeDatabaseUrl;
+
+    if (!targetUrl) {
+      return res.status(400).json({
+        success: false,
+        error: 'Informe a URL de conexão PostgreSQL do EasyPanel (ex: postgresql://postgres:SENHA@projeto_postgres:5432/aladay).',
+      });
+    }
+
+    const result = await initializePostgresConnection(targetUrl, true);
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        error: result.error,
+        state: dbConnectionState,
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Conexão PostgreSQL estabelecida e tabelas criadas/sincronizadas com sucesso no EasyPanel!',
+      data: {
+        ...dbConnectionState,
+        maskedUrl: maskDatabaseUrl(targetUrl),
+        counts: result.counts,
+      },
+    });
   });
 
   // Get specific tenant
@@ -239,6 +612,96 @@ async function startServer() {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
     }
     res.json({ data: tenant });
+  });
+
+  // Bulk Import / Sync Catalog (Categories & Products) from Spreadsheet per Tenant
+  app.post('/api/v1/tenants/:slug/catalog/import', requireTenantAccess('slug'), (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
+    if (!tenant) {
+      return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    }
+
+    const { products, categories, mode } = req.body;
+    if (Array.isArray(products)) {
+      products.forEach((prod: any) => {
+        if (!prod || !prod.id) return;
+        const cleanPrice = Math.max(0, parseInt(prod.priceCents, 10) || 0);
+        const existingIdx = memoryProducts.findIndex((p) => p.id === prod.id);
+        if (existingIdx >= 0) {
+          memoryProducts[existingIdx].priceCents = cleanPrice;
+          memoryProducts[existingIdx].name = String(prod.name || memoryProducts[existingIdx].name).slice(0, 120);
+        } else {
+          memoryProducts.push({
+            id: String(prod.id),
+            tenantId: tenant.id,
+            name: String(prod.name || 'Produto').slice(0, 120),
+            priceCents: cleanPrice,
+          });
+        }
+      });
+    }
+
+    // Persist categories and products to PostgreSQL if connected on EasyPanel VPS
+    if (pgPool) {
+      (async () => {
+        try {
+          if (mode === 'replace') {
+            await pgPool.query('DELETE FROM products WHERE tenant_slug = $1;', [tenant.slug]);
+            await pgPool.query('DELETE FROM categories WHERE tenant_slug = $1;', [tenant.slug]);
+          }
+          if (Array.isArray(categories)) {
+            for (const cat of categories) {
+              if (!cat || !cat.id) continue;
+              await pgPool.query(
+                `INSERT INTO categories (id, tenant_id, tenant_slug, name, display_order)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, display_order = EXCLUDED.display_order;`,
+                [String(cat.id), tenant.id, tenant.slug, String(cat.name || 'Categoria'), Number(cat.order) || 1]
+              );
+            }
+          }
+          if (Array.isArray(products)) {
+            for (const prod of products) {
+              if (!prod || !prod.id) continue;
+              await pgPool.query(
+                `INSERT INTO products (id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())
+                 ON CONFLICT (id) DO UPDATE SET
+                   category_id = EXCLUDED.category_id,
+                   name = EXCLUDED.name,
+                   description = EXCLUDED.description,
+                   price_cents = EXCLUDED.price_cents,
+                   image_url = EXCLUDED.image_url,
+                   is_available = EXCLUDED.is_available,
+                   is_featured = EXCLUDED.is_featured,
+                   option_groups = EXCLUDED.option_groups,
+                   updated_at = NOW();`,
+                [
+                  String(prod.id),
+                  tenant.id,
+                  tenant.slug,
+                  String(prod.categoryId || 'cat_1'),
+                  String(prod.name || 'Produto').slice(0, 150),
+                  String(prod.description || ''),
+                  Math.max(0, parseInt(prod.priceCents, 10) || 0),
+                  prod.imageUrl || null,
+                  prod.isAvailable ?? true,
+                  prod.isFeatured ?? false,
+                  JSON.stringify(prod.optionGroups || []),
+                ]
+              );
+            }
+          }
+        } catch (err) {
+          console.warn('[PostgreSQL Sync Catalog] Erro ao persistir cardápio:', err);
+        }
+      })();
+    }
+
+    res.json({
+      success: true,
+      message: `Cardápio de ${tenant.name} sincronizado via planilha (${Array.isArray(categories) ? categories.length : 0} categorias e ${Array.isArray(products) ? products.length : 0} produtos, modo: ${mode || 'merge'}).`,
+    });
   });
 
   // Zero-Trust Checkout: server recalculates everything and writes to outbox
@@ -328,6 +791,50 @@ async function startServer() {
       processedAt: new Date().toISOString(),
     };
     memoryOutboxEvents.push(outboxEvent);
+
+    if (pgPool) {
+      (async () => {
+        try {
+          await pgPool.query(
+            `INSERT INTO orders (id, order_number, tenant_id, tenant_slug, customer_name, customer_phone, order_type, delivery_address, items, subtotal_cents, delivery_fee_cents, total_cents, status, idempotency_key)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14)
+             ON CONFLICT (id) DO NOTHING;`,
+            [
+              newOrder.id,
+              newOrder.orderNumber,
+              newOrder.tenantId,
+              newOrder.tenantSlug,
+              newOrder.customerName,
+              newOrder.customerPhone,
+              newOrder.type,
+              newOrder.deliveryAddress || null,
+              JSON.stringify(newOrder.items),
+              newOrder.subtotalCents,
+              newOrder.deliveryFeeCents,
+              newOrder.totalCents,
+              newOrder.status,
+              newOrder.idempotencyKey || null,
+            ]
+          );
+          await pgPool.query(
+            `INSERT INTO outbox_events (id, tenant_id, aggregate_type, aggregate_id, event_type, payload, status, processed_at)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NOW())
+             ON CONFLICT (id) DO NOTHING;`,
+            [
+              outboxEvent.id,
+              outboxEvent.tenantId,
+              outboxEvent.aggregateType,
+              outboxEvent.aggregateId,
+              outboxEvent.eventType,
+              JSON.stringify(outboxEvent.payload),
+              outboxEvent.status,
+            ]
+          );
+        } catch (err) {
+          console.warn('[PostgreSQL Order Persist] Erro ao gravar pedido no PostgreSQL:', err);
+        }
+      })();
+    }
 
     res.status(201).json({
       message: 'Pedido gravado no banco de dados e evento Outbox despachado!',

@@ -247,6 +247,39 @@ export default function App() {
     });
   };
 
+  const handleImportCatalog = (
+    newCategories: Category[],
+    newProducts: Product[],
+    mode: 'merge' | 'replace'
+  ) => {
+    setCatalogsByTenant((prev) => {
+      const existing = prev[tenant.slug] || { categories: [], products: [], orders: [] };
+      return {
+        ...prev,
+        [tenant.slug]: {
+          ...existing,
+          categories: newCategories,
+          products: newProducts,
+        },
+      };
+    });
+
+    // Sync imported catalog with backend server for Zero-Trust Checkout price validation
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (authSession?.token) {
+      headers['Authorization'] = `Bearer ${authSession.token}`;
+    }
+    fetch(`/api/v1/tenants/${tenant.slug}/catalog/import`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        mode,
+        categories: newCategories,
+        products: newProducts,
+      }),
+    }).catch(() => {});
+  };
+
   // When consumer creates order in the menu
   const handleOrderCreated = (newOrder: Order) => {
     setSelectedTrackingOrder(newOrder);
@@ -510,6 +543,7 @@ export default function App() {
             onUpdateProduct={handleUpdateProduct}
             onDeleteProduct={handleDeleteProduct}
             onAddCategory={handleAddCategory}
+            onImportCatalog={handleImportCatalog}
             onSimulateEvolutionReconnect={handleSimulateEvolutionReconnect}
             authSession={authSession}
             onOpenAuthPortal={() => setCurrentView('auth')}

@@ -31,7 +31,8 @@ import {
   Filter,
   Eye,
   LogOut,
-  BatteryCharging
+  BatteryCharging,
+  Database
 } from 'lucide-react';
 import { Order, RestaurantTenant, WebhookLogEvent, EvolutionQrConnectResponse, AuthSession } from '../types';
 import { NotificationTemplatesEditor } from './NotificationTemplatesEditor';
@@ -106,6 +107,83 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const [embeddedPhoneInput, setEmbeddedPhoneInput] = useState(tenant.phone || '5511987654321');
   const [embeddedPairingMode, setEmbeddedPairingMode] = useState<'qr' | 'code'>('qr');
   const [embeddedErrorNotice, setEmbeddedErrorNotice] = useState<string | null>(null);
+
+  // EasyPanel PostgreSQL Database Configurator State (Super Admin)
+  const [epProjectName, setEpProjectName] = useState('agencia');
+  const [epServiceName, setEpServiceName] = useState('postgres');
+  const [epDbUser, setEpDbUser] = useState('postgres');
+  const [epDbPass, setEpDbPass] = useState('');
+  const [epDbName, setEpDbName] = useState('aladay');
+  const [customDatabaseUrl, setCustomDatabaseUrl] = useState('');
+  const [dbStatusData, setDbStatusData] = useState<any | null>(null);
+  const [isTestingDb, setIsTestingDb] = useState(false);
+  const [dbActionFeedback, setDbActionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [copiedEnvBlock, setCopiedEnvBlock] = useState(false);
+  const [copiedSqlBlock, setCopiedSqlBlock] = useState(false);
+
+  const generatedEasyPanelDbUrl =
+    customDatabaseUrl.trim() ||
+    `postgresql://${epDbUser || 'postgres'}:${epDbPass || 'SUA_SENHA_AQUI'}@${epProjectName || 'agencia'}_${epServiceName || 'postgres'}:5432/${epDbName || 'aladay'}`;
+
+  const fetchDatabaseStatus = useCallback(async () => {
+    if (!isSuperAdmin) return;
+    try {
+      const headers: Record<string, string> = {};
+      if (authSession?.token) {
+        headers['Authorization'] = `Bearer ${authSession.token}`;
+      }
+      const res = await fetch('/api/v1/admin/database/status', { headers });
+      if (res.ok) {
+        const json = await res.json();
+        setDbStatusData(json.data);
+      }
+    } catch {
+      // Ignore network error
+    }
+  }, [isSuperAdmin, authSession]);
+
+  useEffect(() => {
+    if (isSuperAdmin && subTab === 'easypanel') {
+      fetchDatabaseStatus();
+    }
+  }, [isSuperAdmin, subTab, fetchDatabaseStatus]);
+
+  const handleTestAndMigrateDatabase = async () => {
+    setIsTestingDb(true);
+    setDbActionFeedback(null);
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (authSession?.token) {
+        headers['Authorization'] = `Bearer ${authSession.token}`;
+      }
+      const res = await fetch('/api/v1/admin/database/test-and-migrate', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ databaseUrl: generatedEasyPanelDbUrl }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setDbActionFeedback({
+          type: 'success',
+          message: json.message || 'Banco de dados conectado e tabelas criadas com sucesso!',
+        });
+        fetchDatabaseStatus();
+      } else {
+        setDbActionFeedback({
+          type: 'error',
+          error: json.error,
+          message: json.error || 'Não foi possível conectar ao PostgreSQL. Verifique o host interno e a senha no EasyPanel.',
+        } as any);
+      }
+    } catch (err: any) {
+      setDbActionFeedback({
+        type: 'error',
+        message: err?.message || 'Erro de rede ao tentar testar a conexão com o banco.',
+      });
+    } finally {
+      setIsTestingDb(false);
+    }
+  };
 
   const qrTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -1497,10 +1575,306 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
       {/* ============================================================== */}
       {isSuperAdmin && subTab === 'easypanel' && (
         <div className="space-y-6">
+          {/* ============================================================ */}
+          {/* SEÇÃO 1: CONFIGURAÇÃO DO BANCO DE DADOS POSTGRESQL EASYPANEL */}
+          {/* ============================================================ */}
+          <div className="bg-white border border-neutral-200 rounded-xl p-6 shadow-2xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-neutral-200">
+              <div className="flex items-start gap-3">
+                <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0">
+                  <Database className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-bold text-neutral-900">
+                      Configuração do Banco de Dados PostgreSQL no EasyPanel (VPS)
+                    </h4>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        dbStatusData?.connected
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                          : 'bg-amber-100 text-amber-800 border border-amber-300'
+                      }`}
+                    >
+                      {dbStatusData?.connected ? 'PostgreSQL Conectado' : 'Aguardando DATABASE_URL'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-500 mt-0.5">
+                    Configure o serviço Postgres dentro do seu EasyPanel para persistir restaurantes, cardápios, pedidos e fila Outbox na VPS.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={fetchDatabaseStatus}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-lg text-xs font-semibold transition-colors self-start sm:self-auto"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Verificar Status</span>
+              </button>
+            </div>
+
+            {/* Live Table Counters if connected or memory state */}
+            {dbStatusData && (
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+                <div className="p-3 rounded-lg bg-neutral-50 border border-neutral-200">
+                  <span className="text-[10px] font-mono text-neutral-500 uppercase">Tabela tenants</span>
+                  <p className="text-base font-bold text-neutral-900 mt-0.5">{dbStatusData.counts?.tenants ?? 0}</p>
+                  <span className="text-[10px] text-neutral-400">Restaurantes</span>
+                </div>
+                <div className="p-3 rounded-lg bg-neutral-50 border border-neutral-200">
+                  <span className="text-[10px] font-mono text-neutral-500 uppercase">Tabela categories</span>
+                  <p className="text-base font-bold text-neutral-900 mt-0.5">{dbStatusData.counts?.categories ?? 0}</p>
+                  <span className="text-[10px] text-neutral-400">Categorias</span>
+                </div>
+                <div className="p-3 rounded-lg bg-neutral-50 border border-neutral-200">
+                  <span className="text-[10px] font-mono text-neutral-500 uppercase">Tabela products</span>
+                  <p className="text-base font-bold text-neutral-900 mt-0.5">{dbStatusData.counts?.products ?? 0}</p>
+                  <span className="text-[10px] text-neutral-400">Produtos</span>
+                </div>
+                <div className="p-3 rounded-lg bg-neutral-50 border border-neutral-200">
+                  <span className="text-[10px] font-mono text-neutral-500 uppercase">Tabela orders</span>
+                  <p className="text-base font-bold text-neutral-900 mt-0.5">{dbStatusData.counts?.orders ?? 0}</p>
+                  <span className="text-[10px] text-neutral-400">Pedidos</span>
+                </div>
+                <div className="p-3 rounded-lg bg-neutral-50 border border-neutral-200">
+                  <span className="text-[10px] font-mono text-neutral-500 uppercase">Tabela outbox</span>
+                  <p className="text-base font-bold text-neutral-900 mt-0.5">{dbStatusData.counts?.outbox_events ?? 0}</p>
+                  <span className="text-[10px] text-neutral-400">Eventos WhatsApp</span>
+                </div>
+              </div>
+            )}
+
+            {/* 4 Passos Práticos no EasyPanel */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div className="p-4 bg-neutral-50 rounded-xl border border-neutral-200 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full bg-indigo-900 text-white flex items-center justify-center font-bold text-[10px]">
+                    1
+                  </span>
+                  <span className="font-bold text-neutral-900">Criar o Banco Postgres no EasyPanel</span>
+                </div>
+                <ol className="list-decimal list-inside space-y-1 text-[11px] text-neutral-600 leading-relaxed">
+                  <li>Abra o seu painel do <strong>EasyPanel</strong> na VPS e entre no mesmo <strong>Projeto</strong> onde está o site (ex: <code className="bg-neutral-200 px-1 rounded">agencia</code>).</li>
+                  <li>Clique em <strong>+ Create Service</strong> &rarr; escolha <strong>Postgres</strong> (template oficial).</li>
+                  <li>Preencha:
+                    <ul className="list-disc list-inside ml-3 mt-0.5">
+                      <li><strong>Name:</strong> <code className="bg-neutral-200 px-1 rounded">postgres</code> (ou <code className="bg-neutral-200 px-1 rounded">aladay-db</code>)</li>
+                      <li><strong>Database Name:</strong> <code className="bg-neutral-200 px-1 rounded">aladay</code></li>
+                      <li><strong>Password:</strong> defina uma senha forte</li>
+                    </ul>
+                  </li>
+                </ol>
+              </div>
+
+              <div className="p-4 bg-neutral-50 rounded-xl border border-neutral-200 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full bg-indigo-900 text-white flex items-center justify-center font-bold text-[10px]">
+                    2
+                  </span>
+                  <span className="font-bold text-neutral-900">Como funciona o Host Interno no EasyPanel</span>
+                </div>
+                <p className="text-[11px] text-neutral-600 leading-relaxed">
+                  No EasyPanel (Docker Swarm), os serviços do mesmo projeto se comunicam pela rede interna usando o formato <code className="bg-neutral-200 px-1 rounded font-mono">NOMEPROJETO_NOMESERVICO:5432</code>:
+                </p>
+                <div className="p-2.5 bg-neutral-900 text-emerald-400 rounded-lg font-mono text-[11px] overflow-x-auto">
+                  postgresql://postgres:SENHA@{epProjectName || 'agencia'}_{epServiceName || 'postgres'}:5432/{epDbName || 'aladay'}
+                </div>
+                <p className="text-[10px] text-neutral-500">
+                  * Você não precisa abrir a porta 5432 para a internet pública! A comunicação interna é 100% blindada.
+                </p>
+              </div>
+            </div>
+
+            {/* Interactive Connection String Builder & Tester */}
+            <div className="p-5 bg-indigo-50/40 border border-indigo-200 rounded-xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h5 className="text-xs font-bold text-neutral-900">
+                    Gerador de Variáveis &amp; Inicializador Automático das Tabelas
+                  </h5>
+                  <p className="text-[11px] text-neutral-600">
+                    Preencha os dados do seu serviço Postgres no EasyPanel para gerar o bloco <code className="bg-white px-1 rounded">.env</code> exato ou testar a criação das tabelas:
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
+                <div>
+                  <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                    Projeto no EasyPanel
+                  </label>
+                  <input
+                    type="text"
+                    value={epProjectName}
+                    onChange={(e) => setEpProjectName(e.target.value)}
+                    placeholder="Ex: agencia"
+                    className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                    Serviço Postgres
+                  </label>
+                  <input
+                    type="text"
+                    value={epServiceName}
+                    onChange={(e) => setEpServiceName(e.target.value)}
+                    placeholder="Ex: postgres"
+                    className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                    Nome do Database
+                  </label>
+                  <input
+                    type="text"
+                    value={epDbName}
+                    onChange={(e) => setEpDbName(e.target.value)}
+                    placeholder="Ex: aladay"
+                    className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                    Usuário
+                  </label>
+                  <input
+                    type="text"
+                    value={epDbUser}
+                    onChange={(e) => setEpDbUser(e.target.value)}
+                    placeholder="postgres"
+                    className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                    Senha do Banco
+                  </label>
+                  <input
+                    type="password"
+                    value={epDbPass}
+                    onChange={(e) => setEpDbPass(e.target.value)}
+                    placeholder="Sua senha no EasyPanel"
+                    className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                  Ou cole diretamente a URL de Conexão (<code className="font-mono">DATABASE_URL</code>):
+                </label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    value={customDatabaseUrl}
+                    onChange={(e) => setCustomDatabaseUrl(e.target.value)}
+                    placeholder={generatedEasyPanelDbUrl}
+                    className="flex-1 px-3 py-2 bg-white border border-neutral-300 rounded-lg font-mono text-xs"
+                  />
+                  <button
+                    type="button"
+                    disabled={isTestingDb}
+                    onClick={handleTestAndMigrateDatabase}
+                    className="px-4 py-2 bg-indigo-900 hover:bg-indigo-800 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-2 shrink-0 transition-colors cursor-pointer"
+                  >
+                    {isTestingDb ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Database className="w-4 h-4" />
+                    )}
+                    <span>
+                      {isTestingDb ? 'Conectando e Criando Tabelas...' : 'Testar Conexão & Criar Tabelas'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {dbActionFeedback && (
+                <div
+                  className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
+                    dbActionFeedback.type === 'success'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                      : 'bg-rose-50 border-rose-200 text-rose-900'
+                  }`}
+                >
+                  {dbActionFeedback.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  )}
+                  <span className="font-medium">{dbActionFeedback.message}</span>
+                </div>
+              )}
+
+              {/* Ready-to-copy Environment Variables for EasyPanel Site App */}
+              <div className="space-y-2 pt-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-neutral-900">
+                    3. Copie e cole na aba &quot;Environment&quot; do serviço do Site no EasyPanel:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const envText = `PORT=3000\nNODE_ENV=production\nDATABASE_URL=${generatedEasyPanelDbUrl}\nPGSSLMODE=disable\nJWT_SECRET=aladay-vps-jwt-secret-${Date.now()}\nEVOLUTION_API_URL=${evolutionUrl}\nEVOLUTION_API_KEY=${evolutionApiKey}\nN8N_WEBHOOK_URL=${n8nWebhookUrl}`;
+                      navigator.clipboard.writeText(envText);
+                      setCopiedEnvBlock(true);
+                      setTimeout(() => setCopiedEnvBlock(false), 3000);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-[11px] font-semibold cursor-pointer"
+                  >
+                    {copiedEnvBlock ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedEnvBlock ? 'Variáveis .ENV Copiadas!' : 'Copiar Variáveis .ENV para EasyPanel'}</span>
+                  </button>
+                </div>
+
+                <pre className="bg-neutral-900 text-neutral-200 p-3.5 rounded-lg font-mono text-[11px] overflow-x-auto leading-relaxed">
+{`PORT=3000
+NODE_ENV=production
+DATABASE_URL=${generatedEasyPanelDbUrl}
+PGSSLMODE=disable
+JWT_SECRET=troque_por_uma_chave_secreta_forte_na_vps
+EVOLUTION_API_URL=${evolutionUrl}
+EVOLUTION_API_KEY=${evolutionApiKey}
+N8N_WEBHOOK_URL=${n8nWebhookUrl}`}
+                </pre>
+              </div>
+
+              {/* SQL Script Copy Block */}
+              {dbStatusData?.initSqlScript && (
+                <div className="space-y-2 pt-2 border-t border-indigo-200/60">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-neutral-900">
+                      Script SQL das Tabelas (<code className="font-mono">database/easypanel-init.sql</code> — executado automaticamente ao iniciar):
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(dbStatusData.initSqlScript);
+                        setCopiedSqlBlock(true);
+                        setTimeout(() => setCopiedSqlBlock(false), 3000);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-neutral-100 text-neutral-800 border border-neutral-300 rounded-lg text-[11px] font-semibold cursor-pointer"
+                    >
+                      {copiedSqlBlock ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedSqlBlock ? 'SQL Copiado!' : 'Copiar Script SQL'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ============================================================ */}
+          {/* SEÇÃO 2: INTEGRAÇÃO EVOLUTION API + N8N NO EASYPANEL         */}
+          {/* ============================================================ */}
           <div className="bg-white border border-neutral-200 rounded-xl p-6 shadow-2xs space-y-5">
             <div>
               <h4 className="text-sm font-bold text-neutral-900">
-                Guia Prático: Configuração no Easypanel (Hostinger VPS)
+                Guia Prático: Evolution API + n8n no Easypanel (Hostinger VPS)
               </h4>
               <p className="text-xs text-neutral-500 mt-0.5">
                 Como interligar a Evolution API com o n8n dentro do mesmo servidor com altíssima performance e custo zero de mensagens.

@@ -36,7 +36,9 @@ import {
   MapPin,
   Bike,
   PackageCheck,
-  Zap
+  Zap,
+  FileSpreadsheet,
+  Upload
 } from 'lucide-react';
 import { AuthSession, Category, CustomerRecord, DeliveryZone, OptionGroup, OptionItem, Order, OrderStatus, PixGatewayConfig, Product, RestaurantTenant, UserRole } from '../types';
 import { ThermalTicketModal } from './ThermalTicketModal';
@@ -47,6 +49,14 @@ import { WhatsAppQrPairingModal } from './WhatsAppQrPairingModal';
 import { AsaasSubscriptionBillingView } from './AsaasSubscriptionBillingView';
 import { AuditedDashboardView } from './AuditedDashboardView';
 import { CrmCustomerManagementView } from './CrmCustomerManagementView';
+import {
+  MenuSpreadsheetModal,
+  ParsedRowPreview,
+  parseSpreadsheetLines,
+  parsePriceBRLToCents,
+  parseOptionGroupsFromCell,
+  escapeCsvCell,
+} from './MenuSpreadsheetModal';
 
 interface RestaurantAdminViewProps {
   tenant: RestaurantTenant;
@@ -63,6 +73,7 @@ interface RestaurantAdminViewProps {
   onUpdateProduct: (updatedProduct: Product) => void;
   onDeleteProduct: (productId: string) => void;
   onAddCategory: (categoryName: string) => void;
+  onImportCatalog?: (newCategories: Category[], newProducts: Product[], mode: 'merge' | 'replace') => void;
   onSimulateEvolutionReconnect: () => void;
   authSession?: AuthSession;
   onOpenAuthPortal?: () => void;
@@ -83,6 +94,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   onUpdateProduct,
   onDeleteProduct,
   onAddCategory,
+  onImportCatalog,
   onSimulateEvolutionReconnect,
   authSession,
   onOpenAuthPortal,
@@ -93,6 +105,15 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   const [statusUpdateToast, setStatusUpdateToast] = useState<string | null>(null);
   const [testMsgStatus, setTestMsgStatus] = useState<string | null>(null);
   const [isQrPairingModalOpen, setIsQrPairingModalOpen] = useState(false);
+  const [spreadsheetModalTab, setSpreadsheetModalTab] = useState<'export' | 'import' | null>(null);
+
+  // Dedicated 'Importação de Cardápio' Modal State
+  const [isImportMenuModalOpen, setIsImportMenuModalOpen] = useState(false);
+  const [importMenuMode, setImportMenuMode] = useState<'merge' | 'replace'>('merge');
+  const [importFileName, setImportFileName] = useState<string | null>(null);
+  const [importPreviewRows, setImportPreviewRows] = useState<ParsedRowPreview[]>([]);
+  const [isDraggingImportFile, setIsDraggingImportFile] = useState(false);
+  const importFileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   // RBAC Role State (Proprietário, Gerente, Cozinha)
   const [userRole, setUserRole] = useState<UserRole>('owner');
@@ -356,6 +377,360 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
     setIsBulkAdjustOpen(false);
     triggerSyncNotice(`Reajuste de ${percent > 0 ? '+' : ''}${percent}% aplicado a ${affectedCount} produtos!`);
+  };
+
+  // --- DEDICATED MENU IMPORT MODAL HANDLERS ---
+  const normalizeImportStr = (s: string) =>
+    s
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+
+  const handleProcessImportSpreadsheet = (rawText: string, sourceFile: string) => {
+    setImportFileName(sourceFile);
+    if (!rawText.trim()) {
+      setImportPreviewRows([]);
+      return;
+    }
+
+    const rawRows = parseSpreadsheetLines(rawText);
+    if (rawRows.length === 0) {
+      setImportPreviewRows([]);
+      return;
+    }
+
+    const firstRowLower = rawRows[0].map((c) => normalizeImportStr(c));
+    const hasHeader =
+      firstRowLower.some((col) => col.includes('categoria') || col.includes('category')) ||
+      firstRowLower.some((col) => col.includes('produto') || col.includes('nome') || col.includes('preco'));
+
+    let idxOrder = 0;
+    let idxCategory = 1;
+    let idxProductName = 2;
+    let idxDescription = 3;
+    let idxPrice = 4;
+    let idxAvailable = 5;
+    let idxFeatured = 6;
+    let idxImage = 7;
+    let idxOptions = 8;
+
+    if (hasHeader) {
+      const findCol = (keywords: string[], fallback: number) => {
+        const found = firstRowLower.findIndex((h) => keywords.some((kw) => h.includes(kw)));
+        return found >= 0 ? found : fallback;
+      };
+      const hasProductCol = firstRowLower.some(
+        (h) => h.includes('nome_produto') || h === 'produto' || h === 'prato' || h === 'item'
+      );
+      idxOrder = findCol(['ordem', 'order', 'posicao'], 0);
+      idxCategory = findCol(['categoria', 'category', 'secao'], firstRowLower.length === 1 ? 0 : 1);
+
+      if (!hasProductCol && firstRowLower.length <= 3) {
+        idxProductName = -1;
+        idxDescription = -1;
+        idxPrice = -1;
+        idxAvailable = -1;
+        idxFeatured = -1;
+        idxImage = -1;
+        idxOptions = -1;
+      } else {
+        idxProductName = findCol(['nome_produto', 'produto', 'prato', 'nome', 'item'], 2);
+        idxDescription = findCol(['descricao', 'description', 'ingredientes', 'detalhe'], 3);
+        idxPrice = findCol(['preco', 'valor', 'price'], 4);
+        idxAvailable = findCol(['disponivel', 'ativo', 'status', 'available'], 5);
+        idxFeatured = findCol(['destaque', 'featured', 'promocao'], 6);
+        idxImage = findCol(['imagem', 'foto', 'image', 'url'], 7);
+        idxOptions = findCol(['adicionais', 'opcoes', 'complementos', 'options'], 8);
+      }
+    }
+
+    const dataRows = hasHeader ? rawRows.slice(1) : rawRows;
+    const previews: ParsedRowPreview[] = [];
+
+    dataRows.forEach((cols, idx) => {
+      const rowNumber = hasHeader ? idx + 2 : idx + 1;
+      const getCol = (cIdx: number) => (cIdx >= 0 && cIdx < cols.length ? cols[cIdx]?.trim() || '' : '');
+
+      const orderRaw = getCol(idxOrder);
+      const categoryName = getCol(idxCategory);
+      const productName = getCol(idxProductName);
+      const description = getCol(idxDescription);
+      const priceRaw = getCol(idxPrice);
+      const availableRaw = getCol(idxAvailable).toUpperCase();
+      const featuredRaw = getCol(idxFeatured).toUpperCase();
+      const imageUrl = getCol(idxImage);
+      const optionsRaw = getCol(idxOptions);
+
+      const categoryOrder = !isNaN(Number(orderRaw)) && Number(orderRaw) > 0 ? parseInt(orderRaw, 10) : idx + 1;
+
+      if (!categoryName && !productName) return;
+
+      if (!categoryName) {
+        previews.push({
+          rowNumber,
+          categoryOrder,
+          categoryName: 'Sem Categoria',
+          productName: productName || '(Sem nome)',
+          description,
+          priceCents: 0,
+          isAvailable: true,
+          isFeatured: false,
+          imageUrl,
+          optionGroups: [],
+          status: 'error',
+          errorMessage: 'Categoria obrigatória ausente',
+        });
+        return;
+      }
+
+      if (!productName) {
+        previews.push({
+          rowNumber,
+          categoryOrder,
+          categoryName,
+          productName: '',
+          description: '',
+          priceCents: 0,
+          isAvailable: true,
+          isFeatured: false,
+          imageUrl: '',
+          optionGroups: [],
+          status: 'category_only',
+        });
+        return;
+      }
+
+      const priceCents = parsePriceBRLToCents(priceRaw);
+      if (priceCents <= 0) {
+        previews.push({
+          rowNumber,
+          categoryOrder,
+          categoryName,
+          productName,
+          description,
+          priceCents: 0,
+          isAvailable: true,
+          isFeatured: false,
+          imageUrl,
+          optionGroups: [],
+          status: 'error',
+          errorMessage: `Preço inválido ("${priceRaw || 'vazio'}")`,
+        });
+        return;
+      }
+
+      const isAvailable =
+        availableRaw === '' ||
+        availableRaw === 'SIM' ||
+        availableRaw === 'S' ||
+        availableRaw === 'TRUE' ||
+        availableRaw === '1' ||
+        availableRaw === 'ATIVO' ||
+        availableRaw === 'DISPONIVEL';
+
+      const isFeatured =
+        featuredRaw === 'SIM' ||
+        featuredRaw === 'S' ||
+        featuredRaw === 'TRUE' ||
+        featuredRaw === '1' ||
+        featuredRaw === 'DESTAQUE';
+
+      const optionGroups = parseOptionGroupsFromCell(optionsRaw);
+
+      previews.push({
+        rowNumber,
+        categoryOrder,
+        categoryName,
+        productName,
+        description,
+        priceCents,
+        isAvailable,
+        isFeatured,
+        imageUrl,
+        optionGroups,
+        status: 'valid',
+      });
+    });
+
+    setImportPreviewRows(previews);
+  };
+
+  const handleImportFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = String(event.target?.result || '');
+      handleProcessImportSpreadsheet(content, file.name);
+    };
+    reader.readAsText(file, 'UTF-8');
+    e.target.value = '';
+  };
+
+  const handleImportFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDraggingImportFile(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = String(event.target?.result || '');
+      handleProcessImportSpreadsheet(content, file.name);
+    };
+    reader.readAsText(file, 'UTF-8');
+  };
+
+  const handleLoadSampleImportTable = () => {
+    const sampleCsv = [
+      ['Ordem_Categoria', 'Categoria', 'Nome_Produto', 'Descricao', 'Preco_BRL', 'Disponivel', 'Destaque', 'Imagem_URL', 'Adicionais'],
+      [
+        '1',
+        'Smash Burgers Artesanais',
+        'Duplo Smash Bacon Especial',
+        'Dois blends bovinos de 90g na chapa, queijo cheddar inglês, bacon crocante e molho da casa no pão brioche.',
+        '36,90',
+        'SIM',
+        'SIM',
+        'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=600',
+        'Ponto da Carne (Obrigatorio,1,1): Ao Ponto=0,00 | Bem Passado=0,00 || Adicionais (Opcional,0,3): Bacon Extra=6,00 | Cheddar Extra=5,00',
+      ],
+      [
+        '1',
+        'Smash Burgers Artesanais',
+        'Trufa & Cheddar Burger',
+        'Blend artesanal 160g, cheddar cremoso, cebola caramelizada e maionese trufada.',
+        '39,90',
+        'SIM',
+        'NAO',
+        'https://images.unsplash.com/photo-1550547660-d9450f859349?w=600',
+        '',
+      ],
+      [
+        '2',
+        'Porções & Entradas',
+        'Batata Rústica com Cheddar e Bacon',
+        'Porção de 350g de batatas fritas crocantes cobertas com molho cheddar e farofa de bacon.',
+        '27,90',
+        'SIM',
+        'SIM',
+        'https://images.unsplash.com/photo-1576107232684-1279f3908594?w=600',
+        '',
+      ],
+      [
+        '3',
+        'Bebidas Geladas',
+        'Refrigerante Lata 350ml',
+        'Coca-Cola Original, Coca-Cola Zero ou Guaraná Antarctica lata 350ml.',
+        '7,50',
+        'SIM',
+        'NAO',
+        'https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=600',
+        'Escolha o Sabor (Obrigatorio,1,1): Coca-Cola Original=0,00 | Coca-Cola Zero=0,00 | Guaraná=0,00',
+      ],
+    ]
+      .map((row) => row.map((cell) => escapeCsvCell(cell, ';')).join(';'))
+      .join('\n');
+
+    handleProcessImportSpreadsheet(sampleCsv, 'cardapio-exemplo-importacao.csv');
+  };
+
+  const handleConfirmMenuImportModal = () => {
+    const validRows = importPreviewRows.filter((r) => r.status === 'valid' || r.status === 'category_only');
+    const validProductRows = importPreviewRows.filter((r) => r.status === 'valid');
+    if (validRows.length === 0) return;
+
+    const baseCategories: Category[] = importMenuMode === 'replace' ? [] : [...categories];
+    const baseProducts: Product[] = importMenuMode === 'replace' ? [] : [...products];
+
+    const categoryMapByNormName = new Map<string, Category>();
+    baseCategories.forEach((cat) => {
+      categoryMapByNormName.set(normalizeImportStr(cat.name), cat);
+    });
+
+    validRows.forEach((row) => {
+      const normCat = normalizeImportStr(row.categoryName);
+      if (!categoryMapByNormName.has(normCat)) {
+        const newCat: Category = {
+          id: `cat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: row.categoryName.trim(),
+          order: row.categoryOrder || categoryMapByNormName.size + 1,
+        };
+        categoryMapByNormName.set(normCat, newCat);
+        baseCategories.push(newCat);
+      } else {
+        const existingCat = categoryMapByNormName.get(normCat)!;
+        if (row.categoryOrder && importMenuMode === 'replace') {
+          existingCat.order = row.categoryOrder;
+        }
+      }
+    });
+
+    const finalCategories = [...baseCategories].sort((a, b) => a.order - b.order);
+    const finalProducts = [...baseProducts];
+
+    validProductRows.forEach((row, idx) => {
+      const normCat = normalizeImportStr(row.categoryName);
+      const targetCat = categoryMapByNormName.get(normCat)!;
+      const normProd = normalizeImportStr(row.productName);
+
+      const existingProdIndex = finalProducts.findIndex(
+        (p) => p.categoryId === targetCat.id && normalizeImportStr(p.name) === normProd
+      );
+
+      if (existingProdIndex >= 0) {
+        finalProducts[existingProdIndex] = {
+          ...finalProducts[existingProdIndex],
+          name: row.productName.trim(),
+          description: row.description.trim(),
+          priceCents: row.priceCents,
+          isAvailable: row.isAvailable,
+          isFeatured: row.isFeatured,
+          imageUrl: row.imageUrl || finalProducts[existingProdIndex].imageUrl,
+          optionGroups:
+            row.optionGroups.length > 0
+              ? row.optionGroups
+              : finalProducts[existingProdIndex].optionGroups,
+        };
+      } else {
+        finalProducts.push({
+          id: `prod_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+          categoryId: targetCat.id,
+          name: row.productName.trim(),
+          description: row.description.trim(),
+          priceCents: row.priceCents,
+          isAvailable: row.isAvailable,
+          isFeatured: row.isFeatured,
+          imageUrl: row.imageUrl || undefined,
+          optionGroups: row.optionGroups.length > 0 ? row.optionGroups : undefined,
+        });
+      }
+    });
+
+    if (onImportCatalog) {
+      onImportCatalog(finalCategories, finalProducts, importMenuMode);
+    } else {
+      finalCategories.forEach((cat) => {
+        if (!categories.some((c) => c.id === cat.id)) {
+          onAddCategory(cat.name);
+        }
+      });
+      finalProducts.forEach((prod) => {
+        if (products.some((p) => p.id === prod.id)) {
+          onUpdateProduct(prod);
+        } else {
+          onAddProduct(prod);
+        }
+      });
+    }
+
+    triggerSyncNotice(
+      importMenuMode === 'replace'
+        ? `Cardápio substituído com sucesso: ${finalCategories.length} categorias e ${finalProducts.length} produtos ativos em ${tenant.name}!`
+        : `Cardápio mesclado com sucesso: ${finalCategories.length} categorias e ${finalProducts.length} produtos sincronizados em ${tenant.name}!`
+    );
+
+    setIsImportMenuModalOpen(false);
   };
 
   const handleSaveSettings = (e: React.FormEvent) => {
@@ -875,7 +1250,27 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                     </select>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setSpreadsheetModalTab('export')}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors"
+                      title="Exportar categorias e produtos para planilha Excel / CSV ou baixar planilha modelo"
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>Exportar Planilha</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsImportMenuModalOpen(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-800 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 rounded-lg transition-colors"
+                      title="Abrir modal de Importação de Cardápio com upload de arquivo e pré-visualização da tabela"
+                    >
+                      <Upload className="w-3.5 h-3.5 text-neutral-600" />
+                      <span>Importação de Cardápio</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => setIsBulkAdjustOpen(true)}
@@ -1210,18 +1605,36 @@ ETag: "catalog_version_1729482930"`}
         {activeTab === 'categories' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-6 bg-white border border-neutral-200 rounded-lg p-5 space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-neutral-200">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-neutral-200">
                 <div>
                   <h3 className="text-sm font-bold text-neutral-900">Categorias do Cardápio</h3>
-                  <p className="text-xs text-neutral-500">Organize como os itens aparecem no cardápio web.</p>
+                  <p className="text-xs text-neutral-500">Organize como os itens aparecem no cardápio web ou exporte/importe por planilha.</p>
                 </div>
-                <button
-                  onClick={() => setIsCategoryModalOpen(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Nova Categoria</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsImportMenuModalOpen(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-800 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 rounded-lg transition-colors"
+                  >
+                    <Upload className="w-3.5 h-3.5 text-neutral-600" />
+                    <span>Importar Cardápio</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSpreadsheetModalTab('export')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>Exportar (.CSV)</span>
+                  </button>
+                  <button
+                    onClick={() => setIsCategoryModalOpen(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Nova Categoria</span>
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -2479,6 +2892,480 @@ ETag: "catalog_version_1729482930"`}
         onClose={() => setIsQrPairingModalOpen(false)}
         tenant={tenant}
         onTenantUpdated={onUpdateTenant}
+      />
+
+      {/* ============================================================== */}
+      {/* MODAL DEDICADO: IMPORTAÇÃO DE CARDÁPIO                         */}
+      {/* ============================================================== */}
+      {isImportMenuModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-4xl w-full shadow-2xl border border-neutral-200 flex flex-col max-h-[90vh] overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 bg-neutral-900 text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  <Upload className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold">Importação de Cardápio</h3>
+                    <span className="px-2 py-0.5 text-[10px] font-mono font-semibold bg-neutral-800 text-emerald-400 rounded border border-neutral-700">
+                      {tenant.name}
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-400 mt-0.5">
+                    Faça o upload da sua planilha (.CSV), confira a visualização prévia da tabela e escolha entre mesclar ou substituir tudo.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsImportMenuModalOpen(false)}
+                className="p-1.5 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-5">
+              {/* 1. Opções de Importação: Mesclar com existente vs Substituir tudo */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-neutral-900">
+                  1. Modo de Importação do Cardápio
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setImportMenuMode('merge')}
+                    className={`p-3.5 rounded-xl border text-left transition-all ${
+                      importMenuMode === 'merge'
+                        ? 'border-neutral-900 bg-neutral-900 text-white shadow-xs'
+                        : 'border-neutral-200 bg-white text-neutral-800 hover:border-neutral-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold flex items-center gap-2">
+                        <input
+                          type="radio"
+                          checked={importMenuMode === 'merge'}
+                          onChange={() => setImportMenuMode('merge')}
+                          className="accent-emerald-500"
+                        />
+                        <span>Mesclar com existente</span>
+                      </span>
+                      <span
+                        className={`text-[10px] font-mono px-2 py-0.5 rounded font-semibold ${
+                          importMenuMode === 'merge'
+                            ? 'bg-emerald-500/20 text-emerald-300'
+                            : 'bg-neutral-100 text-neutral-600'
+                        }`}
+                      >
+                        Preserva atuais
+                      </span>
+                    </div>
+                    <p
+                      className={`text-[11px] mt-1.5 leading-relaxed ${
+                        importMenuMode === 'merge' ? 'text-neutral-300' : 'text-neutral-500'
+                      }`}
+                    >
+                      Mantém as {categories.length} categorias e {products.length} produtos atuais. Cria novas categorias/produtos da planilha e atualiza itens de mesmo nome.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setImportMenuMode('replace')}
+                    className={`p-3.5 rounded-xl border text-left transition-all ${
+                      importMenuMode === 'replace'
+                        ? 'border-orange-600 bg-orange-600 text-white shadow-xs'
+                        : 'border-neutral-200 bg-white text-neutral-800 hover:border-neutral-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold flex items-center gap-2">
+                        <input
+                          type="radio"
+                          checked={importMenuMode === 'replace'}
+                          onChange={() => setImportMenuMode('replace')}
+                          className="accent-white"
+                        />
+                        <span>Substituir tudo</span>
+                      </span>
+                      <span
+                        className={`text-[10px] font-mono px-2 py-0.5 rounded font-semibold ${
+                          importMenuMode === 'replace'
+                            ? 'bg-white/20 text-white'
+                            : 'bg-orange-50 text-orange-700'
+                        }`}
+                      >
+                        Cardápio novo
+                      </span>
+                    </div>
+                    <p
+                      className={`text-[11px] mt-1.5 leading-relaxed ${
+                        importMenuMode === 'replace' ? 'text-orange-100' : 'text-neutral-500'
+                      }`}
+                    >
+                      Remove todas as categorias e produtos existentes de {tenant.name} e substitui integralmente pelos itens da tabela abaixo.
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              {/* 2. Botão de Upload de Arquivo */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-neutral-900">
+                    2. Seleção e Upload de Arquivo (.CSV / Excel)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsImportMenuModalOpen(false);
+                      setSpreadsheetModalTab('export');
+                    }}
+                    className="text-[11px] font-semibold text-emerald-700 hover:underline flex items-center gap-1"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Baixar Planilha Modelo ou Exportar Atual</span>
+                  </button>
+                </div>
+
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDraggingImportFile(true);
+                  }}
+                  onDragLeave={() => setIsDraggingImportFile(false)}
+                  onDrop={handleImportFileDrop}
+                  className={`border-2 border-dashed rounded-xl p-5 transition-colors flex flex-col sm:flex-row items-center justify-between gap-4 ${
+                    isDraggingImportFile
+                      ? 'border-emerald-600 bg-emerald-50/50'
+                      : 'border-neutral-300 bg-neutral-50 hover:border-neutral-400'
+                  }`}
+                >
+                  <input
+                    ref={importFileInputRef}
+                    type="file"
+                    accept=".csv,.tsv,.txt"
+                    onChange={handleImportFileUpload}
+                    className="hidden"
+                  />
+
+                  <div className="flex items-center gap-3.5 text-center sm:text-left">
+                    <div className="w-11 h-11 rounded-xl bg-white border border-neutral-200 flex items-center justify-center text-neutral-700 shadow-2xs shrink-0">
+                      <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-neutral-900">
+                        Selecione a planilha do seu computador ou arraste o arquivo aqui
+                      </p>
+                      <p className="text-[11px] text-neutral-500 mt-0.5">
+                        Formatos aceitos: <strong>.CSV</strong>, <strong>.TSV</strong> ou <strong>.TXT</strong> (separados por ponto e vírgula <code className="bg-neutral-200 px-1 rounded">;</code> ou vírgula <code className="bg-neutral-200 px-1 rounded">,</code>)
+                      </p>
+                      {importFileName && (
+                        <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-900">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Arquivo carregado: {importFileName}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => importFileInputRef.current?.click()}
+                      className="flex items-center gap-2 px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold rounded-lg transition-colors shadow-xs"
+                    >
+                      <Upload className="w-4 h-4" />
+                      <span>Upload de Arquivo</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleLoadSampleImportTable}
+                      className="px-3 py-2.5 bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 text-xs font-semibold rounded-lg transition-colors"
+                    >
+                      Carregar Exemplo
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Visualização Prévia da Tabela que será Importada */}
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="block text-xs font-bold text-neutral-900">
+                    3. Visualização Prévia da Tabela que será Importada
+                  </label>
+
+                  {importPreviewRows.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                      <span className="px-2.5 py-0.5 rounded-full font-semibold bg-blue-50 text-blue-800 border border-blue-200">
+                        {
+                          Array.from(
+                            new Set(
+                              importPreviewRows
+                                .filter((r) => r.status !== 'error')
+                                .map((r) => r.categoryName.trim())
+                            )
+                          ).length
+                        }{' '}
+                        Categorias na tabela
+                      </span>
+                      <span className="px-2.5 py-0.5 rounded-full font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        {importPreviewRows.filter((r) => r.status === 'valid').length} Produtos válidos
+                      </span>
+                      {importPreviewRows.some((r) => r.status === 'error') && (
+                        <span className="px-2.5 py-0.5 rounded-full font-semibold bg-rose-50 text-rose-800 border border-rose-200">
+                          {importPreviewRows.filter((r) => r.status === 'error').length} Com erro
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImportPreviewRows([]);
+                          setImportFileName(null);
+                        }}
+                        className="text-rose-600 hover:underline font-medium ml-1"
+                      >
+                        Limpar tabela
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {importPreviewRows.length === 0 ? (
+                  <div className="border border-neutral-200 rounded-xl p-8 text-center bg-neutral-50/60 space-y-2">
+                    <p className="text-xs font-semibold text-neutral-700">
+                      Nenhum arquivo carregado para visualização prévia.
+                    </p>
+                    <p className="text-[11px] text-neutral-500 max-w-md mx-auto">
+                      Clique em <strong>&quot;Upload de Arquivo&quot;</strong> acima para selecionar sua planilha `.CSV` ou clique em <strong>&quot;Carregar Exemplo&quot;</strong> para inspecionar a tabela prévia.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="border border-neutral-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+                    <div className="max-h-72 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead className="bg-neutral-100 border-b border-neutral-200 text-neutral-700 sticky top-0 z-10">
+                          <tr>
+                            <th className="p-2.5 text-left">Linha</th>
+                            <th className="p-2.5 text-left">Categoria</th>
+                            <th className="p-2.5 text-left">Produto &amp; Descrição</th>
+                            <th className="p-2.5 text-right">Preço</th>
+                            <th className="p-2.5 text-center">Disponível</th>
+                            <th className="p-2.5 text-left">Ação ({importMenuMode === 'merge' ? 'Mesclar' : 'Substituir'})</th>
+                            <th className="p-2.5 text-right">Remover</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-neutral-200 text-[11px]">
+                          {importPreviewRows.map((row, idx) => {
+                            const catExists = categories.some(
+                              (c) => normalizeImportStr(c.name) === normalizeImportStr(row.categoryName)
+                            );
+                            const prodExists = products.some(
+                              (p) => normalizeImportStr(p.name) === normalizeImportStr(row.productName)
+                            );
+
+                            return (
+                              <tr
+                                key={`${row.rowNumber}_${idx}`}
+                                className={row.status === 'error' ? 'bg-rose-50/60' : 'hover:bg-neutral-50'}
+                              >
+                                <td className="p-2.5 font-mono text-neutral-400">#{row.rowNumber}</td>
+                                <td className="p-2.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-mono text-[10px] text-neutral-400">
+                                      [{row.categoryOrder}]
+                                    </span>
+                                    <span className="font-semibold text-neutral-900">
+                                      {row.categoryName}
+                                    </span>
+                                  </div>
+                                  {row.status !== 'error' && (
+                                    <span
+                                      className={`inline-block mt-0.5 text-[9px] font-mono px-1.5 py-0.2 rounded ${
+                                        importMenuMode === 'replace' || !catExists
+                                          ? 'bg-blue-50 text-blue-700'
+                                          : 'bg-neutral-100 text-neutral-600'
+                                      }`}
+                                    >
+                                      {importMenuMode === 'replace'
+                                        ? 'Recriar Categoria'
+                                        : catExists
+                                        ? 'Categoria Existente'
+                                        : 'Nova Categoria'}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="p-2.5">
+                                  {row.status === 'category_only' ? (
+                                    <span className="italic text-neutral-400">
+                                      (Apenas cadastro da categoria)
+                                    </span>
+                                  ) : (
+                                    <div>
+                                      <p className="font-bold text-neutral-900">{row.productName}</p>
+                                      {row.description && (
+                                        <p className="text-neutral-500 truncate max-w-xs">
+                                          {row.description}
+                                        </p>
+                                      )}
+                                      {row.optionGroups.length > 0 && (
+                                        <p className="text-[10px] text-emerald-700 font-medium mt-0.5">
+                                          + {row.optionGroups.length} grupo(s) de adicionais
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="p-2.5 text-right font-mono font-bold text-neutral-900 tabular-nums">
+                                  {row.status === 'category_only' ? '—' : formatBRL(row.priceCents)}
+                                </td>
+                                <td className="p-2.5 text-center">
+                                  {row.status === 'category_only' ? (
+                                    '—'
+                                  ) : (
+                                    <span
+                                      className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                        row.isAvailable
+                                          ? 'bg-emerald-50 text-emerald-800'
+                                          : 'bg-neutral-100 text-neutral-600'
+                                      }`}
+                                    >
+                                      {row.isAvailable ? 'Sim' : 'Pausado'}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="p-2.5">
+                                  {row.status === 'error' ? (
+                                    <span className="text-rose-700 font-semibold flex items-center gap-1">
+                                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                                      {row.errorMessage}
+                                    </span>
+                                  ) : importMenuMode === 'replace' ? (
+                                    <span className="text-orange-700 font-semibold flex items-center gap-1">
+                                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                                      Substituir no novo menu
+                                    </span>
+                                  ) : prodExists ? (
+                                    <span className="text-amber-700 font-semibold flex items-center gap-1">
+                                      <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+                                      Atualizar existente
+                                    </span>
+                                  ) : (
+                                    <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                                      Adicionar novo
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="p-2.5 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setImportPreviewRows((prev) => prev.filter((_, i) => i !== idx))
+                                    }
+                                    className="p-1 text-neutral-400 hover:text-rose-600 rounded transition-colors"
+                                    title="Ignorar esta linha na importação"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-neutral-50 border-t border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+              <div className="text-[11px] text-neutral-500">
+                Modo selecionado:{' '}
+                <strong className="text-neutral-900">
+                  {importMenuMode === 'merge' ? 'Mesclar com existente' : 'Substituir tudo'}
+                </strong>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsImportMenuModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-200 rounded-lg transition-colors"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="button"
+                  disabled={
+                    importPreviewRows.filter((r) => r.status === 'valid' || r.status === 'category_only')
+                      .length === 0
+                  }
+                  onClick={handleConfirmMenuImportModal}
+                  className={`flex items-center gap-2 px-5 py-2 text-xs font-bold rounded-lg transition-colors shadow-xs ${
+                    importPreviewRows.filter((r) => r.status === 'valid' || r.status === 'category_only')
+                      .length > 0
+                      ? importMenuMode === 'replace'
+                        ? 'bg-orange-600 hover:bg-orange-700 text-white'
+                        : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                      : 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
+                  }`}
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>
+                    {importMenuMode === 'replace'
+                      ? 'Substituir Tudo e Importar Cardápio'
+                      : 'Mesclar com Existente e Importar'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* SPREADSHEET EXPORT & IMPORT MODAL (CATEGORIES + PRODUCTS)      */}
+      {/* ============================================================== */}
+      <MenuSpreadsheetModal
+        isOpen={spreadsheetModalTab !== null}
+        initialTab={spreadsheetModalTab || 'export'}
+        onClose={() => setSpreadsheetModalTab(null)}
+        tenant={tenant}
+        categories={categories}
+        products={products}
+        onImportCatalog={(newCategories, newProducts, mode) => {
+          if (onImportCatalog) {
+            onImportCatalog(newCategories, newProducts, mode);
+          } else {
+            // Fallback if onImportCatalog wasn't provided
+            newCategories.forEach((cat) => {
+              if (!categories.some((c) => c.id === cat.id)) {
+                onAddCategory(cat.name);
+              }
+            });
+            newProducts.forEach((prod) => {
+              if (products.some((p) => p.id === prod.id)) {
+                onUpdateProduct(prod);
+              } else {
+                onAddProduct(prod);
+              }
+            });
+          }
+          triggerSyncNotice(
+            `Cardápio atualizado via planilha: ${newCategories.length} categorias e ${newProducts.length} produtos sincronizados para ${tenant.name}!`
+          );
+        }}
       />
     </div>
   );
