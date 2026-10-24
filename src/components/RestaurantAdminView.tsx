@@ -868,7 +868,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
               <span aria-hidden="true">·</span>
               <span className="font-mono text-[11px]">slug: {tenant.slug}</span>
               <span aria-hidden="true">·</span>
-              <span className="text-emerald-700 font-medium">Assinatura R$ 99/mês (Ativa)</span>
+              <span className="text-emerald-700 font-medium">Assinatura R$ 129,90/mês (Ativa)</span>
             </div>
             <div className="flex flex-wrap items-center gap-2 mt-1">
               <span className="text-[11px] text-neutral-500 font-medium">Perfil RBAC:</span>
@@ -1087,7 +1087,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
           }`}
         >
           <CreditCard className="w-4 h-4" />
-          <span>Assinatura (R$ 99/mês)</span>
+          <span>Assinatura (R$ 129,90/mês)</span>
         </button>
 
         <button
@@ -1939,7 +1939,7 @@ ETag: "catalog_version_1729482930"`}
                       </span>
                     </h4>
                     <p className="text-xs text-neutral-500">
-                      Cada cliente paga o Pix diretamente na conta bancária do seu restaurante. A Aladay não intermedeia suas vendas (o Asaas é usado apenas na assinatura de R$ 99/mês).
+                      Cada cliente paga o Pix diretamente na conta bancária do seu restaurante. A Aladay não intermedeia suas vendas (o Asaas é usado apenas na assinatura de R$ 129,90/mês).
                     </p>
                   </div>
                 </div>
@@ -2207,7 +2207,7 @@ ETag: "catalog_version_1729482930"`}
                     O QR Code Pix gerado no checkout do cardápio usa o padrão EMV do Banco Central com a chave acima. O dinheiro vai direto do banco do cliente para o banco do restaurante, sem passar pelo Asaas.
                   </p>
                   <div className="flex items-center justify-between pt-1 border-t border-neutral-100 text-[11px]">
-                    <span className="text-neutral-500">Assinatura Mensal da Plataforma (R$ 99):</span>
+                    <span className="text-neutral-500">Assinatura Mensal da Plataforma (R$ 129,90):</span>
                     <button
                       type="button"
                       onClick={() => setActiveTab('billing')}
@@ -2616,7 +2616,7 @@ ETag: "catalog_version_1729482930"`}
         )}
 
         {/* ============================================================== */}
-        {/* TAB 8: BILLING & SUBSCRIPTION (R$ 99/mês via Asaas)            */}
+        {/* TAB 8: BILLING & SUBSCRIPTION (R$ 129,90/mês via Asaas)       */}
         {/* ============================================================== */}
         {activeTab === 'billing' && (
           <AsaasSubscriptionBillingView tenant={tenant} onUpdateTenant={onUpdateTenant} />

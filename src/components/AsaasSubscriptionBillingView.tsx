@@ -151,7 +151,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
       if (res.ok) {
         const data = await res.json();
         setSubscription(data.subscription);
-        showToast('success', 'Cartão cadastrado com sucesso! Mensalidade de R$ 99,00 liquidada via Asaas.');
+        showToast('success', 'Cartão cadastrado com sucesso! Mensalidade de R$ 129,90 liquidada via Asaas.');
         setCcNumber('');
         setCcHolder('');
         setCcExpiry('');
@@ -184,7 +184,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
         showToast(
           eventType === 'PAYMENT_RECEIVED' ? 'success' : 'error',
           eventType === 'PAYMENT_RECEIVED'
-            ? 'Webhook Asaas: PAYMENT_RECEIVED recebido! Mensalidade de R$ 99,00 liquidada e plano renovado.'
+            ? 'Webhook Asaas: PAYMENT_RECEIVED recebido! Mensalidade de R$ 129,90 liquidada e plano renovado.'
             : 'Webhook Asaas: PAYMENT_OVERDUE recebido! Status alterado para Em Atraso.'
         );
         fetchSubscription();
@@ -286,10 +286,10 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
               </span>
             </div>
             <h2 className="text-lg font-bold tracking-tight">
-              Assinatura Recorrente Aladay &bull; R$ 99,00 / mês
+              Assinatura Recorrente Aladay &bull; R$ 129,90 / mês
             </h2>
             <p className="text-xs text-neutral-300 max-w-2xl leading-relaxed">
-              O gateway <strong>Asaas</strong> processa exclusivamente a mensalidade de R$ 99,00 da sua plataforma. Os pedidos e cobranças Pix dos seus clientes finais entram <strong>100% diretos na sua conta bancária</strong> com taxa 0%.
+              O gateway <strong>Asaas</strong> processa exclusivamente a mensalidade de R$ 129,90 da sua plataforma. Os pedidos e cobranças Pix dos seus clientes finais entram <strong>100% diretos na sua conta bancária</strong> com taxa 0%.
             </p>
           </div>
 
@@ -449,7 +449,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
             Valor Mensal Recorrente
           </p>
           <p className="text-xl font-bold font-mono text-neutral-900">
-            R$ 99,00 <span className="text-xs font-normal text-neutral-500">/ mês</span>
+            R$ 129,90 <span className="text-xs font-normal text-neutral-500">/ mês</span>
           </p>
           <p className="text-[11px] text-emerald-700 font-medium">
             Cobrança mensal no gateway Asaas
@@ -502,7 +502,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
       <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-sm space-y-6">
         <div>
           <h3 className="text-sm font-bold text-neutral-900">
-            Método de Pagamento da Assinatura Mensal (R$ 99,00)
+            Método de Pagamento da Assinatura Mensal (R$ 129,90)
           </h3>
           <p className="text-xs text-neutral-500">
             Escolha como prefere pagar a mensalidade da plataforma Aladay. Alterne a qualquer momento sem custos.
@@ -590,14 +590,14 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
               <div>
                 <h4 className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
                   <QrCode className="w-4 h-4 text-emerald-700" />
-                  <span>Fatura Atual &bull; Pix Copia e Cola &amp; QR Code (R$ 99,00)</span>
+                  <span>Fatura Atual &bull; Pix Copia e Cola &amp; QR Code (R$ 129,90)</span>
                 </h4>
                 <p className="text-[11px] text-neutral-500">
                   Emitido pelo Asaas com liquidação instantânea por webhook.
                 </p>
               </div>
               <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                Valor: R$ 99,00
+                Valor: R$ 129,90
               </span>
             </div>
 
@@ -632,7 +632,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                       readOnly
                       value={
                         pendingInvoice?.pixCopiaECola ||
-                        '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br520400005303986540599.005802BR5915ALADAY SAAS6009SAO PAULO62070503***6304D1B8'
+                        '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br5204000053039865406129.905802BR5915ALADAY SAAS6009SAO PAULO62070503***6304E2C9'
                       }
                       className="flex-1 p-2.5 bg-white border border-neutral-200 rounded-lg text-xs font-mono text-neutral-700 select-all"
                     />
@@ -641,7 +641,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                       onClick={() =>
                         handleCopy(
                           pendingInvoice?.pixCopiaECola ||
-                            '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br520400005303986540599.005802BR5915ALADAY SAAS6009SAO PAULO62070503***6304D1B8',
+                            '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br5204000053039865406129.905802BR5915ALADAY SAAS6009SAO PAULO62070503***6304E2C9',
                           'Código Pix Asaas'
                         )
                       }
@@ -671,7 +671,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                     1. Copie o código acima ou escaneie o QR Code no aplicativo do seu banco.
                   </p>
                   <p className="text-[11px] leading-relaxed">
-                    2. Ao confirmar o pagamento de <strong>R$ 99,00</strong>, o Asaas envia um webhook para o Aladay em até 3 segundos liberando o próximo mês da sua licença.
+                    2. Ao confirmar o pagamento de <strong>R$ 129,90</strong>, o Asaas envia um webhook para o Aladay em até 3 segundos liberando o próximo mês da sua licença.
                   </p>
                 </div>
 
@@ -706,7 +706,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
             <div className="border-b border-neutral-200/60 pb-3">
               <h4 className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
                 <CreditCard className="w-4 h-4 text-blue-700" />
-                <span>Cadastro de Cartão de Crédito para Mensalidade Recorrente (R$ 99,00/mês)</span>
+                <span>Cadastro de Cartão de Crédito para Mensalidade Recorrente (R$ 129,90/mês)</span>
               </h4>
               <p className="text-[11px] text-neutral-500">
                 Os dados são transmitidos de forma segura e tokenizados diretamente pelo gateway Asaas.
@@ -788,7 +788,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                   className="px-5 py-2.5 text-xs font-bold text-white bg-blue-700 hover:bg-blue-600 rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-50"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>{isSubmittingCard ? 'Processando no Asaas...' : 'Ativar Assinatura no Cartão (R$ 99/mês)'}</span>
+                  <span>{isSubmittingCard ? 'Processando no Asaas...' : 'Ativar Assinatura no Cartão (R$ 129,90/mês)'}</span>
                 </button>
 
                 <button
@@ -814,7 +814,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
             <div className="border-b border-neutral-200/60 pb-3">
               <h4 className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
                 <FileText className="w-4 h-4 text-amber-700" />
-                <span>Boleto Bancário Registrado Asaas (R$ 99,00)</span>
+                <span>Boleto Bancário Registrado Asaas (R$ 129,90)</span>
               </h4>
               <p className="text-[11px] text-neutral-500">
                 Emitido com código de barras FEBRABAN e compensação automática no próximo dia útil.
@@ -830,14 +830,14 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                   <input
                     type="text"
                     readOnly
-                    value="03399.70428 53000.000000 00000.000000 1 98880000009900"
+                    value="03399.70428 53000.000000 00000.000000 1 98880000012990"
                     className="flex-1 p-2.5 bg-white border border-neutral-200 rounded-lg text-xs font-mono text-neutral-700"
                   />
                   <button
                     type="button"
                     onClick={() =>
                       handleCopy(
-                        '03399.70428 53000.000000 00000.000000 1 98880000009900',
+                        '03399.70428 53000.000000 00000.000000 1 98880000012990',
                         'Linha Digitável do Boleto'
                       )
                     }
@@ -882,7 +882,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
               Histórico de Faturas &amp; Mensalidades (Asaas Recorrência)
             </h4>
             <p className="text-[11px] text-neutral-500">
-              Registro contábil de todas as renovações mensais de R$ 99,00 da plataforma.
+              Registro contábil de todas as renovações mensais de R$ 129,90 da plataforma.
             </p>
           </div>
           <span className="text-xs text-neutral-500 font-mono">

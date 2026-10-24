@@ -1105,7 +1105,7 @@ async function startServer() {
     });
   });
 
-  // OFFICIAL WEBHOOK RECEIVER FOR GATEWAY NACIONAL ASAAS (EXCLUSIVO ASSINATURAS SAAS R$ 99,00/MÊS)
+  // OFFICIAL WEBHOOK RECEIVER FOR GATEWAY NACIONAL ASAAS (EXCLUSIVO ASSINATURAS SAAS R$ 129,90/MÊS)
   const handleAsaasSubscriptionWebhook = async (req: Request, res: Response) => {
     // SECURITY: Validate Asaas Access Token Header
     const receivedToken = (req.headers['asaas-access-token'] as string) || '';
@@ -1123,7 +1123,7 @@ async function startServer() {
     if (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED') {
       const tenantSlug = payment?.externalReference || subscription?.externalReference || 'aladay';
       const paymentId = payment?.id || `pay_asaas_${Date.now()}`;
-      const amountReais = payment?.value || 99.0;
+      const amountReais = payment?.value || 129.9;
 
       const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.id === tenantSlug) || memoryTenants[0];
       tenant.subscriptionStatus = 'active';
@@ -1138,7 +1138,7 @@ async function startServer() {
         messageText: `✅ Assinatura Mensal Aladay (R$ ${Number(amountReais).toFixed(2).replace('.', ',')}) confirmada pelo Asaas (${paymentId}) para o lojista ${tenant.name}.`,
         direction: 'inbound',
         status: 'success',
-        payloadSummary: `Mensalidade SaaS R$ 99,00 liquidada via Asaas (${paymentId})`,
+        payloadSummary: `Mensalidade SaaS R$ 129,90 liquidada via Asaas (${paymentId})`,
         fullPayload: req.body,
       });
 
@@ -2820,7 +2820,7 @@ async function startServer() {
   });
 
   // =========================================================================
-  // ASAAS RECURRING SUBSCRIPTIONS (R$ 99,00/mês - SaaS ALADAY)
+  // ASAAS RECURRING SUBSCRIPTIONS (R$ 129,90/mês - SaaS ALADAY)
   // =========================================================================
 
   interface InMemAsaasCustomer {
@@ -2835,7 +2835,7 @@ async function startServer() {
     id: string;
     subscriptionId: string;
     referenceMonth: string;
-    value: number; // 99.00
+    value: number; // 129.90
     status: 'RECEIVED' | 'CONFIRMED' | 'PENDING' | 'OVERDUE' | 'REFUNDED';
     dueDate: string;
     paymentDate?: string;
@@ -2852,7 +2852,7 @@ async function startServer() {
     tenantSlug: string;
     customer: InMemAsaasCustomer;
     planName: string;
-    value: number; // 99.00
+    value: number; // 129.90
     cycle: 'MONTHLY';
     status: 'ACTIVE' | 'PENDING' | 'OVERDUE' | 'CANCELLED';
     billingType: 'PIX' | 'CREDIT_CARD' | 'BOLETO';
@@ -2871,7 +2871,7 @@ async function startServer() {
       (process.env.APP_URL ? `${process.env.APP_URL.replace(/\/$/, '')}/api/v1/asaas/webhook` : 'https://aladay.com.br/api/v1/asaas/webhook'),
   };
 
-  const defaultPixPayload = '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br520400005303986540599.005802BR5915ALADAY SAAS6009SAO PAULO62070503***6304D1B8';
+  const defaultPixPayload = '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br5204000053039865406129.905802BR5915ALADAY SAAS6009SAO PAULO62070503***6304E2C9';
 
   const memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {
     aladay: {
@@ -2884,8 +2884,8 @@ async function startServer() {
         cpfCnpj: '',
         phone: '',
       },
-      planName: 'Plano Pro Aladay - R$ 99,00/mês',
-      value: 99.0,
+      planName: 'Plano Pro Aladay - R$ 129,90/mês',
+      value: 129.9,
       cycle: 'MONTHLY',
       status: 'PENDING',
       billingType: 'PIX',
@@ -2933,8 +2933,8 @@ async function startServer() {
           cpfCnpj: '00.000.000/0001-00',
           phone: tenant ? tenant.phone : '5511999999999',
         },
-        planName: 'Plano Pro Aladay - R$ 99,00/mês',
-        value: 99.0,
+        planName: 'Plano Pro Aladay - R$ 129,90/mês',
+        value: 129.9,
         cycle: 'MONTHLY',
         status: 'ACTIVE',
         billingType: 'PIX',
@@ -2945,12 +2945,12 @@ async function startServer() {
             id: `pay_asaas_${Date.now()}`,
             subscriptionId: `sub_asaas_${slug}_01`,
             referenceMonth: 'Mês Atual',
-            value: 99.0,
+            value: 129.9,
             status: 'PENDING',
             dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
             billingType: 'PIX',
             invoiceUrl: `https://www.asaas.com/i/pay_${Date.now()}`,
-            description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
+            description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90 / mês',
             pixCopiaECola: defaultPixPayload,
           },
         ],
@@ -2979,7 +2979,7 @@ async function startServer() {
   });
 
   // POST /api/v1/asaas/subscription/:slug/subscribe
-  // Creates or modifies recurring subscription to R$ 99,00/mês with Asaas
+  // Creates or modifies recurring subscription to R$ 129,90/mês with Asaas
   app.post('/api/v1/asaas/subscription/:slug/subscribe', async (req: Request, res: Response) => {
     const { slug } = req.params;
     const {
@@ -3010,8 +3010,8 @@ async function startServer() {
           cpfCnpj: customerCpfCnpj || '41.238.991/0001-82',
           phone: customerPhone || tenant?.phone || '5511987654321',
         },
-        planName: 'Plano Pro Aladay - R$ 99,00/mês',
-        value: 99.0,
+        planName: 'Plano Pro Aladay - R$ 129,90/mês',
+        value: 129.9,
         cycle: 'MONTHLY',
         status: 'ACTIVE',
         billingType: safeBillingType,
@@ -3041,12 +3041,12 @@ async function startServer() {
         id: `pay_asaas_${Date.now()}`,
         subscriptionId: subscription.id,
         referenceMonth: refMonth,
-        value: 99.0,
+        value: 129.9,
         status: 'PENDING',
         dueDate,
         billingType: safeBillingType,
         invoiceUrl: `https://www.asaas.com/i/pay_${Date.now()}`,
-        description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
+        description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90 / mês',
         pixCopiaECola: defaultPixPayload,
       };
       subscription.invoices.unshift(pendingInvoice);
@@ -3076,7 +3076,7 @@ async function startServer() {
         eventType: 'PAYMENT_RECEIVED',
         instance: 'Asaas Recorrência v3',
         senderPhone: subscription.customer.phone,
-        messageText: `Pagamento de R$ 99,00 da mensalidade Aladay confirmado no Cartão Final ${last4}`,
+        messageText: `Pagamento de R$ 129,90 da mensalidade Aladay confirmado no Cartão Final ${last4}`,
         direction: 'inbound',
         status: 'success',
         payloadSummary: `Assinatura Recorrente #${subscription.id} renovada com sucesso para ${subscription.customer.name}`,
@@ -3085,7 +3085,7 @@ async function startServer() {
           payment: {
             id: pendingInvoice.id,
             subscription: subscription.id,
-            value: 99.0,
+            value: 129.9,
             billingType: 'CREDIT_CARD',
             creditCard: { creditCardNumber: `**** **** **** ${last4}` },
           },
@@ -3105,7 +3105,7 @@ async function startServer() {
   });
 
   // POST /api/v1/asaas/subscription/:slug/generate-pix
-  // Explicitly generates or returns current Pix Copia e Cola and QR code for the R$ 99 monthly charge
+  // Explicitly generates or returns current Pix Copia e Cola and QR code for the R$ 129,90 monthly charge
   app.post('/api/v1/asaas/subscription/:slug/generate-pix', async (req: Request, res: Response) => {
     const { slug } = req.params;
     const subscription = memoryAsaasSubscriptions[slug];
@@ -3121,12 +3121,12 @@ async function startServer() {
         id: `pay_asaas_${Date.now()}`,
         subscriptionId: subscription.id,
         referenceMonth: `${monthNames[now.getMonth()]} / ${now.getFullYear()}`,
-        value: 99.0,
+        value: 129.9,
         status: 'PENDING',
         dueDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         billingType: 'PIX',
         invoiceUrl: `https://www.asaas.com/i/pay_${Date.now()}`,
-        description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 99,00 / mês',
+        description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90 / mês',
         pixCopiaECola: defaultPixPayload,
       };
       subscription.invoices.unshift(pendingInvoice);
@@ -3169,7 +3169,7 @@ async function startServer() {
       eventType: 'SUBSCRIPTION_DELETED',
       instance: 'Asaas Recorrência v3',
       senderPhone: subscription.customer.phone,
-      messageText: `Assinatura de R$ 99,00 cancelada pelo lojista.`,
+      messageText: `Assinatura de R$ 129,90 cancelada pelo lojista.`,
       direction: 'inbound',
       status: 'filtered',
       payloadSummary: `Assinatura #${subscription.id} cancelada no Asaas para ${subscription.customer.name}`,
@@ -3289,10 +3289,10 @@ async function startServer() {
       eventType: event,
       instance: 'Asaas Webhook Gateway',
       senderPhone: targetSub?.customer.phone || 'Asaas Gateway',
-      messageText: `Evento ${event} processado para mensalidade de R$ 99,00 do plano Aladay SaaS`,
+      messageText: `Evento ${event} processado para mensalidade de R$ 129,90 do plano Aladay SaaS`,
       direction: 'inbound',
       status: 'success',
-      payloadSummary: `Webhook Asaas ${event}: Fatura #${payment?.id || 'pay_current'} de R$ ${(payment?.value || 99).toFixed(2)} processada com sucesso`,
+      payloadSummary: `Webhook Asaas ${event}: Fatura #${payment?.id || 'pay_current'} de R$ ${(payment?.value || 129.9).toFixed(2)} processada com sucesso`,
       fullPayload: req.body,
     });
 
@@ -3331,8 +3331,8 @@ async function startServer() {
       payment: {
         id: pendingInvoice ? pendingInvoice.id : `pay_asaas_${Date.now()}`,
         subscription: sub?.id,
-        value: 99.0,
-        netValue: 97.01,
+        value: 129.9,
+        netValue: 125.01,
         billingType: sub?.billingType || 'PIX',
         status: eventType === 'PAYMENT_RECEIVED' ? 'RECEIVED' : eventType === 'PAYMENT_OVERDUE' ? 'OVERDUE' : 'CONFIRMED',
         customer: sub?.customer.id,

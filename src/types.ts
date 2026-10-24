@@ -101,7 +101,7 @@ export interface AsaasInvoice {
   id: string;
   subscriptionId: string;
   referenceMonth: string;
-  value: number; // 99.00
+  value: number; // 129.90
   status: AsaasInvoiceStatus;
   dueDate: string;
   paymentDate?: string;
@@ -118,7 +118,7 @@ export interface AsaasSubscriptionData {
   tenantSlug: string;
   customer: AsaasCustomer;
   planName: string;
-  value: number; // 99.00
+  value: number; // 129.90
   cycle: 'MONTHLY';
   status: AsaasSubscriptionStatus;
   billingType: AsaasBillingType;
@@ -233,7 +233,7 @@ export interface CustomerRecord {
 
 export interface SaaSFinancialMetrics {
   activeRestaurants: number;
-  subscriptionPriceBRL: number; // 99.00
+  subscriptionPriceBRL: number; // 129.90
   // Costs
   vpsServerCostBRL: number;
   evolutionInstancesCostBRL: number;
@@ -260,7 +260,7 @@ export interface BlueprintSection {
 export interface Invoice {
   id: string;
   referenceMonth: string;
-  amountCents: number; // 9900
+  amountCents: number; // 12990
   status: 'paid' | 'pending' | 'overdue';
   dueDate: string;
   paidAt?: string;
@@ -271,7 +271,7 @@ export interface Invoice {
 export interface SubscriptionInfo {
   status: 'active' | 'trial' | 'past_due' | 'cancelled';
   planName: string;
-  priceCents: number; // 9900
+  priceCents: number; // 12990
   currentPeriodEnd: string;
   trialDaysLeft?: number;
   invoices: Invoice[];

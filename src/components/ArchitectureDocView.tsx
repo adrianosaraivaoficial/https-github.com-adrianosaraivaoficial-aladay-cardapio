@@ -71,7 +71,7 @@ export const ArchitectureDocView: React.FC = () => {
           <Search className="w-4 h-4 absolute left-3 top-2.5 text-neutral-400" />
           <input
             type="text"
-            placeholder="Buscar por termo (ex: RLS, Outbox, 99)..."
+            placeholder="Buscar por termo (ex: RLS, Outbox, 129,90)..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-9 pr-3 py-1.5 text-xs bg-neutral-50 border border-neutral-200 rounded-md text-neutral-800 placeholder-neutral-400 focus:outline-none focus:ring-1 focus:ring-neutral-400"
@@ -141,7 +141,7 @@ export const ArchitectureDocView: React.FC = () => {
                   <span aria-hidden="true">·</span>
                   <span>Documento Arquitetural SaaS</span>
                   <span aria-hidden="true">·</span>
-                  <span>R$ 99/mês & Evolution API</span>
+                  <span>R$ 129,90/mês & Evolution API</span>
                 </div>
 
                 <button

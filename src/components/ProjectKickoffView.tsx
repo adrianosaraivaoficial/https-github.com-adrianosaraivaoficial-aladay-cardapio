@@ -11,13 +11,32 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
   onTenantCreated,
   onNavigateToView,
 }) => {
-  const [name, setName] = useState('Pizzaria Di Fiori');
-  const [slug, setSlug] = useState('pizzaria-difiori');
-  const [phone, setPhone] = useState('11976543210');
-  const [address, setAddress] = useState('Rua Augusta, 1420 - Consolação, São Paulo - SP');
-  const [primaryColor, setPrimaryColor] = useState('#B91C1C'); // Red / Pizza
+  const [name, setName] = useState('');
+  const [slug, setSlug] = useState('');
+  const [isSlugCustomized, setIsSlugCustomized] = useState(false);
+  const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [primaryColor, setPrimaryColor] = useState('#059669'); // Emerald Aladay
   const [isCreating, setIsCreating] = useState(false);
   const [createdTenant, setCreatedTenant] = useState<RestaurantTenant | null>(null);
+
+  const handleFillExample = () => {
+    setName('Pizzaria Di Fiori');
+    setSlug('pizzaria-difiori');
+    setIsSlugCustomized(true);
+    setPhone('11976543210');
+    setAddress('Rua Augusta, 1420 - Consolação, São Paulo - SP');
+    setPrimaryColor('#B91C1C');
+  };
+
+  const handleClearForm = () => {
+    setName('');
+    setSlug('');
+    setIsSlugCustomized(false);
+    setPhone('');
+    setAddress('');
+    setPrimaryColor('#059669');
+  };
 
   // Live Backend API testing state
   const [apiHealthResponse, setApiHealthResponse] = useState<any>(null);
@@ -148,10 +167,30 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Form Column */}
         <div className="lg:col-span-7 bg-white border border-neutral-200 rounded-lg p-6 space-y-5">
-          <h3 className="text-sm font-bold text-neutral-900 flex items-center gap-2 pb-2 border-b border-neutral-200">
-            <Store className="w-4 h-4 text-neutral-700" />
-            1. Cadastro e Criação do Tenant (Restaurante)
-          </h3>
+          <div className="flex items-center justify-between pb-2 border-b border-neutral-200">
+            <h3 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
+              <Store className="w-4 h-4 text-neutral-700" />
+              1. Cadastro e Criação do Tenant (Restaurante)
+            </h3>
+            <div className="flex items-center gap-2">
+              {(name || phone || address) && (
+                <button
+                  type="button"
+                  onClick={handleClearForm}
+                  className="text-[11px] text-neutral-500 hover:text-neutral-800 transition-colors cursor-pointer"
+                >
+                  Limpar
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleFillExample}
+                className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-md transition-colors cursor-pointer"
+              >
+                Preencher Exemplo
+              </button>
+            </div>
+          </div>
 
           <form onSubmit={handleCreateTenant} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -162,10 +201,21 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                 <input
                   type="text"
                   required
+                  placeholder="Ex: Pizzaria Bella Napoli"
                   value={name}
                   onChange={(e) => {
-                    setName(e.target.value);
-                    setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-'));
+                    const newName = e.target.value;
+                    setName(newName);
+                    if (!isSlugCustomized) {
+                      const autoSlug = newName
+                        .toLowerCase()
+                        .normalize('NFD')
+                        .replace(/[\u0300-\u036f]/g, '')
+                        .replace(/[^a-z0-9]/g, '-')
+                        .replace(/-+/g, '-')
+                        .replace(/^-|-$/g, '');
+                      setSlug(autoSlug);
+                    }
                   }}
                   className="w-full p-2.5 text-xs border border-neutral-200 rounded-lg text-neutral-900 focus:outline-none focus:ring-1 focus:ring-neutral-400"
                 />
@@ -173,23 +223,27 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
 
               <div>
                 <label className="block text-xs font-medium text-neutral-700 mb-1">
-                  Slug do Subdomínio Público
+                  Domínio &amp; Link do Cardápio
                 </label>
                 <div className="flex items-center">
-                  <span className="text-xs text-neutral-400 bg-neutral-50 px-2.5 py-2.5 border border-r-0 border-neutral-200 rounded-l-lg font-mono">
-                    https://
+                  <span className="text-xs text-neutral-600 bg-neutral-100 px-2.5 py-2.5 border border-r-0 border-neutral-200 rounded-l-lg font-mono font-medium">
+                    aladay.com.br/
                   </span>
                   <input
                     type="text"
                     required
+                    placeholder="pizzaria-bella-napoli"
                     value={slug}
-                    onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-                    className="w-full p-2.5 text-xs border border-neutral-200 text-neutral-900 font-mono focus:outline-none focus:ring-1 focus:ring-neutral-400"
+                    onChange={(e) => {
+                      setIsSlugCustomized(true);
+                      setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''));
+                    }}
+                    className="w-full p-2.5 text-xs border border-neutral-200 rounded-r-lg text-neutral-900 font-mono focus:outline-none focus:ring-1 focus:ring-neutral-400"
                   />
-                  <span className="text-xs text-neutral-500 bg-neutral-50 px-2 py-2.5 border border-l-0 border-neutral-200 rounded-r-lg font-mono">
-                    .saas.com.br
-                  </span>
                 </div>
+                <p className="text-[11px] text-neutral-500 mt-1">
+                  Link final: <span className="font-mono text-emerald-700 font-semibold">https://aladay.com.br/{slug || 'nome-do-restaurante'}</span>
+                </p>
               </div>
             </div>
 
@@ -203,7 +257,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                   required
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  placeholder="11987654321"
+                  placeholder="Ex: 11987654321"
                   className="w-full p-2.5 text-xs border border-neutral-200 rounded-lg text-neutral-900 font-mono"
                 />
               </div>
@@ -236,6 +290,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
               <input
                 type="text"
                 required
+                placeholder="Ex: Av. Paulista, 1000 - Bela Vista, São Paulo - SP"
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
                 className="w-full p-2.5 text-xs border border-neutral-200 rounded-lg text-neutral-900"
@@ -244,7 +299,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
 
             <div className="p-3 bg-neutral-50 border border-neutral-200 rounded-lg text-xs text-neutral-600 flex items-center justify-between">
               <span>Plano Selecionado:</span>
-              <span className="font-bold text-neutral-900">Assinatura Mensal Fixa • R$ 99,00/mês</span>
+              <span className="font-bold text-neutral-900">Assinatura Mensal Fixa • R$ 129,90/mês</span>
             </div>
 
             <button
@@ -279,8 +334,12 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                   <span>Tenant Criado com Sucesso!</span>
                 </div>
                 <p className="text-emerald-800">
-                  O restaurante <strong>{createdTenant.name}</strong> está ativo no banco com isolamento RLS e o slug <code className="bg-emerald-100 px-1 py-0.5 rounded font-mono font-bold">{createdTenant.slug}</code> foi reservado.
+                  O restaurante <strong>{createdTenant.name}</strong> está ativo com isolamento RLS e o cardápio oficial já está no ar:
                 </p>
+                <div className="p-2 bg-white rounded border border-emerald-300 font-mono text-[11px] text-emerald-900 font-bold select-all flex items-center justify-between">
+                  <span>https://aladay.com.br/{createdTenant.slug}</span>
+                  <span className="text-[10px] text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded font-sans font-medium">Link do Cardápio</span>
+                </div>
               </div>
 
               {/* QR Code Simulation Box */}

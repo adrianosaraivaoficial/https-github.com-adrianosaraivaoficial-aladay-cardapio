@@ -588,9 +588,9 @@ export default function App() {
       <footer className="border-t border-neutral-200 bg-white py-4 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-neutral-500">
           <div className="flex items-center gap-2">
-            <span>SaaS de Cardápios Digitais &amp; WhatsApp Evolution API</span>
+            <span>Aladay cardápios digitais &amp; WhatsApp Evolution API</span>
             <span aria-hidden="true">·</span>
-            <span>Mensalidade R$ 99,00</span>
+            <span>Mensalidade R$ 129,90</span>
             <span aria-hidden="true">·</span>
             <span>PostgreSQL RLS &amp; Outbox</span>
           </div>

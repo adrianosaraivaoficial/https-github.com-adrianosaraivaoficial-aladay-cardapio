@@ -37,7 +37,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
 
   const grossMonthlyRevenue = monthlyOrders * averageTicketBRL;
   const marketplaceMonthlyCost = (grossMonthlyRevenue * marketplaceFeePercent) / 100;
-  const aladayMonthlyCost = 99;
+  const aladayMonthlyCost = 129.9;
   const monthlySavings = Math.max(0, marketplaceMonthlyCost - aladayMonthlyCost);
   const annualSavings = monthlySavings * 12;
 
@@ -68,7 +68,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             </h1>
 
             <p className="text-base text-neutral-600 leading-relaxed max-w-2xl">
-              Com o <strong>Aladay Cardápios Digitais</strong>, seu restaurante recebe pedidos ilimitados, avisa o cliente automaticamente no WhatsApp a cada etapa da cozinha e recebe o <strong>Pix 100% direto na sua própria conta bancária</strong>. Você paga apenas uma assinatura fixa de <strong>R$ 99,00/mês</strong>.
+              Com o <strong>Aladay Cardápios Digitais</strong>, seu restaurante recebe pedidos ilimitados, avisa o cliente automaticamente no WhatsApp a cada etapa da cozinha e recebe o <strong>Pix 100% direto na sua própria conta bancária</strong>. Você paga apenas uma assinatura fixa de <strong>R$ 129,90/mês</strong>.
             </p>
 
             {/* Primary & Secondary Action Bar */}
@@ -78,7 +78,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 onClick={onNavigateToSetup}
                 className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl transition-colors flex items-center gap-2 whitespace-nowrap cursor-pointer"
               >
-                <span>Criar Meu Cardápio por R$ 99/mês</span>
+                <span>Criar Meu Cardápio por R$ 129,90/mês</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
@@ -112,7 +112,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 <p className="text-xs text-neutral-500 mt-0.5">Pix cai no banco da sua loja</p>
               </div>
               <div>
-                <p className="text-2xl font-bold text-neutral-950 font-mono tabular-nums">R$ 99/mês</p>
+                <p className="text-2xl font-bold text-neutral-950 font-mono tabular-nums">R$ 129,90/mês</p>
                 <p className="text-xs text-neutral-500 mt-0.5">Plano único via Asaas</p>
               </div>
             </div>
@@ -184,7 +184,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
       </section>
 
       {/* ================================================================== */}
-      {/* 2. INTERACTIVE SAVINGS CALCULATOR (MARKETPLACE VS ALADAY R$ 99)    */}
+      {/* 2. INTERACTIVE SAVINGS CALCULATOR (MARKETPLACE VS ALADAY R$ 129,90) */}
       {/* ================================================================== */}
       <section className="bg-white border border-neutral-200 rounded-2xl p-6 sm:p-10">
         <div className="max-w-3xl space-y-2 mb-8">
@@ -195,7 +195,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             Descubra quanto do seu lucro fica retido nas taxas comissionadas todos os meses
           </h2>
           <p className="text-sm text-neutral-600">
-            Ajuste o volume de pedidos do seu delivery e compare o modelo comissionado tradicional com a assinatura fixa de R$ 99,00/mês da Aladay.
+            Ajuste o volume de pedidos do seu delivery e compare o modelo comissionado tradicional com a assinatura fixa de R$ 129,90/mês da Aladay.
           </p>
         </div>
 
@@ -299,7 +299,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               <div className="flex items-center justify-between">
                 <span className="text-neutral-600">Mensalidade Fixa Aladay (via Asaas):</span>
                 <span className="font-mono font-semibold text-emerald-700 tabular-nums">
-                  R$ 99 / mês
+                  R$ 129,90 / mês
                 </span>
               </div>
             </div>
@@ -388,10 +388,10 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 <CreditCard className="w-5 h-5" />
               </div>
               <h3 className="text-base font-bold text-neutral-950">
-                03. Assinatura Fixa R$ 99 via Asaas
+                03. Assinatura Fixa R$ 129,90 via Asaas
               </h3>
               <p className="text-xs text-neutral-600 leading-relaxed">
-                O Gateway Nacional Asaas é utilizado exclusivamente para a cobrança da sua assinatura mensal fixa de R$ 99,00/mês da plataforma Aladay. Sem surpresas no fim do mês: venda R$ 5.000 ou R$ 100.000, sua mensalidade é a mesma.
+                O Gateway Nacional Asaas é utilizado exclusivamente para a cobrança da sua assinatura mensal fixa de R$ 129,90/mês da plataforma Aladay. Sem surpresas no fim do mês: venda R$ 5.000 ou R$ 100.000, sua mensalidade é a mesma.
               </p>
             </div>
             <div className="pt-4 border-t border-neutral-100 text-[11px] font-mono text-neutral-500">
@@ -457,7 +457,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               04. Plano Único e Transparente
             </p>
             <h2 className="text-2xl sm:text-3xl font-bold text-neutral-950 tracking-tight">
-              Tudo liberado por R$ 99,00 fixos por mês. Sem letras miúdas.
+              Tudo liberado por R$ 129,90 fixos por mês. Sem letras miúdas.
             </h2>
             <p className="text-sm text-neutral-600">
               Sem taxa de adesão, sem fidelidade obrigatória e sem limite de pedidos ou produtos cadastrados.
@@ -499,7 +499,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 <p className="text-xs text-neutral-500">Cobrança mensal via Asaas</p>
               </div>
               <div className="text-right">
-                <span className="text-3xl font-bold text-neutral-950 font-mono tabular-nums">R$ 99</span>
+                <span className="text-3xl font-bold text-neutral-950 font-mono tabular-nums">R$ 129,90</span>
                 <span className="text-xs text-neutral-500">/mês</span>
               </div>
             </div>

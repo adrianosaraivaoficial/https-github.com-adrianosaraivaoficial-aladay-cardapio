@@ -4,7 +4,7 @@ import { Calculator, TrendingUp, AlertCircle, DollarSign, Layers } from 'lucide-
 export const FinancialCalculator: React.FC = () => {
   // Parameters
   const [activeTenants, setActiveTenants] = useState<number>(100);
-  const [subscriptionPrice, setSubscriptionPrice] = useState<number>(99.0);
+  const [subscriptionPrice, setSubscriptionPrice] = useState<number>(129.90);
   const [fixedInfraCost, setFixedInfraCost] = useState<number>(1200); // VPS central + Managed PostgreSQL + Redis + S3/CDN
   const [evolutionCostPer50Tenants, setEvolutionCostPer50Tenants] = useState<number>(300); // 1 VPS can host ~50 active Evolution WhatsApp instances
   const [gatewayFeePercent, setGatewayFeePercent] = useState<number>(3.5); // Asaas / Iugu
@@ -84,13 +84,13 @@ export const FinancialCalculator: React.FC = () => {
               <span aria-hidden="true">·</span>
               <span>Viabilidade Financeira</span>
               <span aria-hidden="true">·</span>
-              <span>Assinatura de R$ 99,00/mês</span>
+              <span>Assinatura de R$ 129,90/mês</span>
             </div>
             <h2 className="text-xl font-bold tracking-tight text-neutral-900">
               Calculadora de Margem, Ponto de Equilíbrio &amp; Sustentabilidade
             </h2>
             <p className="text-xs text-neutral-600 mt-1 max-w-3xl">
-              Simulador paramétrico em tempo real que decompõe receitas, custos variáveis de gateways/WhatsApp e custos fixos de servidores para provar a viabilidade do preço de R$ 99/mês.
+              Simulador paramétrico em tempo real que decompõe receitas, custos variáveis de gateways/WhatsApp e custos fixos de servidores para provar a viabilidade do preço de R$ 129,90/mês.
             </p>
           </div>
 
@@ -435,7 +435,7 @@ export const FinancialCalculator: React.FC = () => {
           <div className="bg-neutral-50 border border-neutral-200 rounded-md p-3.5 space-y-2 text-xs text-neutral-700">
             <p className="font-semibold text-neutral-900">Fórmulas Rigorosas Utilizadas:</p>
             <div className="font-mono text-[11px] space-y-1">
-              <p>• Margem de Contribuição = R$ 99,00 − Custos Variáveis Médios</p>
+              <p>• Margem de Contribuição = R$ 129,90 − Custos Variáveis Médios</p>
               <p>• Ponto de Equilíbrio (Break-Even) = Custos Fixos ÷ Margem de Contribuição</p>
               <p>• LTV = Margem de Contribuição ÷ Churn Mensal</p>
             </div>
