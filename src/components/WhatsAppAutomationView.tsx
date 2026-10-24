@@ -110,10 +110,10 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
 
   // EasyPanel PostgreSQL Database Configurator State (Super Admin)
   const [epProjectName, setEpProjectName] = useState('agencia');
-  const [epServiceName, setEpServiceName] = useState('postgres');
+  const [epServiceName, setEpServiceName] = useState('agpostgres');
   const [epDbUser, setEpDbUser] = useState('postgres');
   const [epDbPass, setEpDbPass] = useState('');
-  const [epDbName, setEpDbName] = useState('aladay');
+  const [epDbName, setEpDbName] = useState('agencia');
   const [customDatabaseUrl, setCustomDatabaseUrl] = useState('');
   const [dbStatusData, setDbStatusData] = useState<any | null>(null);
   const [isTestingDb, setIsTestingDb] = useState(false);
@@ -123,7 +123,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
 
   const generatedEasyPanelDbUrl =
     customDatabaseUrl.trim() ||
-    `postgresql://${epDbUser || 'postgres'}:${epDbPass || 'SUA_SENHA_AQUI'}@${epProjectName || 'agencia'}_${epServiceName || 'postgres'}:5432/${epDbName || 'aladay'}`;
+    `postgresql://${epDbUser || 'postgres'}:${epDbPass || 'SUA_SENHA_AQUI'}@${epProjectName || 'agencia'}_${epServiceName || 'agpostgres'}:5432/${epDbName || 'agencia'}`;
 
   const fetchDatabaseStatus = useCallback(async () => {
     if (!isSuperAdmin) return;
@@ -1653,16 +1653,16 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                   <span className="w-5 h-5 rounded-full bg-indigo-900 text-white flex items-center justify-center font-bold text-[10px]">
                     1
                   </span>
-                  <span className="font-bold text-neutral-900">Criar o Banco Postgres no EasyPanel</span>
+                  <span className="font-bold text-neutral-900">Seu Serviço Postgres no EasyPanel</span>
                 </div>
                 <ol className="list-decimal list-inside space-y-1 text-[11px] text-neutral-600 leading-relaxed">
-                  <li>Abra o seu painel do <strong>EasyPanel</strong> na VPS e entre no mesmo <strong>Projeto</strong> onde está o site (ex: <code className="bg-neutral-200 px-1 rounded">agencia</code>).</li>
-                  <li>Clique em <strong>+ Create Service</strong> &rarr; escolha <strong>Postgres</strong> (template oficial).</li>
-                  <li>Preencha:
-                    <ul className="list-disc list-inside ml-3 mt-0.5">
-                      <li><strong>Name:</strong> <code className="bg-neutral-200 px-1 rounded">postgres</code> (ou <code className="bg-neutral-200 px-1 rounded">aladay-db</code>)</li>
-                      <li><strong>Database Name:</strong> <code className="bg-neutral-200 px-1 rounded">aladay</code></li>
-                      <li><strong>Password:</strong> defina uma senha forte</li>
+                  <li>No seu painel do <strong>EasyPanel</strong>, no projeto <code className="bg-neutral-200 px-1 rounded font-mono">agencia</code>:</li>
+                  <li>Serviço Postgres configurado:
+                    <ul className="list-disc list-inside ml-3 mt-0.5 space-y-0.5">
+                      <li><strong>Name (Serviço):</strong> <code className="bg-neutral-200 px-1 rounded font-mono">agpostgres</code></li>
+                      <li><strong>Database Name:</strong> <code className="bg-neutral-200 px-1 rounded font-mono">agencia</code></li>
+                      <li><strong>Usuário:</strong> <code className="bg-neutral-200 px-1 rounded font-mono">postgres</code></li>
+                      <li><strong>Host Interno:</strong> <code className="bg-neutral-200 px-1 rounded font-mono">agencia_agpostgres:5432</code></li>
                     </ul>
                   </li>
                 </ol>
@@ -1673,16 +1673,16 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                   <span className="w-5 h-5 rounded-full bg-indigo-900 text-white flex items-center justify-center font-bold text-[10px]">
                     2
                   </span>
-                  <span className="font-bold text-neutral-900">Como funciona o Host Interno no EasyPanel</span>
+                  <span className="font-bold text-neutral-900">Host Interno &amp; URL de Conexão</span>
                 </div>
                 <p className="text-[11px] text-neutral-600 leading-relaxed">
-                  No EasyPanel (Docker Swarm), os serviços do mesmo projeto se comunicam pela rede interna usando o formato <code className="bg-neutral-200 px-1 rounded font-mono">NOMEPROJETO_NOMESERVICO:5432</code>:
+                  No EasyPanel (Docker Swarm), a comunicação entre o site e o banco ocorre na rede overlay interna sem expor a porta 5432:
                 </p>
                 <div className="p-2.5 bg-neutral-900 text-emerald-400 rounded-lg font-mono text-[11px] overflow-x-auto">
-                  postgresql://postgres:SENHA@{epProjectName || 'agencia'}_{epServiceName || 'postgres'}:5432/{epDbName || 'aladay'}
+                  postgresql://postgres:SENHA@{epProjectName || 'agencia'}_{epServiceName || 'agpostgres'}:5432/{epDbName || 'agencia'}
                 </div>
                 <p className="text-[10px] text-neutral-500">
-                  * Você não precisa abrir a porta 5432 para a internet pública! A comunicação interna é 100% blindada.
+                  * Basta clicar no ícone de copiar ao lado de <strong>"URL de Conexão Interna"</strong> no seu EasyPanel para copiar essa string completa!
                 </p>
               </div>
             </div>
@@ -1709,7 +1709,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                     type="text"
                     value={epProjectName}
                     onChange={(e) => setEpProjectName(e.target.value)}
-                    placeholder="Ex: agencia"
+                    placeholder="agencia"
                     className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-mono text-xs"
                   />
                 </div>
@@ -1721,7 +1721,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                     type="text"
                     value={epServiceName}
                     onChange={(e) => setEpServiceName(e.target.value)}
-                    placeholder="Ex: postgres"
+                    placeholder="agpostgres"
                     className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-mono text-xs"
                   />
                 </div>
@@ -1733,7 +1733,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                     type="text"
                     value={epDbName}
                     onChange={(e) => setEpDbName(e.target.value)}
-                    placeholder="Ex: aladay"
+                    placeholder="agencia"
                     className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg font-mono text-xs"
                   />
                 </div>
@@ -1819,7 +1819,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const envText = `PORT=3000\nNODE_ENV=production\nDATABASE_URL=${generatedEasyPanelDbUrl}\nPGSSLMODE=disable\nJWT_SECRET=aladay-vps-jwt-secret-${Date.now()}\nEVOLUTION_API_URL=${evolutionUrl}\nEVOLUTION_API_KEY=${evolutionApiKey}\nN8N_WEBHOOK_URL=${n8nWebhookUrl}`;
+                      const envText = `PORT=3000\nNODE_ENV=production\nDATABASE_URL=${generatedEasyPanelDbUrl}\nPGSSLMODE=disable\nJWT_SECRET=9f8d7a6b5c4e3f2a1b0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b\nEVOLUTION_API_URL=${evolutionUrl}\nEVOLUTION_API_KEY=${evolutionApiKey}\nN8N_WEBHOOK_URL=${n8nWebhookUrl}`;
                       navigator.clipboard.writeText(envText);
                       setCopiedEnvBlock(true);
                       setTimeout(() => setCopiedEnvBlock(false), 3000);
@@ -1836,7 +1836,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
 NODE_ENV=production
 DATABASE_URL=${generatedEasyPanelDbUrl}
 PGSSLMODE=disable
-JWT_SECRET=troque_por_uma_chave_secreta_forte_na_vps
+JWT_SECRET=9f8d7a6b5c4e3f2a1b0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b
 EVOLUTION_API_URL=${evolutionUrl}
 EVOLUTION_API_KEY=${evolutionApiKey}
 N8N_WEBHOOK_URL=${n8nWebhookUrl}`}
