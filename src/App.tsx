@@ -26,46 +26,13 @@ export default function App() {
   const [currentView, setCurrentView] = useState<'home' | 'kickoff' | 'consumer' | 'admin' | 'calculator' | 'diagrams' | 'tracking' | 'whatsapp' | 'auth'>('home');
   const [selectedTrackingOrder, setSelectedTrackingOrder] = useState<Order | null>(null);
 
-  const [authSession, setAuthSession] = useState<AuthSession>({
-    token:
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFsYWRheS1jbG91ZGZsYXJlLTIwMjYifQ.eyJzdWIiOiJ1c3Jfc3VwZXJfMDEiLCJuYW1lIjoiQWRtaW5pc3RyYWRvciBBbGFkYXkiLCJlbWFpbCI6ImFkbWluQGFsYWRheS5jb20uYnIiLCJyb2xlIjoiU1VQRVJfQURNSU4iLCJ0ZW5hbnRfaWQiOiIqIiwidGVuYW50X3NsdWciOiIqIiwiaXNzIjoiaHR0cHM6Ly9hbGFkYXkuY29tLmJyIn0.aladay_hmac_sha256_sig',
-    user: {
-      id: 'usr_super_01',
-      name: 'Administrador Aladay',
-      email: 'admin@aladay.com.br',
-      phone: '',
-      role: 'SUPER_ADMIN',
-      tenantId: '*',
-      tenantSlug: '*',
-      tenantName: 'Aladay Plataforma',
-      permissions: [
-        'platform:manage_tenants',
-        'platform:asaas_subscriptions',
-        'platform:evolution_instances',
-        'tenant:full_access',
-        'kds:manage_orders',
-      ],
-    },
-    claims: {
-      sub: 'usr_super_01',
-      name: 'Administrador Aladay',
-      email: 'admin@aladay.com.br',
-      role: 'SUPER_ADMIN',
-      tenant_id: '*',
-      tenant_slug: '*',
-      permissions: [
-        'platform:manage_tenants',
-        'platform:asaas_subscriptions',
-        'platform:evolution_instances',
-        'tenant:full_access',
-        'kds:manage_orders',
-      ],
-      iss: 'https://aladay.com.br',
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + 43200,
-    },
-    authMethod: 'password',
-    authenticatedAt: 'Agora',
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => {
+    try {
+      const saved = localStorage.getItem('aladay_auth_session');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
   });
 
   // Shared state between consumer cardápio and restaurant admin (persisted in localStorage)
@@ -126,24 +93,28 @@ export default function App() {
     }
   }, [tenant, tenantsList, catalogsByTenant, customers]);
 
-  // Synchronize and refresh JWT session with backend
+  // Synchronize and refresh JWT session with backend if a token exists
   React.useEffect(() => {
+    if (!authSession?.token) return;
     fetch('/api/v1/auth/session', {
-      headers: authSession?.token ? { Authorization: `Bearer ${authSession.token}` } : {},
+      headers: { Authorization: `Bearer ${authSession.token}` },
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data && data.success && data.token) {
-          setAuthSession((prev) => ({
-            ...prev,
-            token: data.token,
-            user: data.user || prev.user,
-            claims: data.claims || prev.claims,
-          }));
+          setAuthSession((prev) => {
+            if (!prev) return null;
+            return {
+              ...prev,
+              token: data.token,
+              user: data.user || prev.user,
+              claims: data.claims || prev.claims,
+            };
+          });
         }
       })
       .catch(() => {});
-  }, []);
+  }, [authSession?.token]);
 
   // Derived current tenant data
   const currentCatalog = catalogsByTenant[tenant.slug] || {
@@ -185,12 +156,27 @@ export default function App() {
 
   const handleSessionAuthenticated = (newSession: AuthSession) => {
     setAuthSession(newSession);
+    try {
+      localStorage.setItem('aladay_auth_session', JSON.stringify(newSession));
+    } catch {
+      // ignore
+    }
     if (newSession.user.tenantSlug !== '*') {
       const matched = tenantsList.find((t) => t.slug === newSession.user.tenantSlug);
       if (matched) {
         setTenant(matched);
       }
     }
+  };
+
+  const handleLogout = () => {
+    setAuthSession(null);
+    try {
+      localStorage.removeItem('aladay_auth_session');
+    } catch {
+      // ignore
+    }
+    setCurrentView('home');
   };
 
   // Product & Category Handlers (Scoped to current tenant)
@@ -468,28 +454,51 @@ export default function App() {
 
           {/* Zone 3: Active Profile Badge & Login / Auth Portal */}
           <div className="flex items-center gap-2.5 shrink-0">
-            {authSession?.user?.role === 'SUPER_ADMIN' ? (
-              <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-purple-50 text-purple-800 border border-purple-200 text-[11px] font-bold">
-                <span>👑 Super Admin</span>
-              </span>
-            ) : authSession?.user?.role === 'TENANT_OWNER' ? (
-              <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold">
-                <span>🏪 Restaurante ({tenant.name})</span>
-              </span>
-            ) : (
-              <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold">
-                <span>🍳 Cozinha</span>
-              </span>
-            )}
+            {authSession ? (
+              <>
+                {authSession.user.role === 'SUPER_ADMIN' ? (
+                  <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-purple-50 text-purple-800 border border-purple-200 text-[11px] font-bold">
+                    <span>👑 Super Admin</span>
+                  </span>
+                ) : authSession.user.role === 'TENANT_OWNER' ? (
+                  <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold">
+                    <span>🏪 {tenant.name}</span>
+                  </span>
+                ) : (
+                  <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold">
+                    <span>🍳 Cozinha</span>
+                  </span>
+                )}
 
-            <button
-              type="button"
-              onClick={() => setCurrentView('auth')}
-              className="flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-2xs"
-            >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>{authSession ? 'Sessão / Trocar' : 'Fazer Login'}</span>
-            </button>
+                <button
+                  type="button"
+                  onClick={() => setCurrentView('auth')}
+                  className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  title="Gerenciar conta"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>Conta</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:text-rose-800 hover:bg-rose-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer border border-rose-200"
+                  title="Sair da sessão"
+                >
+                  <span>Sair</span>
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCurrentView('auth')}
+                className="flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-2xs"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Fazer Login</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -542,6 +551,7 @@ export default function App() {
           <AuthPortalView
             currentSession={authSession}
             onSessionAuthenticated={handleSessionAuthenticated}
+            onLogout={handleLogout}
             onNavigateToAdmin={() => setCurrentView('admin')}
           />
         )}

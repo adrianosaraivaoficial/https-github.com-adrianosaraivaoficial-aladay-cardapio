@@ -16,7 +16,7 @@ import { AuthSession, RestaurantTenant } from '../types';
 
 interface LandingPageViewProps {
   tenant: RestaurantTenant;
-  authSession: AuthSession;
+  authSession: AuthSession | null;
   onNavigateToLogin: () => void;
   onNavigateToSetup: () => void;
   onNavigateToDemoMenu: () => void;
@@ -163,22 +163,40 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               </div>
             </div>
 
-            {/* Quick Access Box for Existing Users */}
-            <div className="pt-3 border-t border-neutral-800 flex items-center justify-between gap-3">
-              <div className="text-xs">
-                <p className="text-neutral-400">Acesso Direto ao Painel:</p>
-                <p className="font-semibold text-white truncate">
-                  {authSession.user.name}
-                </p>
+            {/* Quick Access Box for Logged In Users or Login CTA */}
+            {authSession ? (
+              <div className="pt-3 border-t border-neutral-800 flex items-center justify-between gap-3">
+                <div className="text-xs">
+                  <p className="text-neutral-400">Sessão Conectada:</p>
+                  <p className="font-semibold text-white truncate">
+                    {authSession.user.name} ({authSession.user.role === 'SUPER_ADMIN' ? 'Super Admin' : authSession.user.role})
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onNavigateToAdmin}
+                  className="px-3.5 py-2 bg-white hover:bg-neutral-200 text-neutral-950 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  Acessar Painel &rarr;
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={onNavigateToAdmin}
-                className="px-3.5 py-2 bg-white hover:bg-neutral-200 text-neutral-950 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-              >
-                Acessar KDS Agora
-              </button>
-            </div>
+            ) : (
+              <div className="pt-3 border-t border-neutral-800 flex items-center justify-between gap-3">
+                <div className="text-xs">
+                  <p className="text-neutral-400">Já tem cardápio cadastrado?</p>
+                  <p className="font-semibold text-white truncate">
+                    Faça login no painel da sua loja
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onNavigateToLogin}
+                  className="px-3.5 py-2 bg-neutral-850 hover:bg-neutral-800 text-white border border-neutral-700 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  Entrar no Painel
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </section>

@@ -11,15 +11,17 @@ import {
 import { AuthSession } from '../types';
 
 interface AuthPortalViewProps {
-  currentSession: AuthSession;
+  currentSession: AuthSession | null;
   onSessionAuthenticated: (session: AuthSession) => void;
   onNavigateToAdmin: () => void;
+  onLogout?: () => void;
 }
 
 export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
   currentSession,
   onSessionAuthenticated,
   onNavigateToAdmin,
+  onLogout,
 }) => {
   const [authTab, setAuthTab] = useState<'password' | 'whatsapp_otp'>('password');
   const [email, setEmail] = useState('');
@@ -29,6 +31,12 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
   const [otpRequested, setOtpRequested] = useState(false);
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const handleFillAdmin = () => {
+    setEmail('admin@aladay.com.br');
+    setPassword('aladay2026');
+    setAuthTab('password');
+  };
 
   const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -315,20 +323,52 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
           </div>
         )}
 
+        {/* Credentials Helper Box */}
+        <div className="p-3.5 bg-neutral-50 border border-neutral-200 rounded-xl space-y-2 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-neutral-800 flex items-center gap-1.5">
+              <KeyRound className="w-3.5 h-3.5 text-neutral-500" />
+              <span>Credenciais do Administrador:</span>
+            </span>
+            <button
+              type="button"
+              onClick={handleFillAdmin}
+              className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200 transition-colors cursor-pointer"
+            >
+              Preencher Admin
+            </button>
+          </div>
+          <div className="font-mono text-[11px] text-neutral-600 bg-white p-2 rounded border border-neutral-200 space-y-0.5">
+            <div>E-mail: <strong className="text-neutral-900 select-all">admin@aladay.com.br</strong></div>
+            <div>Senha: <strong className="text-neutral-900 select-all">aladay2026</strong></div>
+          </div>
+        </div>
+
         {/* Current active session shortcut */}
         {currentSession?.user && (
           <div className="pt-4 border-t border-neutral-100 flex items-center justify-between text-xs">
             <div className="text-neutral-500">
-              Conectado como <strong className="text-neutral-800">{currentSession.user.name}</strong>
+              Conectado como <strong className="text-neutral-800">{currentSession.user.name}</strong> ({currentSession.user.role})
             </div>
-            <button
-              type="button"
-              onClick={onNavigateToAdmin}
-              className="text-emerald-700 hover:text-emerald-800 font-semibold flex items-center gap-1 cursor-pointer"
-            >
-              <span>Ir para o Painel</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex items-center gap-3">
+              {onLogout && (
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  className="text-red-600 hover:text-red-700 font-medium cursor-pointer"
+                >
+                  Sair
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onNavigateToAdmin}
+                className="text-emerald-700 hover:text-emerald-800 font-semibold flex items-center gap-1 cursor-pointer"
+              >
+                <span>Ir para o Painel</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         )}
       </div>

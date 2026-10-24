@@ -75,7 +75,7 @@ interface RestaurantAdminViewProps {
   onAddCategory: (categoryName: string) => void;
   onImportCatalog?: (newCategories: Category[], newProducts: Product[], mode: 'merge' | 'replace') => void;
   onSimulateEvolutionReconnect: () => void;
-  authSession?: AuthSession;
+  authSession?: AuthSession | null;
   onOpenAuthPortal?: () => void;
 }
 

@@ -44,7 +44,7 @@ interface WhatsAppAutomationViewProps {
   initialSubTab?: 'qrcode_pairing' | 'status_notifications' | 'simulator' | 'n8n_workflow' | 'templates' | 'easypanel' | 'logs';
   onUpdateTenant: (updatedTenant: RestaurantTenant) => void;
   onSimulateEvolutionReconnect: () => void;
-  authSession?: AuthSession;
+  authSession?: AuthSession | null;
 }
 
 interface ChatMessage {

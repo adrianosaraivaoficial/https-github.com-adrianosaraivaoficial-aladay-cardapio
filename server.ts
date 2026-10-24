@@ -3347,10 +3347,58 @@ async function startServer() {
 
   // Mounting Vite or Static files
 
-  if (process.env.NODE_ENV === 'production') {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+  const distPath = fs.existsSync(path.resolve(__dirname, 'dist'))
+    ? path.resolve(__dirname, 'dist')
+    : path.resolve(process.cwd(), 'dist');
+  const hasDist = fs.existsSync(distPath) && fs.existsSync(path.join(distPath, 'index.html'));
+  const isProduction = process.env.NODE_ENV === 'production' || (hasDist && process.env.NODE_ENV !== 'development');
+
+  if (isProduction) {
+    console.log(`[Servidor de Produção] Servindo build estático a partir de: ${distPath}`);
+
+    // 1. Servir a pasta /assets com headers de MIME explícitos e cache longo
+    const assetsPath = path.join(distPath, 'assets');
+    if (fs.existsSync(assetsPath)) {
+      app.use(
+        '/assets',
+        express.static(assetsPath, {
+          maxAge: '30d',
+          immutable: true,
+          setHeaders: (res, filePath) => {
+            if (filePath.endsWith('.js') || filePath.endsWith('.mjs')) {
+              res.setHeader('Content-Type', 'application/javascript; charset=UTF-8');
+            } else if (filePath.endsWith('.css')) {
+              res.setHeader('Content-Type', 'text/css; charset=UTF-8');
+            }
+          },
+        })
+      );
+    }
+
+    // 2. Servir a raiz do dist (favicons, robots, manifest, etc.)
+    app.use(
+      express.static(distPath, {
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith('.js') || filePath.endsWith('.mjs')) {
+            res.setHeader('Content-Type', 'application/javascript; charset=UTF-8');
+          } else if (filePath.endsWith('.css')) {
+            res.setHeader('Content-Type', 'text/css; charset=UTF-8');
+          }
+        },
+      })
+    );
+
+    // 3. Trava de segurança: NUNCA responder HTML para arquivos estáticos inexistentes
+    app.use(['/assets/*', '*.js', '*.mjs', '*.css', '*.map', '*.ico', '*.png', '*.jpg', '*.svg', '*.woff2'], (_req: Request, res: Response) => {
+      res.status(404).type('text/plain').send('Arquivo estático não encontrado');
+    });
+
+    // 4. Fallback SPA: envia index.html apenas para rotas de navegação (com no-cache para evitar hashes antigos na Cloudflare)
     app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   } else {
     const vite = await createViteServer({
