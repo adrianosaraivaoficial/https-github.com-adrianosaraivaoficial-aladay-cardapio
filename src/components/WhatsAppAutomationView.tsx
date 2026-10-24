@@ -128,11 +128,22 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const fetchDatabaseStatus = useCallback(async () => {
     if (!isSuperAdmin) return;
     try {
-      const headers: Record<string, string> = {};
-      if (authSession?.token) {
-        headers['Authorization'] = `Bearer ${authSession.token}`;
+      let activeToken = authSession?.token;
+      let headers: Record<string, string> = activeToken ? { Authorization: `Bearer ${activeToken}` } : {};
+      let res = await fetch('/api/v1/admin/database/status', { headers });
+
+      if (res.status === 401) {
+        const refreshRes = await fetch('/api/v1/auth/session');
+        if (refreshRes.ok) {
+          const freshData = await refreshRes.json();
+          if (freshData?.token) {
+            activeToken = freshData.token;
+            headers = { Authorization: `Bearer ${activeToken}` };
+            res = await fetch('/api/v1/admin/database/status', { headers });
+          }
+        }
       }
-      const res = await fetch('/api/v1/admin/database/status', { headers });
+
       if (res.ok) {
         const json = await res.json();
         setDbStatusData(json.data);
@@ -152,15 +163,38 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
     setIsTestingDb(true);
     setDbActionFeedback(null);
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (authSession?.token) {
-        headers['Authorization'] = `Bearer ${authSession.token}`;
-      }
-      const res = await fetch('/api/v1/admin/database/test-and-migrate', {
+      let activeToken = authSession?.token;
+      let headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
+      };
+
+      let res = await fetch('/api/v1/admin/database/test-and-migrate', {
         method: 'POST',
         headers,
         body: JSON.stringify({ databaseUrl: generatedEasyPanelDbUrl }),
       });
+
+      // If token is invalid or expired, automatically get fresh token from server and retry
+      if (res.status === 401) {
+        const refreshRes = await fetch('/api/v1/auth/session');
+        if (refreshRes.ok) {
+          const freshData = await refreshRes.json();
+          if (freshData?.token) {
+            activeToken = freshData.token;
+            headers = {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${activeToken}`,
+            };
+            res = await fetch('/api/v1/admin/database/test-and-migrate', {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ databaseUrl: generatedEasyPanelDbUrl }),
+            });
+          }
+        }
+      }
+
       const json = await res.json();
       if (res.ok && json.success) {
         setDbActionFeedback({

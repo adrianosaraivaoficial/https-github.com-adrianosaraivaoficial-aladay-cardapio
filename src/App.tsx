@@ -126,6 +126,25 @@ export default function App() {
     }
   }, [tenant, tenantsList, catalogsByTenant, customers]);
 
+  // Synchronize and refresh JWT session with backend
+  React.useEffect(() => {
+    fetch('/api/v1/auth/session', {
+      headers: authSession?.token ? { Authorization: `Bearer ${authSession.token}` } : {},
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && data.success && data.token) {
+          setAuthSession((prev) => ({
+            ...prev,
+            token: data.token,
+            user: data.user || prev.user,
+            claims: data.claims || prev.claims,
+          }));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Derived current tenant data
   const currentCatalog = catalogsByTenant[tenant.slug] || {
     categories: INITIAL_CATEGORIES,
