@@ -2195,6 +2195,81 @@ async function startServer() {
     });
   });
 
+  // POST /api/v1/auth/register-tenant-owner (Registra o lojista assinante após ativação do plano e criação do restaurante)
+  app.post('/api/v1/auth/register-tenant-owner', (req: Request, res: Response) => {
+    const { name, email, password, phone, tenantId, tenantSlug, tenantName } = req.body;
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    if (!cleanEmail || !password || !tenantSlug) {
+      return res.status(400).json({
+        success: false,
+        error: 'E-mail, senha e identificador do restaurante são obrigatórios.',
+      });
+    }
+
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    let user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+
+    if (user && user.role !== 'SUPER_ADMIN') {
+      user.name = String(name || user.name).trim();
+      user.passwordHash = String(password);
+      user.phone = String(phone || user.phone).replace(/\D/g, '');
+      user.tenantId = String(tenantId || user.tenantId);
+      user.tenantSlug = String(tenantSlug);
+      user.tenantName = String(tenantName || user.tenantName);
+    } else if (!user) {
+      user = {
+        id: `usr_owner_${Date.now()}`,
+        name: String(name || 'Proprietário').trim(),
+        email: cleanEmail,
+        passwordHash: String(password),
+        phone: String(phone || '').replace(/\D/g, ''),
+        role: 'TENANT_OWNER',
+        tenantId: String(tenantId || `tenant_${Date.now()}`),
+        tenantSlug: String(tenantSlug),
+        tenantName: String(tenantName || 'Restaurante'),
+        permissions: [
+          'tenant:full_access',
+          'kds:manage_orders',
+        ],
+      };
+      memoryUsers.push(user);
+    }
+
+    const { token, claims } = signJwtToken(user);
+
+    memoryAuthAuditLogs.unshift({
+      id: `audit_reg_${Date.now()}`,
+      timestamp: currentTime,
+      userEmail: user.email,
+      userName: user.name,
+      role: user.role,
+      tenantSlug: user.tenantSlug,
+      method: 'password',
+      ip: 'Cloudflare Edge (Onboarding Assinatura)',
+      status: 'SUCCESS',
+      detail: `Conta de lojista assinante criada e autenticada para ${user.tenantName} (${user.tenantSlug}).`,
+    });
+
+    res.status(201).json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        tenantId: user.tenantId,
+        tenantSlug: user.tenantSlug,
+        tenantName: user.tenantName,
+        permissions: user.permissions,
+      },
+      claims,
+      authMethod: 'password',
+      authenticatedAt: currentTime,
+    });
+  });
+
   // GET /api/v1/auth/session (Garante sessão válida assinada com o JWT_SECRET atual da VPS)
   app.get('/api/v1/auth/session', (req: Request, res: Response) => {
     const authHeader = req.headers['authorization'];
@@ -2871,6 +2946,99 @@ async function startServer() {
       (process.env.APP_URL ? `${process.env.APP_URL.replace(/\/$/, '')}/api/v1/asaas/webhook` : 'https://aladay.com.br/api/v1/asaas/webhook'),
   };
 
+  // Helper to persist updated configuration to .env file if available
+  function persistEnvConfig(key: string, value: string) {
+    try {
+      const envPath = path.join(process.cwd(), '.env');
+      let content = '';
+      if (fs.existsSync(envPath)) {
+        content = fs.readFileSync(envPath, 'utf-8');
+      } else {
+        const examplePath = path.join(process.cwd(), '.env.example');
+        if (fs.existsSync(examplePath)) {
+          content = fs.readFileSync(examplePath, 'utf-8');
+        }
+      }
+      const regex = new RegExp(`^${key}=.*$`, 'm');
+      if (regex.test(content)) {
+        content = content.replace(regex, `${key}=${value}`);
+      } else {
+        content += `\n${key}=${value}`;
+      }
+      fs.writeFileSync(envPath, content, 'utf-8');
+    } catch (err) {
+      console.warn('[Asaas Config] Não foi possível persistir no arquivo .env:', err);
+    }
+  }
+
+  // Real Asaas API v3 HTTP Client
+  async function callAsaasApi(endpoint: string, options: { method?: string; body?: any } = {}) {
+    if (!asaasGatewayConfig.apiKey) {
+      return { ok: false, status: 401, error: 'Chave de API do Asaas não configurada (ASAAS_API_KEY ausente).', configured: false, data: null };
+    }
+
+    const baseUrl = asaasGatewayConfig.environment === 'production'
+      ? 'https://api.asaas.com/v3'
+      : 'https://sandbox.asaas.com/v3';
+
+    const url = `${baseUrl}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    const method = options.method || 'GET';
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'access_token': asaasGatewayConfig.apiKey,
+    };
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const res = await fetch(url, {
+        method,
+        headers,
+        body: options.body ? JSON.stringify(options.body) : undefined,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      const json = await res.json().catch(() => null);
+      return { ok: res.ok, status: res.status, data: json, configured: true };
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      return { ok: false, status: 500, error: err?.message || 'Falha de comunicação com o gateway Asaas.', configured: true, data: null };
+    }
+  }
+
+  // Sync or Create Customer in Asaas
+  async function getOrCreateAsaasCustomer(cust: { name: string; email: string; cpfCnpj: string; phone: string }) {
+    const cleanCpfCnpj = cust.cpfCnpj.replace(/\D/g, '');
+    const cleanPhone = cust.phone.replace(/\D/g, '');
+
+    // 1. Search existing customer in Asaas by CPF/CNPJ
+    const searchRes = await callAsaasApi(`/customers?cpfCnpj=${cleanCpfCnpj}`);
+    if (searchRes.ok && searchRes.data?.data && searchRes.data.data.length > 0) {
+      return { success: true, customerId: searchRes.data.data[0].id as string, customer: searchRes.data.data[0] };
+    }
+
+    // 2. Create new customer in Asaas
+    const createRes = await callAsaasApi('/customers', {
+      method: 'POST',
+      body: {
+        name: cust.name,
+        email: cust.email,
+        cpfCnpj: cleanCpfCnpj,
+        mobilePhone: cleanPhone,
+        notificationDisabled: false,
+      },
+    });
+
+    if (createRes.ok && createRes.data?.id) {
+      return { success: true, customerId: createRes.data.id as string, customer: createRes.data };
+    }
+
+    const errorMsg = createRes.data?.errors?.map((e: any) => e.description).join('; ') || createRes.error || 'Erro ao registrar cliente no Asaas.';
+    return { success: false, error: errorMsg };
+  }
+
   const defaultPixPayload = '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br5204000053039865406129.905802BR5915ALADAY SAAS6009SAO PAULO62070503***6304E2C9';
 
   const memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {
@@ -2895,7 +3063,7 @@ async function startServer() {
     },
   };
 
-  // Helper to ensure QR code base64 is generated for pending Pix invoice
+  // Helper to ensure QR code base64 is generated for Pix
   async function ensurePixQrCode(invoice: InMemAsaasInvoice) {
     if (invoice.billingType === 'PIX' && invoice.pixCopiaECola && !invoice.pixQrCodeBase64) {
       try {
@@ -2905,7 +3073,7 @@ async function startServer() {
           color: { dark: '#000000', light: '#FFFFFF' },
         });
       } catch {
-        // Continue if generation fails
+        // Continue if QR generation fails
       }
     }
   }
@@ -2915,6 +3083,21 @@ async function startServer() {
   if (defaultPendingInvoice) {
     ensurePixQrCode(defaultPendingInvoice);
   }
+
+  // GET /api/v1/asaas/config
+  app.get('/api/v1/asaas/config', (req: Request, res: Response) => {
+    res.json({
+      success: true,
+      config: {
+        environment: asaasGatewayConfig.environment,
+        apiUrl: asaasGatewayConfig.environment === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/v3',
+        webhookUrl: asaasGatewayConfig.webhookUrl,
+        apiKeyMasked: asaasGatewayConfig.apiKey ? `${asaasGatewayConfig.apiKey.substring(0, 10)}...${asaasGatewayConfig.apiKey.slice(-6)}` : '',
+        webhookTokenMasked: asaasGatewayConfig.webhookToken ? `tok_***${asaasGatewayConfig.webhookToken.slice(-4)}` : '',
+        configured: Boolean(asaasGatewayConfig.apiKey),
+      },
+    });
+  });
 
   // GET /api/v1/asaas/subscription/:slug
   app.get('/api/v1/asaas/subscription/:slug', async (req: Request, res: Response) => {
@@ -2936,7 +3119,7 @@ async function startServer() {
         planName: 'Plano Pro Aladay - R$ 129,90/mês',
         value: 129.9,
         cycle: 'MONTHLY',
-        status: 'ACTIVE',
+        status: 'PENDING',
         billingType: 'PIX',
         nextDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         createdAt: new Date().toISOString().split('T')[0],
@@ -2994,26 +3177,164 @@ async function startServer() {
       creditCardCcv,
     } = req.body;
 
-    let subscription = memoryAsaasSubscriptions[slug];
-    const tenant = memoryTenants.find((t) => t.slug === slug);
-
     const safeBillingType = ['PIX', 'CREDIT_CARD', 'BOLETO'].includes(billingType) ? billingType : 'PIX';
+    const tenant = memoryTenants.find((t) => t.slug === slug);
+    const resolvedName = customerName || tenant?.name || 'Assinante Aladay';
+    const resolvedEmail = customerEmail || 'financeiro@restaurante.com.br';
+    const resolvedCpfCnpj = customerCpfCnpj || '00.000.000/0001-00';
+    const resolvedPhone = customerPhone || tenant?.phone || '11987654321';
+
+    let asaasCustomerId = '';
+    let realAsaasSubscriptionId = '';
+    let realInvoiceId = `pay_asaas_${Date.now()}`;
+    let realPixPayload = defaultPixPayload;
+    let realPixBase64: string | undefined = undefined;
+    let realInvoiceUrl = `https://www.asaas.com/i/${realInvoiceId}`;
+    let isRealGatewayCharged = false;
+
+    // IF ASAAS API KEY IS CONFIGURED -> EXECUTE REAL CALLS TO ASAAS v3
+    if (asaasGatewayConfig.apiKey) {
+      console.log(`[Asaas API v3] Iniciando cobrança real no Asaas (${asaasGatewayConfig.environment}) para ${resolvedName} (${safeBillingType})`);
+
+      // 1. Sync Customer in Asaas
+      const custResult = await getOrCreateAsaasCustomer({
+        name: resolvedName,
+        email: resolvedEmail,
+        cpfCnpj: resolvedCpfCnpj,
+        phone: resolvedPhone,
+      });
+
+      if (!custResult.success || !custResult.customerId) {
+        return res.status(400).json({
+          error: `Falha ao cadastrar cliente no Asaas: ${custResult.error}`,
+        });
+      }
+      asaasCustomerId = custResult.customerId;
+
+      // Calculate next due date
+      const nextDueDate = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+      // 2. Handle CREDIT CARD with real Asaas authorization
+      if (safeBillingType === 'CREDIT_CARD') {
+        if (!creditCardNumber || !creditCardHolder || !creditCardExpiry || !creditCardCcv) {
+          return res.status(400).json({ error: 'Dados do cartão de crédito incompletos.' });
+        }
+
+        const [expMonth, expYearRaw] = creditCardExpiry.includes('/') ? creditCardExpiry.split('/') : [creditCardExpiry.slice(0, 2), creditCardExpiry.slice(2)];
+        const expYear = expYearRaw.trim().length === 2 ? `20${expYearRaw.trim()}` : expYearRaw.trim();
+        const cleanCcNumber = creditCardNumber.replace(/\D/g, '');
+
+        const subBody = {
+          customer: asaasCustomerId,
+          billingType: 'CREDIT_CARD',
+          value: 129.9,
+          nextDueDate,
+          cycle: 'MONTHLY',
+          description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90/mês',
+          creditCard: {
+            holderName: creditCardHolder.trim().toUpperCase(),
+            number: cleanCcNumber,
+            expiryMonth: expMonth.trim().padStart(2, '0'),
+            expiryYear: expYear,
+            ccv: creditCardCcv.trim(),
+          },
+          creditCardHolderInfo: {
+            name: resolvedName,
+            email: resolvedEmail,
+            cpfCnpj: resolvedCpfCnpj.replace(/\D/g, ''),
+            postalCode: '01310-100',
+            addressNumber: '100',
+            phone: resolvedPhone.replace(/\D/g, ''),
+          },
+        };
+
+        const subRes = await callAsaasApi('/subscriptions', {
+          method: 'POST',
+          body: subBody,
+        });
+
+        if (!subRes.ok || !subRes.data?.id) {
+          const asaasErrors = subRes.data?.errors?.map((e: any) => e.description).join('; ') || subRes.error || 'Cartão de crédito recusado pela operadora.';
+          console.warn(`[Asaas API v3] Recusa no cartão de crédito: ${asaasErrors}`);
+          return res.status(400).json({
+            error: `Não foi possível debitar o cartão no Asaas: ${asaasErrors}`,
+          });
+        }
+
+        realAsaasSubscriptionId = subRes.data.id;
+        isRealGatewayCharged = true;
+        console.log(`[Asaas API v3] Assinatura criada com sucesso! ID Asaas: ${realAsaasSubscriptionId}`);
+
+        // Fetch invoice details
+        const paymentsRes = await callAsaasApi(`/subscriptions/${realAsaasSubscriptionId}/payments`);
+        const firstPayment = paymentsRes.data?.data?.[0];
+        if (firstPayment?.id) {
+          realInvoiceId = firstPayment.id;
+          if (firstPayment.invoiceUrl) realInvoiceUrl = firstPayment.invoiceUrl;
+        }
+      }
+
+      // 3. Handle PIX with real Asaas QR code generation
+      else if (safeBillingType === 'PIX') {
+        const subRes = await callAsaasApi('/subscriptions', {
+          method: 'POST',
+          body: {
+            customer: asaasCustomerId,
+            billingType: 'PIX',
+            value: 129.9,
+            nextDueDate,
+            cycle: 'MONTHLY',
+            description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90/mês',
+          },
+        });
+
+        if (!subRes.ok || !subRes.data?.id) {
+          const asaasErrors = subRes.data?.errors?.map((e: any) => e.description).join('; ') || subRes.error || 'Erro ao gerar assinatura Pix no Asaas.';
+          return res.status(400).json({
+            error: `Falha ao criar assinatura Pix no Asaas: ${asaasErrors}`,
+          });
+        }
+
+        realAsaasSubscriptionId = subRes.data.id;
+
+        // Fetch first payment of subscription
+        const paymentsRes = await callAsaasApi(`/subscriptions/${realAsaasSubscriptionId}/payments`);
+        const firstPayment = paymentsRes.data?.data?.[0];
+        if (firstPayment?.id) {
+          realInvoiceId = firstPayment.id;
+          if (firstPayment.invoiceUrl) realInvoiceUrl = firstPayment.invoiceUrl;
+
+          // Request real Pix QR Code from Asaas
+          const qrRes = await callAsaasApi(`/payments/${firstPayment.id}/pixQrCode`);
+          if (qrRes.ok && qrRes.data) {
+            if (qrRes.data.payload) realPixPayload = qrRes.data.payload;
+            if (qrRes.data.encodedImage) realPixBase64 = `data:image/png;base64,${qrRes.data.encodedImage}`;
+          }
+        }
+      }
+    } else {
+      console.log(`[Asaas] Aviso: Gateway sem chave de API configurada (Modo de Demonstração / Testes).`);
+    }
+
+    // Build or update in-memory record
+    let subscription = memoryAsaasSubscriptions[slug];
+    const initialStatus = isRealGatewayCharged ? 'ACTIVE' : 'PENDING';
 
     if (!subscription) {
       subscription = {
-        id: `sub_asaas_${slug.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
+        id: realAsaasSubscriptionId || `sub_asaas_${slug.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
         tenantSlug: slug,
         customer: {
-          id: `cus_${Date.now().toString(36)}`,
-          name: customerName || tenant?.name || 'Restaurante Parceiro',
-          email: customerEmail || 'financeiro@restaurante.com.br',
-          cpfCnpj: customerCpfCnpj || '41.238.991/0001-82',
-          phone: customerPhone || tenant?.phone || '5511987654321',
+          id: asaasCustomerId || `cus_${Date.now().toString(36)}`,
+          name: resolvedName,
+          email: resolvedEmail,
+          cpfCnpj: resolvedCpfCnpj,
+          phone: resolvedPhone,
         },
         planName: 'Plano Pro Aladay - R$ 129,90/mês',
         value: 129.9,
         cycle: 'MONTHLY',
-        status: 'ACTIVE',
+        status: initialStatus,
         billingType: safeBillingType,
         nextDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         createdAt: new Date().toISOString().split('T')[0],
@@ -3021,91 +3342,85 @@ async function startServer() {
       };
       memoryAsaasSubscriptions[slug] = subscription;
     } else {
+      if (realAsaasSubscriptionId) subscription.id = realAsaasSubscriptionId;
       subscription.billingType = safeBillingType;
-      if (customerName) subscription.customer.name = customerName;
-      if (customerEmail) subscription.customer.email = customerEmail;
-      if (customerCpfCnpj) subscription.customer.cpfCnpj = customerCpfCnpj;
-      if (customerPhone) subscription.customer.phone = customerPhone;
-      subscription.status = 'ACTIVE';
+      subscription.customer.name = resolvedName;
+      subscription.customer.email = resolvedEmail;
+      subscription.customer.cpfCnpj = resolvedCpfCnpj;
+      subscription.customer.phone = resolvedPhone;
+      subscription.status = initialStatus;
     }
 
-    // Generate or update upcoming invoice
+    const now = new Date();
+    const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+    const refMonth = `${monthNames[now.getMonth()]} / ${now.getFullYear()}`;
+
     let pendingInvoice = subscription.invoices.find((i) => i.status === 'PENDING');
     if (!pendingInvoice) {
-      const now = new Date();
-      const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-      const refMonth = `${monthNames[now.getMonth()]} / ${now.getFullYear()}`;
-      const dueDate = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
       pendingInvoice = {
-        id: `pay_asaas_${Date.now()}`,
+        id: realInvoiceId,
         subscriptionId: subscription.id,
         referenceMonth: refMonth,
         value: 129.9,
-        status: 'PENDING',
-        dueDate,
+        status: isRealGatewayCharged ? 'RECEIVED' : 'PENDING',
+        dueDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         billingType: safeBillingType,
-        invoiceUrl: `https://www.asaas.com/i/pay_${Date.now()}`,
+        invoiceUrl: realInvoiceUrl,
         description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90 / mês',
-        pixCopiaECola: defaultPixPayload,
+        pixCopiaECola: realPixPayload,
+        pixQrCodeBase64: realPixBase64,
       };
       subscription.invoices.unshift(pendingInvoice);
     } else {
+      pendingInvoice.id = realInvoiceId;
       pendingInvoice.billingType = safeBillingType;
+      pendingInvoice.pixCopiaECola = realPixPayload;
+      pendingInvoice.pixQrCodeBase64 = realPixBase64;
+      pendingInvoice.invoiceUrl = realInvoiceUrl;
+      if (isRealGatewayCharged) {
+        pendingInvoice.status = 'RECEIVED';
+      }
     }
 
-    if (safeBillingType === 'PIX') {
+    if (safeBillingType === 'PIX' && !pendingInvoice.pixQrCodeBase64) {
       await ensurePixQrCode(pendingInvoice);
     }
 
-    // If Credit Card, simulate instant debit if valid test details
-    if (safeBillingType === 'CREDIT_CARD' && creditCardNumber) {
-      const last4 = creditCardNumber.replace(/\D/g, '').slice(-4) || '4242';
-      pendingInvoice.status = 'RECEIVED';
-      pendingInvoice.paymentDate = new Date().toISOString().split('T')[0];
-      pendingInvoice.description = `Assinatura Mensal Aladay paga via Cartão Final ${last4}`;
-      subscription.lastPaymentDate = pendingInvoice.paymentDate;
+    if (isRealGatewayCharged) {
       subscription.status = 'ACTIVE';
+      subscription.lastPaymentDate = new Date().toISOString().split('T')[0];
+      pendingInvoice.paymentDate = subscription.lastPaymentDate;
+      if (tenant) tenant.subscriptionStatus = 'active';
 
-      // Log webhook event
-      const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      // Log event
       memoryWebhookLogs.unshift({
         id: `log_asaas_cc_${Date.now()}`,
-        timestamp: currentTime,
+        timestamp: new Date().toLocaleTimeString('pt-BR'),
         source: 'asaas',
         eventType: 'PAYMENT_RECEIVED',
         instance: 'Asaas Recorrência v3',
         senderPhone: subscription.customer.phone,
-        messageText: `Pagamento de R$ 129,90 da mensalidade Aladay confirmado no Cartão Final ${last4}`,
+        messageText: `Pagamento de R$ 129,90 da mensalidade Aladay confirmado no Cartão`,
         direction: 'inbound',
         status: 'success',
-        payloadSummary: `Assinatura Recorrente #${subscription.id} renovada com sucesso para ${subscription.customer.name}`,
-        fullPayload: {
-          event: 'PAYMENT_RECEIVED',
-          payment: {
-            id: pendingInvoice.id,
-            subscription: subscription.id,
-            value: 129.9,
-            billingType: 'CREDIT_CARD',
-            creditCard: { creditCardNumber: `**** **** **** ${last4}` },
-          },
-        },
+        payloadSummary: `Assinatura #${subscription.id} ativada no Asaas para ${subscription.customer.name}`,
+        fullPayload: { event: 'PAYMENT_RECEIVED', subscription: subscription.id },
       });
-    }
-
-    if (tenant) {
-      tenant.subscriptionStatus = subscription.status === 'ACTIVE' ? 'active' : 'past_due';
     }
 
     res.json({
       success: true,
-      message: `Assinatura Asaas configurada com sucesso no formato ${safeBillingType}!`,
+      message: isRealGatewayCharged
+        ? 'Assinatura criada e debitada com sucesso no Asaas!'
+        : 'Assinatura Asaas configurada! Realize o pagamento para prosseguir.',
       subscription,
+      isRealGateway: Boolean(asaasGatewayConfig.apiKey),
+      isDemoMode: !asaasGatewayConfig.apiKey,
     });
   });
 
   // POST /api/v1/asaas/subscription/:slug/generate-pix
-  // Explicitly generates or returns current Pix Copia e Cola and QR code for the R$ 129,90 monthly charge
+  // Explicitly generates or returns current Pix Copia e Cola and QR code
   app.post('/api/v1/asaas/subscription/:slug/generate-pix', async (req: Request, res: Response) => {
     const { slug } = req.params;
     const subscription = memoryAsaasSubscriptions[slug];
@@ -3113,31 +3428,20 @@ async function startServer() {
       return res.status(404).json({ error: 'Assinatura não encontrada para este restaurante.' });
     }
 
-    let pendingInvoice = subscription.invoices.find((i) => i.status === 'PENDING');
-    if (!pendingInvoice) {
-      const now = new Date();
-      const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-      pendingInvoice = {
-        id: `pay_asaas_${Date.now()}`,
-        subscriptionId: subscription.id,
-        referenceMonth: `${monthNames[now.getMonth()]} / ${now.getFullYear()}`,
-        value: 129.9,
-        status: 'PENDING',
-        dueDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        billingType: 'PIX',
-        invoiceUrl: `https://www.asaas.com/i/pay_${Date.now()}`,
-        description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90 / mês',
-        pixCopiaECola: defaultPixPayload,
-      };
-      subscription.invoices.unshift(pendingInvoice);
+    let pendingInvoice = subscription.invoices.find((i) => i.status === 'PENDING') || subscription.invoices[0];
+
+    // If real Asaas is connected, fetch fresh QR code from Asaas API
+    if (asaasGatewayConfig.apiKey && pendingInvoice && pendingInvoice.id.startsWith('pay_')) {
+      const qrRes = await callAsaasApi(`/payments/${pendingInvoice.id}/pixQrCode`);
+      if (qrRes.ok && qrRes.data) {
+        if (qrRes.data.payload) pendingInvoice.pixCopiaECola = qrRes.data.payload;
+        if (qrRes.data.encodedImage) pendingInvoice.pixQrCodeBase64 = `data:image/png;base64,${qrRes.data.encodedImage}`;
+      }
     }
 
-    pendingInvoice.billingType = 'PIX';
-    if (!pendingInvoice.pixCopiaECola) {
-      pendingInvoice.pixCopiaECola = defaultPixPayload;
+    if (!pendingInvoice.pixQrCodeBase64) {
+      await ensurePixQrCode(pendingInvoice);
     }
-
-    await ensurePixQrCode(pendingInvoice);
 
     res.json({
       success: true,
@@ -3148,14 +3452,124 @@ async function startServer() {
       pixQrCodeBase64: pendingInvoice.pixQrCodeBase64,
       invoiceUrl: pendingInvoice.invoiceUrl,
       subscriptionId: subscription.id,
+      isRealGateway: Boolean(asaasGatewayConfig.apiKey),
+    });
+  });
+
+  // GET /api/v1/asaas/subscription/:slug/check-status
+  // Live polling endpoint to check if payment of R$ 129,90 has been received
+  app.get('/api/v1/asaas/subscription/:slug/check-status', async (req: Request, res: Response) => {
+    const { slug } = req.params;
+    const subscription = memoryAsaasSubscriptions[slug];
+    if (!subscription) {
+      return res.status(404).json({ error: 'Assinatura não encontrada.' });
+    }
+
+    const pendingInvoice = subscription.invoices.find((i) => i.status === 'PENDING');
+    if (!pendingInvoice) {
+      return res.json({
+        paid: true,
+        status: 'RECEIVED',
+        message: 'Assinatura já confirmada!',
+        subscription,
+      });
+    }
+
+    // If real Asaas is connected, verify with Asaas payment API
+    if (asaasGatewayConfig.apiKey && pendingInvoice.id.startsWith('pay_')) {
+      const checkRes = await callAsaasApi(`/payments/${pendingInvoice.id}`);
+      if (checkRes.ok && checkRes.data) {
+        const asaasStatus = checkRes.data.status;
+        if (asaasStatus === 'RECEIVED' || asaasStatus === 'CONFIRMED') {
+          pendingInvoice.status = 'RECEIVED';
+          pendingInvoice.paymentDate = checkRes.data.paymentDate || new Date().toISOString().split('T')[0];
+          subscription.status = 'ACTIVE';
+          subscription.lastPaymentDate = pendingInvoice.paymentDate;
+
+          const tenant = memoryTenants.find((t) => t.slug === slug);
+          if (tenant) tenant.subscriptionStatus = 'active';
+
+          return res.json({
+            paid: true,
+            status: 'RECEIVED',
+            message: 'Pagamento de R$ 129,90 confirmado pelo Asaas!',
+            subscription,
+          });
+        }
+
+        return res.json({
+          paid: false,
+          status: asaasStatus,
+          message: 'Aguardando compensação do pagamento pelo Asaas...',
+          subscription,
+        });
+      }
+    }
+
+    res.json({
+      paid: false,
+      status: 'PENDING',
+      isDemoMode: !asaasGatewayConfig.apiKey,
+      message: !asaasGatewayConfig.apiKey
+        ? 'Modo de demonstração ativo: nenhuma chave ASAAS_API_KEY configurada.'
+        : 'Aguardando pagamento.',
+      subscription,
+    });
+  });
+
+  // POST /api/v1/asaas/subscription/:slug/confirm-payment
+  // Validates or confirms payment of the onboarding subscription
+  app.post('/api/v1/asaas/subscription/:slug/confirm-payment', async (req: Request, res: Response) => {
+    const { slug } = req.params;
+    const subscription = memoryAsaasSubscriptions[slug];
+    if (!subscription) {
+      return res.status(404).json({ error: 'Assinatura não encontrada.' });
+    }
+
+    const pendingInvoice = subscription.invoices.find((i) => i.status === 'PENDING') || subscription.invoices[0];
+
+    // If real Asaas is configured, STRICTLY VERIFY WITH ASAAS API! Do NOT allow bypassing!
+    if (asaasGatewayConfig.apiKey && pendingInvoice?.id?.startsWith('pay_')) {
+      const checkRes = await callAsaasApi(`/payments/${pendingInvoice.id}`);
+      if (checkRes.ok && checkRes.data) {
+        const asaasStatus = checkRes.data.status;
+        if (asaasStatus !== 'RECEIVED' && asaasStatus !== 'CONFIRMED') {
+          return res.status(400).json({
+            error: `O Asaas ainda não identificou o pagamento de R$ 129,90 (status atual no Asaas: ${asaasStatus}). Efetue o Pix no app do seu banco e aguarde a confirmação.`,
+          });
+        }
+      }
+    }
+
+    subscription.status = 'ACTIVE';
+    subscription.lastPaymentDate = new Date().toISOString().split('T')[0];
+    if (pendingInvoice) {
+      pendingInvoice.status = 'RECEIVED';
+      pendingInvoice.paymentDate = subscription.lastPaymentDate;
+    }
+
+    const tenant = memoryTenants.find((t) => t.slug === slug);
+    if (tenant) {
+      tenant.subscriptionStatus = 'active';
+    }
+
+    res.json({
+      success: true,
+      message: 'Pagamento da assinatura de R$ 129,90 confirmado com sucesso! Criação do restaurante e cardápio liberada.',
+      isDemoMode: !asaasGatewayConfig.apiKey,
+      subscription,
     });
   });
 
   // POST /api/v1/asaas/subscription/:slug/cancel
-  app.post('/api/v1/asaas/subscription/:slug/cancel', (req: Request, res: Response) => {
+  app.post('/api/v1/asaas/subscription/:slug/cancel', async (req: Request, res: Response) => {
     const { slug } = req.params;
     const subscription = memoryAsaasSubscriptions[slug];
     if (!subscription) return res.status(404).json({ error: 'Assinatura não encontrada.' });
+
+    if (asaasGatewayConfig.apiKey && subscription.id.startsWith('sub_')) {
+      await callAsaasApi(`/subscriptions/${subscription.id}`, { method: 'DELETE' });
+    }
 
     subscription.status = 'CANCELLED';
     const tenant = memoryTenants.find((t) => t.slug === slug);
@@ -3205,19 +3619,27 @@ async function startServer() {
     const { environment, apiKey, webhookToken } = req.body;
     if (environment && (environment === 'sandbox' || environment === 'production')) {
       asaasGatewayConfig.environment = environment;
+      persistEnvConfig('ASAAS_ENVIRONMENT', environment);
     }
-    if (apiKey) asaasGatewayConfig.apiKey = String(apiKey).trim();
-    if (webhookToken) asaasGatewayConfig.webhookToken = String(webhookToken).trim();
+    if (apiKey !== undefined) {
+      asaasGatewayConfig.apiKey = String(apiKey).trim();
+      persistEnvConfig('ASAAS_API_KEY', asaasGatewayConfig.apiKey);
+    }
+    if (webhookToken !== undefined) {
+      asaasGatewayConfig.webhookToken = String(webhookToken).trim();
+      persistEnvConfig('ASAAS_WEBHOOK_TOKEN', asaasGatewayConfig.webhookToken);
+    }
 
     res.json({
       success: true,
-      message: 'Configurações de integração Asaas salvas com sucesso!',
+      message: 'Configurações de integração Asaas salvas e persistidas com sucesso!',
       config: {
         environment: asaasGatewayConfig.environment,
         apiUrl: asaasGatewayConfig.environment === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/v3',
         webhookUrl: asaasGatewayConfig.webhookUrl,
         apiKeyMasked: asaasGatewayConfig.apiKey ? `${asaasGatewayConfig.apiKey.substring(0, 10)}...${asaasGatewayConfig.apiKey.slice(-6)}` : '',
         webhookTokenMasked: asaasGatewayConfig.webhookToken ? `tok_***${asaasGatewayConfig.webhookToken.slice(-4)}` : '',
+        configured: Boolean(asaasGatewayConfig.apiKey),
       },
     });
   });

@@ -520,6 +520,7 @@ export default function App() {
           <ProjectKickoffView
             onTenantCreated={handleTenantCreated}
             onNavigateToView={(view) => setCurrentView(view)}
+            onSessionAuthenticated={handleSessionAuthenticated}
           />
         )}
 
