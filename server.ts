@@ -35,7 +35,8 @@ interface InMemTenant {
   deliveryZones?: InMemDeliveryZone[];
   evolutionInstanceId: string;
   evolutionStatus: 'connected' | 'connecting' | 'disconnected';
-  subscriptionStatus?: 'active' | 'past_due' | 'suspended';
+  subscriptionStatus?: 'active' | 'trial' | 'past_due' | 'suspended';
+  trialEndsAt?: string;
   statusNotificationTemplates?: Record<string, string>;
   pixConfig?: {
     provider: string;
@@ -2276,30 +2277,25 @@ async function startServer() {
     const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
     let claims = token ? verifyJwtToken(token) : null;
 
-    let targetUser: InMemAuthUser;
-    if (claims && claims.sub) {
-      targetUser = memoryUsers.find((u) => u.id === claims.sub) || {
-        id: claims.sub,
-        name: claims.name || 'Usuário',
-        email: claims.email || 'user@aladay.com.br',
-        passwordHash: '',
-        phone: '',
-        role: claims.role || 'SUPER_ADMIN',
-        tenantId: claims.tenant_id || '*',
-        tenantSlug: claims.tenant_slug || '*',
-        tenantName: 'Aladay Plataforma',
-        permissions: claims.permissions || [
-          'platform:manage_tenants',
-          'platform:asaas_subscriptions',
-          'platform:evolution_instances',
-          'tenant:full_access',
-          'kds:manage_orders',
-        ],
-      };
-    } else {
-      // Default initial super admin session
-      targetUser = memoryUsers[0];
+    if (!claims || !claims.sub) {
+      return res.status(401).json({
+        success: false,
+        error: 'Sessão inválida ou não autenticada.',
+      });
     }
+
+    const targetUser = memoryUsers.find((u) => u.id === claims.sub) || {
+      id: claims.sub,
+      name: claims.name || 'Usuário',
+      email: claims.email || 'user@aladay.com.br',
+      passwordHash: '',
+      phone: '',
+      role: claims.role || 'TENANT_OWNER',
+      tenantId: claims.tenant_id || '',
+      tenantSlug: claims.tenant_slug || '',
+      tenantName: claims.tenant_slug || 'Restaurante',
+      permissions: claims.permissions || ['tenant:full_access'],
+    };
 
     const { token: freshToken, claims: freshClaims } = signJwtToken(targetUser);
 
@@ -2929,12 +2925,16 @@ async function startServer() {
     planName: string;
     value: number; // 129.90
     cycle: 'MONTHLY';
-    status: 'ACTIVE' | 'PENDING' | 'OVERDUE' | 'CANCELLED';
+    status: 'ACTIVE' | 'TRIAL' | 'PENDING' | 'OVERDUE' | 'CANCELLED';
     billingType: 'PIX' | 'CREDIT_CARD' | 'BOLETO';
     nextDueDate: string;
     createdAt: string;
     invoices: InMemAsaasInvoice[];
     lastPaymentDate?: string;
+    isTrial?: boolean;
+    trialStartedAt?: string;
+    trialEndsAt?: string;
+    trialDaysTotal?: number;
   }
 
   const asaasGatewayConfig = {
@@ -3416,6 +3416,121 @@ async function startServer() {
       subscription,
       isRealGateway: Boolean(asaasGatewayConfig.apiKey),
       isDemoMode: !asaasGatewayConfig.apiKey,
+    });
+  });
+
+  // POST /api/v1/asaas/subscription/:slug/start-trial
+  // Activates a 15-day Free Trial period with first R$ 129,90 invoice scheduled for +15 days
+  app.post('/api/v1/asaas/subscription/:slug/start-trial', async (req: Request, res: Response) => {
+    const { slug } = req.params;
+    const {
+      customerName,
+      customerEmail,
+      customerCpfCnpj,
+      customerPhone,
+      billingType = 'PIX',
+    } = req.body;
+
+    const safeBillingType = ['PIX', 'CREDIT_CARD', 'BOLETO'].includes(billingType) ? billingType : 'PIX';
+    const tenant = memoryTenants.find((t) => t.slug === slug);
+    const resolvedName = String(customerName || tenant?.name || 'Restaurante em Teste').trim();
+    const resolvedEmail = String(customerEmail || 'contato@restaurante.com.br').trim();
+    const resolvedCpfCnpj = String(customerCpfCnpj || '00.000.000/0001-00').trim();
+    const resolvedPhone = String(customerPhone || tenant?.phone || '11987654321').replace(/\D/g, '');
+
+    const now = new Date();
+    const trialEndsDate = new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000);
+    const trialStartedIso = now.toISOString();
+    const trialEndsIso = trialEndsDate.toISOString();
+    const nextDueDateStr = trialEndsIso.split('T')[0];
+
+    let asaasCustomerId = `cus_trial_${Date.now().toString(36)}`;
+    if (asaasGatewayConfig.apiKey) {
+      const custRes = await getOrCreateAsaasCustomer({
+        name: resolvedName,
+        email: resolvedEmail,
+        cpfCnpj: resolvedCpfCnpj,
+        phone: resolvedPhone,
+      });
+      if (custRes.success && custRes.customerId) {
+        asaasCustomerId = custRes.customerId;
+      }
+    }
+
+    const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+    const refMonth = `${monthNames[trialEndsDate.getMonth()]} / ${trialEndsDate.getFullYear()}`;
+    const invoiceId = `pay_trial_${Date.now()}`;
+
+    const futureInvoice: InMemAsaasInvoice = {
+      id: invoiceId,
+      subscriptionId: `sub_trial_${slug.replace(/[^a-zA-Z0-9]/g, '_')}`,
+      referenceMonth: refMonth,
+      value: 129.9,
+      status: 'PENDING',
+      dueDate: nextDueDateStr,
+      billingType: safeBillingType,
+      invoiceUrl: `https://www.asaas.com/i/${invoiceId}`,
+      description: '1ª Mensalidade Pós-Teste Grátis (15 dias) - Plano Aladay Pro R$ 129,90/mês',
+      pixCopiaECola: defaultPixPayload,
+    };
+
+    await ensurePixQrCode(futureInvoice);
+
+    const subscription: InMemAsaasSubscription = {
+      id: `sub_trial_${slug.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
+      tenantSlug: slug,
+      customer: {
+        id: asaasCustomerId,
+        name: resolvedName,
+        email: resolvedEmail,
+        cpfCnpj: resolvedCpfCnpj,
+        phone: resolvedPhone,
+      },
+      planName: 'Teste Grátis 15 Dias · Plano Aladay Pro (R$ 129,90/mês após teste)',
+      value: 129.9,
+      cycle: 'MONTHLY',
+      status: 'TRIAL',
+      billingType: safeBillingType,
+      nextDueDate: nextDueDateStr,
+      createdAt: now.toISOString().split('T')[0],
+      invoices: [futureInvoice],
+      isTrial: true,
+      trialStartedAt: trialStartedIso,
+      trialEndsAt: trialEndsIso,
+      trialDaysTotal: 15,
+    };
+
+    memoryAsaasSubscriptions[slug] = subscription;
+
+    if (tenant) {
+      tenant.subscriptionStatus = 'trial';
+      tenant.trialEndsAt = trialEndsIso;
+    }
+
+    memoryWebhookLogs.unshift({
+      id: `log_trial_${Date.now()}`,
+      timestamp: now.toLocaleTimeString('pt-BR'),
+      source: 'asaas',
+      eventType: 'TRIAL_15_DAYS_ACTIVATED',
+      instance: 'Aladay Trial Engine',
+      senderPhone: resolvedPhone,
+      messageText: `Período de Teste Grátis de 15 dias ativado para ${resolvedName} (expira em ${trialEndsDate.toLocaleDateString('pt-BR')})`,
+      direction: 'inbound',
+      status: 'success',
+      payloadSummary: `Teste Grátis 15 dias ativado (#${subscription.id}) - 1ª cobrança agendada para ${nextDueDateStr}`,
+      fullPayload: {
+        event: 'TRIAL_15_DAYS_ACTIVATED',
+        tenantSlug: slug,
+        trialStartedAt: trialStartedIso,
+        trialEndsAt: trialEndsIso,
+        nextDueDate: nextDueDateStr,
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Período de teste grátis de 15 dias ativado com sucesso!',
+      subscription,
     });
   });
 

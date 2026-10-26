@@ -83,10 +83,12 @@ export interface RestaurantTenant {
   statusNotificationTemplates?: StatusNotificationTemplates;
   pixConfig?: PixGatewayConfig;
   asaasSubscription?: AsaasSubscriptionData;
+  subscriptionStatus?: 'active' | 'trial' | 'past_due' | 'suspended';
+  trialEndsAt?: string;
 }
 
 export type AsaasBillingType = 'PIX' | 'CREDIT_CARD' | 'BOLETO';
-export type AsaasSubscriptionStatus = 'ACTIVE' | 'PENDING' | 'OVERDUE' | 'CANCELLED';
+export type AsaasSubscriptionStatus = 'ACTIVE' | 'TRIAL' | 'PENDING' | 'OVERDUE' | 'CANCELLED';
 export type AsaasInvoiceStatus = 'RECEIVED' | 'CONFIRMED' | 'PENDING' | 'OVERDUE' | 'REFUNDED';
 
 export interface AsaasCustomer {
@@ -126,6 +128,10 @@ export interface AsaasSubscriptionData {
   createdAt: string;
   invoices: AsaasInvoice[];
   lastPaymentDate?: string;
+  isTrial?: boolean;
+  trialStartedAt?: string;
+  trialEndsAt?: string;
+  trialDaysTotal?: number;
 }
 
 export interface AsaasGatewayConfig {

@@ -31,8 +31,9 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
   onNavigateToView,
   onSessionAuthenticated,
 }) => {
-  // Onboarding Gate State: Step 1 (Subscription Signup) -> Step 2 (Create Restaurant & Menu)
+  // Onboarding Gate State: Step 1 (Subscription or 15-Day Free Trial Signup) -> Step 2 (Create Restaurant & Menu)
   const [activeStep, setActiveStep] = useState<'subscription' | 'restaurant'>('subscription');
+  const [signupMode, setSignupMode] = useState<'trial_15_days' | 'paid_direct'>('trial_15_days');
   const [subscriptionConfirmed, setSubscriptionConfirmed] = useState(false);
   const [lockedStepWarning, setLockedStepWarning] = useState(false);
 
@@ -161,6 +162,41 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
 
     if (subscriberPassword.trim().length < 6) {
       setSubError('A senha de acesso deve ter pelo menos 6 caracteres.');
+      return;
+    }
+
+    // 15-DAY FREE TRIAL MODE
+    if (signupMode === 'trial_15_days') {
+      setIsProcessingSub(true);
+      try {
+        const trialRes = await fetch(`/api/v1/asaas/subscription/${onboardingTempSlug}/start-trial`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            customerName: subscriberName.trim(),
+            customerEmail: subscriberEmail.trim(),
+            customerCpfCnpj: subscriberCpfCnpj.trim(),
+            customerPhone: subscriberPhone.replace(/\D/g, ''),
+            billingType: 'PIX',
+          }),
+        });
+        const trialJson = await trialRes.json();
+        if (!trialRes.ok || !trialJson.subscription) {
+          setSubError(trialJson.error || 'Não foi possível ativar o período de teste grátis de 15 dias.');
+          setIsProcessingSub(false);
+          return;
+        }
+
+        setSubscriptionData(trialJson.subscription);
+        setSubscriptionConfirmed(true);
+        setLockedStepWarning(false);
+        if (!phone) setPhone(subscriberPhone);
+        setActiveStep('restaurant');
+      } catch {
+        setSubError('Erro de comunicação ao ativar o teste grátis de 15 dias. Tente novamente.');
+      } finally {
+        setIsProcessingSub(false);
+      }
       return;
     }
 
@@ -325,6 +361,52 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
         return;
       }
 
+      const isTrialActivation = Boolean(subscriptionData?.isTrial || signupMode === 'trial_15_days');
+      let boundSubscription = subscriptionData;
+
+      if (isTrialActivation) {
+        // Bind 15-day Free Trial subscription to the newly created restaurant slug
+        try {
+          const bindTrialRes = await fetch(`/api/v1/asaas/subscription/${slug}/start-trial`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              customerName: subscriberName.trim() || name,
+              customerEmail: subscriberEmail.trim(),
+              customerCpfCnpj: subscriberCpfCnpj.trim(),
+              customerPhone: phone.replace(/\D/g, ''),
+              billingType: 'PIX',
+            }),
+          });
+          if (bindTrialRes.ok) {
+            const bindTrialJson = await bindTrialRes.json();
+            if (bindTrialJson.subscription) {
+              boundSubscription = bindTrialJson.subscription;
+            }
+          }
+        } catch {
+          // fallback to existing subscriptionData
+        }
+      } else {
+        // Bind the active paid Asaas subscription to the newly created restaurant slug
+        await fetch(`/api/v1/asaas/subscription/${slug}/subscribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            billingType,
+            customerName: subscriberName.trim() || name,
+            customerEmail: subscriberEmail.trim(),
+            customerCpfCnpj: subscriberCpfCnpj.trim(),
+            customerPhone: phone.replace(/\D/g, ''),
+          }),
+        }).catch(() => {});
+
+        await fetch(`/api/v1/asaas/subscription/${slug}/confirm-payment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        }).catch(() => {});
+      }
+
       const tenantData: RestaurantTenant = {
         id: json.data?.id || `tenant_${Date.now()}`,
         name,
@@ -343,7 +425,9 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
         evolutionInstanceId: `instancia_${slug}`,
         evolutionStatus: 'connected',
         evolutionApiKeyConfigured: true,
-        asaasSubscription: subscriptionData || undefined,
+        subscriptionStatus: isTrialActivation ? 'trial' : 'active',
+        trialEndsAt: boundSubscription?.trialEndsAt,
+        asaasSubscription: boundSubscription || undefined,
         pixConfig: {
           provider: 'direct_bank',
           pixKey: pixKey.trim() || subscriberCpfCnpj.trim() || phone.trim(),
@@ -353,24 +437,6 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
           autoApproveWebhook: true,
         },
       };
-
-      // Bind the active Asaas subscription to the newly created restaurant slug
-      await fetch(`/api/v1/asaas/subscription/${slug}/subscribe`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          billingType,
-          customerName: subscriberName.trim() || name,
-          customerEmail: subscriberEmail.trim(),
-          customerCpfCnpj: subscriberCpfCnpj.trim(),
-          customerPhone: phone.replace(/\D/g, ''),
-        }),
-      }).catch(() => {});
-
-      await fetch(`/api/v1/asaas/subscription/${slug}/confirm-payment`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }).catch(() => {});
 
       // Register & authenticate the subscriber as TENANT_OWNER of this restaurant
       if (subscriberEmail && subscriberPassword) {
@@ -423,16 +489,22 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
             <div className="flex items-center gap-2 text-xs font-medium text-emerald-700 mb-1">
               <span>Aladay Cardápios Digitais</span>
               <span aria-hidden="true">&middot;</span>
-              <span>Assinatura Oficial via Asaas</span>
+              <span>Teste Grátis 15 Dias ou Assinatura Oficial</span>
             </div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-neutral-950">
               {activeStep === 'subscription'
-                ? '1. Cadastro da Assinatura do Plano (R$ 129,90/mês)'
+                ? signupMode === 'trial_15_days'
+                  ? '1. Cadastro para Período de Teste Grátis (15 Dias)'
+                  : '1. Cadastro da Assinatura do Plano (R$ 129,90/mês)'
                 : '2. Criar Restaurante & Gerar Cardápio Digital'}
             </h1>
             <p className="text-xs text-neutral-600 mt-1 max-w-2xl">
               {activeStep === 'subscription'
-                ? 'Conclua o cadastro da sua assinatura mensal fixa de R$ 129,90/mês para liberar imediatamente a criação do seu restaurante e cardápio digital.'
+                ? signupMode === 'trial_15_days'
+                  ? 'Cadastre seus dados abaixo para liberar 15 dias de teste grátis com todos os recursos (Cardápio Digital, Pix Direto, KDS e WhatsApp Automático) sem cobrança hoje.'
+                  : 'Conclua o cadastro da sua assinatura mensal fixa de R$ 129,90/mês para liberar imediatamente a criação do seu restaurante e cardápio digital.'
+                : subscriptionData?.isTrial
+                ? 'Seu Período de Teste Grátis de 15 Dias está ativo! Agora preencha os dados do seu restaurante para colocar seu cardápio digital no ar.'
                 : 'Sua assinatura está ativa! Agora preencha os dados do seu estabelecimento para colocar seu cardápio digital no ar.'}
             </p>
           </div>
@@ -448,12 +520,20 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
               {subscriptionConfirmed ? (
                 <>
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>Assinatura Ativa (R$ 129,90/mês)</span>
+                  <span>
+                    {subscriptionData?.isTrial
+                      ? 'Teste Grátis de 15 Dias Ativo'
+                      : 'Assinatura Ativa (R$ 129,90/mês)'}
+                  </span>
                 </>
               ) : (
                 <>
                   <Lock className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Aguardando Assinatura do Plano</span>
+                  <span>
+                    {signupMode === 'trial_15_days'
+                      ? 'Aguardando Cadastro do Teste Grátis'
+                      : 'Aguardando Assinatura do Plano'}
+                  </span>
                 </>
               )}
             </span>
@@ -727,111 +807,198 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                 />
               </div>
 
-              {/* Payment Method Selector */}
+              {/* Mode Selector: 15-Day Free Trial vs Direct Paid Subscription */}
               <div className="pt-2 border-t border-neutral-200 space-y-4">
                 <label className="block text-xs font-bold text-neutral-900">
-                  Escolha a Forma de Pagamento da Assinatura (R$ 129,90/mês)
+                  Escolha como deseja começar na Aladay:
                 </label>
 
-                <div className="grid grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <button
                     type="button"
-                    onClick={() => setBillingType('PIX')}
-                    className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
-                      billingType === 'PIX'
-                        ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
+                    onClick={() => setSignupMode('trial_15_days')}
+                    className={`p-4 rounded-xl border text-left transition-all cursor-pointer relative ${
+                      signupMode === 'trial_15_days'
+                        ? 'bg-emerald-50/90 border-2 border-emerald-600 text-emerald-950 shadow-xs'
                         : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
                     }`}
                   >
-                    <QrCode className="w-4 h-4 text-emerald-600" />
-                    <span>Pix Imediato</span>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-600 text-white">
+                        15 Dias Grátis
+                      </span>
+                      <span className="font-mono text-xs font-black text-emerald-700">R$ 0,00 hoje</span>
+                    </div>
+                    <p className="text-xs font-bold text-neutral-950 mt-1">
+                      Período de Teste Grátis (15 Dias)
+                    </p>
+                    <p className="text-[11px] text-neutral-600 mt-0.5 leading-snug">
+                      Liberação imediata sem cobrança hoje. Teste todos os recursos por 15 dias completos.
+                    </p>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => setBillingType('CREDIT_CARD')}
-                    className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
-                      billingType === 'CREDIT_CARD'
-                        ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
+                    onClick={() => setSignupMode('paid_direct')}
+                    className={`p-4 rounded-xl border text-left transition-all cursor-pointer relative ${
+                      signupMode === 'paid_direct'
+                        ? 'bg-emerald-50/90 border-2 border-emerald-600 text-emerald-950 shadow-xs'
                         : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
                     }`}
                   >
-                    <CreditCard className="w-4 h-4 text-emerald-600" />
-                    <span>Cartão de Crédito</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setBillingType('BOLETO')}
-                    className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
-                      billingType === 'BOLETO'
-                        ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
-                        : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
-                    }`}
-                  >
-                    <FileText className="w-4 h-4 text-emerald-600" />
-                    <span>Boleto Asaas</span>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-neutral-200 text-neutral-800">
+                        Assinatura Direta
+                      </span>
+                      <span className="font-mono text-xs font-bold text-neutral-900">R$ 129,90/mês</span>
+                    </div>
+                    <p className="text-xs font-bold text-neutral-950 mt-1">
+                      Ativação Definitiva Plano Pro
+                    </p>
+                    <p className="text-[11px] text-neutral-600 mt-0.5 leading-snug">
+                      Pagamento imediato via Pix, Cartão de Crédito ou Boleto Asaas.
+                    </p>
                   </button>
                 </div>
 
-                {/* Credit Card Form Fields */}
-                {billingType === 'CREDIT_CARD' && (
-                  <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-xl space-y-3">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                        Número do Cartão de Crédito
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={ccNumber}
-                        onChange={(e) => setCcNumber(e.target.value)}
-                        placeholder="0000 0000 0000 0000"
-                        className="w-full p-2.5 text-xs bg-white border border-neutral-200 rounded-lg font-mono"
-                      />
+                {signupMode === 'trial_15_days' ? (
+                  <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-2.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-emerald-950 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        <span>Resumo do Seu Período de Teste Grátis (15 Dias)</span>
+                      </span>
+                      <span className="font-mono text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
+                        Sem Cartão Obrigatório
+                      </span>
                     </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                        Nome Impresso no Cartão
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={ccHolder}
-                        onChange={(e) => setCcHolder(e.target.value.toUpperCase())}
-                        placeholder="COMO ESTÁ NO CARTÃO"
-                        className="w-full p-2.5 text-xs bg-white border border-neutral-200 rounded-lg"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                          Validade (MM/AA)
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={ccExpiry}
-                          onChange={(e) => setCcExpiry(e.target.value)}
-                          placeholder="12/29"
-                          className="w-full p-2.5 text-xs bg-white border border-neutral-200 rounded-lg font-mono"
-                        />
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-[11px]">
+                      <div className="p-2.5 bg-white rounded-lg border border-emerald-100">
+                        <p className="text-neutral-500">Valor cobrado hoje:</p>
+                        <p className="font-mono font-black text-emerald-700 text-sm">R$ 0,00 (Grátis)</p>
                       </div>
-                      <div>
-                        <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                          CVV
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          maxLength={4}
-                          value={ccCvv}
-                          onChange={(e) => setCcCvv(e.target.value)}
-                          placeholder="123"
-                          className="w-full p-2.5 text-xs bg-white border border-neutral-200 rounded-lg font-mono"
-                        />
+                      <div className="p-2.5 bg-white rounded-lg border border-emerald-100">
+                        <p className="text-neutral-500">Duração do teste:</p>
+                        <p className="font-mono font-bold text-neutral-900 text-sm">15 dias corridos</p>
+                      </div>
+                      <div className="p-2.5 bg-white rounded-lg border border-emerald-100">
+                        <p className="text-neutral-500">Vencimento após teste:</p>
+                        <p className="font-mono font-bold text-neutral-900 text-sm">
+                          {new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR')}
+                        </p>
                       </div>
                     </div>
+                    <p className="text-[11px] text-neutral-600 leading-relaxed">
+                      Você terá acesso integral ao Cardápio Digital, Pix 100% direto na sua conta, Painel KDS e WhatsApp Automático. Após os 15 dias, caso decida continuar, a mensalidade fixa é de <strong>R$ 129,90/mês</strong> (sem fidelidade).
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4 pt-2">
+                    <label className="block text-xs font-bold text-neutral-900">
+                      Escolha a Forma de Pagamento da Assinatura (R$ 129,90/mês)
+                    </label>
+
+                    <div className="grid grid-cols-3 gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setBillingType('PIX')}
+                        className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
+                          billingType === 'PIX'
+                            ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
+                            : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                        }`}
+                      >
+                        <QrCode className="w-4 h-4 text-emerald-600" />
+                        <span>Pix Imediato</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setBillingType('CREDIT_CARD')}
+                        className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
+                          billingType === 'CREDIT_CARD'
+                            ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
+                            : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                        }`}
+                      >
+                        <CreditCard className="w-4 h-4 text-emerald-600" />
+                        <span>Cartão de Crédito</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setBillingType('BOLETO')}
+                        className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
+                          billingType === 'BOLETO'
+                            ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
+                            : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                        }`}
+                      >
+                        <FileText className="w-4 h-4 text-emerald-600" />
+                        <span>Boleto Asaas</span>
+                      </button>
+                    </div>
+
+                    {/* Credit Card Form Fields */}
+                    {billingType === 'CREDIT_CARD' && (
+                      <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-xl space-y-3">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                            Número do Cartão de Crédito
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={ccNumber}
+                            onChange={(e) => setCcNumber(e.target.value)}
+                            placeholder="0000 0000 0000 0000"
+                            className="w-full p-2.5 text-xs bg-white border border-neutral-200 rounded-lg font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                            Nome Impresso no Cartão
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={ccHolder}
+                            onChange={(e) => setCcHolder(e.target.value.toUpperCase())}
+                            placeholder="COMO ESTÁ NO CARTÃO"
+                            className="w-full p-2.5 text-xs bg-white border border-neutral-200 rounded-lg"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                              Validade (MM/AA)
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              value={ccExpiry}
+                              onChange={(e) => setCcExpiry(e.target.value)}
+                              placeholder="12/29"
+                              className="w-full p-2.5 text-xs bg-white border border-neutral-200 rounded-lg font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                              CVV
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              maxLength={4}
+                              value={ccCvv}
+                              onChange={(e) => setCcCvv(e.target.value)}
+                              placeholder="123"
+                              className="w-full p-2.5 text-xs bg-white border border-neutral-200 rounded-lg font-mono"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -839,12 +1006,16 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
               <button
                 type="submit"
                 disabled={isProcessingSub}
-                className="w-full py-3.5 px-5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-3.5 px-5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
               >
                 <ShieldCheck className="w-4 h-4" />
                 <span>
                   {isProcessingSub
-                    ? 'Processando Assinatura no Asaas...'
+                    ? signupMode === 'trial_15_days'
+                      ? 'Ativando 15 Dias de Teste Grátis...'
+                      : 'Processando Assinatura no Asaas...'
+                    : signupMode === 'trial_15_days'
+                    ? 'Ativar Meus 15 Dias Grátis e Criar Cardápio Digital'
                     : billingType === 'CREDIT_CARD'
                     ? 'Assinar Plano por R$ 129,90/mês e Liberar Criação do Cardápio'
                     : billingType === 'PIX'

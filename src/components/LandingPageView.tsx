@@ -332,7 +332,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 onClick={() => handleTrackedSignup('hero_primary')}
                 className="px-6 py-4 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl transition-all shadow-md hover:shadow-lg flex items-center gap-2 cursor-pointer"
               >
-                <span>Criar Meu Cardápio por R$ 129,90/mês</span>
+                <span>Começar Teste Grátis de 15 Dias</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
@@ -690,7 +690,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
       {/* ================================================================== */}
       {/* 4. OFERTA: PLANOS, PREÇOS E COMO SOLICITAR PROPOSTA                */}
       {/* ================================================================== */}
-      <section className="bg-white border border-neutral-200 rounded-3xl p-6 sm:p-10 lg:p-12 space-y-10 shadow-xs">
+      <section id="planos" className="bg-white border border-neutral-200 rounded-3xl p-6 sm:p-10 lg:p-12 space-y-10 shadow-xs scroll-mt-24">
         <div className="max-w-3xl space-y-2">
           <p className="text-xs font-bold text-emerald-700 uppercase tracking-wider">
             02. Modelo Comercial &amp; Planos
@@ -709,26 +709,26 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
           <div className="lg:col-span-7 bg-neutral-950 text-white rounded-2xl p-6 sm:p-8 flex flex-col justify-between border-2 border-emerald-500 relative shadow-xl">
             {/* Best Value Ribbon */}
             <div className="absolute -top-3.5 right-6 bg-emerald-500 text-neutral-950 text-xs font-extrabold px-3 py-1 rounded-full shadow-md">
-              MAIS ESCOLHIDO &middot; PLANO COMPLETO
+              15 DIAS GRÁTIS PARA TESTAR &middot; PLANO COMPLETO
             </div>
 
             <div className="space-y-6">
               <div>
                 <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
-                  Assinatura Mensal Fixa
+                  15 Dias Grátis &middot; Depois Assinatura Mensal Fixa
                 </span>
                 <h3 className="text-2xl font-black text-white mt-1">Plano Aladay Pro</h3>
                 <p className="text-xs text-neutral-400 mt-1">
-                  Ideal para restaurantes, lanchonetes, pizzarias e dark kitchens de qualquer porte.
+                  Experimente grátis por 15 dias sem compromisso. Ideal para restaurantes, lanchonetes, pizzarias e dark kitchens.
                 </p>
               </div>
 
               {/* Price display */}
-              <div className="flex items-baseline gap-2 border-y border-neutral-800 py-4">
+              <div className="flex flex-wrap items-baseline gap-2 border-y border-neutral-800 py-4">
                 <span className="text-4xl sm:text-5xl font-black font-mono text-white">R$ 129,90</span>
-                <span className="text-neutral-400 text-sm">/mês</span>
+                <span className="text-neutral-400 text-sm">/mês após 15 dias grátis</span>
                 <span className="ml-auto text-xs font-mono text-emerald-400 bg-neutral-900 px-2.5 py-1 rounded-md border border-neutral-800">
-                  0% comissão
+                  R$ 0,00 hoje &middot; 0% comissão
                 </span>
               </div>
 
@@ -776,11 +776,11 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 onClick={() => handleTrackedSignup('pricing_main_pro')}
                 className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold text-sm rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
               >
-                <span>Assinar Plano e Ativar Meu Cardápio</span>
+                <span>Começar 15 Dias de Teste Grátis (R$ 0,00 hoje)</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
               <p className="text-[11px] text-neutral-500 text-center">
-                Cobrança automática transparente processada pelo gateway nacional Asaas.
+                Teste grátis por 15 dias sem cartão obrigatório. Após o teste, R$ 129,90/mês via Asaas.
               </p>
             </div>
           </div>
@@ -901,7 +901,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
       {/* ================================================================== */}
       {/* 5. SIMULADOR DE ECONOMIA (CALCULADORA DE ROI INTERATIVA)            */}
       {/* ================================================================== */}
-      <section className="bg-white border border-neutral-200 rounded-3xl p-6 sm:p-10 space-y-8 shadow-xs">
+      <section id="calculadora" className="bg-white border border-neutral-200 rounded-3xl p-6 sm:p-10 space-y-8 shadow-xs scroll-mt-24">
         <div className="max-w-3xl space-y-2">
           <p className="text-xs font-bold text-emerald-700 uppercase tracking-wider">
             03. Calculadora de Economia
@@ -1061,13 +1061,13 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
       <section className="bg-neutral-950 text-white rounded-3xl p-8 sm:p-12 text-center relative overflow-hidden shadow-xl">
         <div className="max-w-2xl mx-auto space-y-6 relative z-10">
           <span className="inline-block px-3 py-1 bg-emerald-950 border border-emerald-800 text-emerald-400 text-xs font-semibold rounded-full">
-            Pronto para começar?
+            Teste Grátis por 15 Dias &middot; Sem Compromisso
           </span>
           <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
-            Coloque seu cardápio próprio no ar hoje mesmo por R$ 129,90/mês.
+            Coloque seu cardápio próprio no ar hoje mesmo com 15 dias grátis.
           </h2>
           <p className="text-sm sm:text-base text-neutral-400 max-w-xl mx-auto leading-relaxed">
-            Sem burocracia: cadastre sua assinatura, configure seus produtos e comece a receber pedidos no WhatsApp com Pix 100% na sua conta bancária.
+            Cadastre seu período de teste grátis de 15 dias em menos de 1 minuto, configure seus produtos e comece a receber pedidos no WhatsApp com Pix 100% na sua conta bancária.
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
@@ -1076,7 +1076,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               onClick={() => handleTrackedSignup('bottom_banner_primary')}
               className="px-7 py-4 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 text-sm font-bold rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer"
             >
-              <span>Criar Cardápio por R$ 129,90</span>
+              <span>Começar 15 Dias de Teste Grátis</span>
               <ArrowRight className="w-4 h-4" />
             </button>
 

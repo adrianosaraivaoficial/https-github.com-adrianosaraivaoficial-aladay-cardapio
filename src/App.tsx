@@ -17,7 +17,7 @@ import {
 } from './data/mockTenant';
 import { AuthSession, Category, CustomerRecord, Order, OrderStatus, Product, RestaurantTenant } from './types';
 import { BLUEPRINT_SECTIONS } from './data/blueprintSections';
-import { LogIn } from 'lucide-react';
+import { LogIn, Lock, ShieldAlert, X, ArrowRight } from 'lucide-react';
 import { WhatsAppAutomationView } from './components/WhatsAppAutomationView';
 import { AuthPortalView } from './components/AuthPortalView';
 import { LandingPageView } from './components/LandingPageView';
@@ -25,6 +25,7 @@ import { LandingPageView } from './components/LandingPageView';
 export default function App() {
   const [currentView, setCurrentView] = useState<'home' | 'kickoff' | 'consumer' | 'admin' | 'calculator' | 'diagrams' | 'tracking' | 'whatsapp' | 'auth'>('home');
   const [selectedTrackingOrder, setSelectedTrackingOrder] = useState<Order | null>(null);
+  const [showSubscriptionNoticeModal, setShowSubscriptionNoticeModal] = useState<boolean>(false);
 
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => {
     try {
@@ -99,7 +100,13 @@ export default function App() {
     fetch('/api/v1/auth/session', {
       headers: { Authorization: `Bearer ${authSession.token}` },
     })
-      .then((res) => (res.ok ? res.json() : null))
+      .then((res) => {
+        if (res && res.status === 401) {
+          handleLogout();
+          return null;
+        }
+        return res && res.ok ? res.json() : null;
+      })
       .then((data) => {
         if (data && data.success && data.token) {
           setAuthSession((prev) => {
@@ -115,6 +122,57 @@ export default function App() {
       })
       .catch(() => {});
   }, [authSession?.token]);
+
+  // Active subscription validation logic:
+  // - Super Admin has platform-wide access
+  // - Tenant owner / kitchen staff has access ONLY IF authenticated AND their tenant has an active subscription
+  //   (either tenant.asaasSubscription?.status === 'ACTIVE' or tenant.subscriptionStatus === 'active')
+  // - Unsubscribed visitors / clients can ONLY access the home page ('home')
+  //   (with 'kickoff' allowed for subscription checkout, and 'auth' for logging in)
+  const isSuperAdmin = authSession?.user?.role === 'SUPER_ADMIN';
+  const isTenantStaffOrOwner =
+    authSession?.user?.role === 'TENANT_OWNER' ||
+    authSession?.user?.role === 'KITCHEN_STAFF';
+
+  const trialEndsIso = tenant?.asaasSubscription?.trialEndsAt || tenant?.trialEndsAt;
+  const isTenantOnTrial = Boolean(
+    tenant?.asaasSubscription?.status === 'TRIAL' ||
+    tenant?.asaasSubscription?.isTrial ||
+    tenant?.subscriptionStatus === 'trial'
+  );
+  const trialDaysLeft = isTenantOnTrial
+    ? trialEndsIso
+      ? Math.max(0, Math.ceil((new Date(trialEndsIso).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+      : 15
+    : 0;
+  const isTrialActiveAndValid = isTenantOnTrial && trialDaysLeft > 0;
+
+  const isTenantSubscribed = Boolean(
+    tenant?.asaasSubscription?.status === 'ACTIVE' ||
+    tenant?.subscriptionStatus === 'active' ||
+    isTrialActiveAndValid
+  );
+
+  const hasActiveSubscription = Boolean(
+    isSuperAdmin || (Boolean(authSession) && isTenantStaffOrOwner && isTenantSubscribed)
+  );
+
+  // Enforce access boundary: unsubscribed clients CAN ONLY access 'home', 'kickoff' (to buy), or 'auth' (to login)
+  React.useEffect(() => {
+    if (!hasActiveSubscription && currentView !== 'home' && currentView !== 'kickoff' && currentView !== 'auth') {
+      setCurrentView('home');
+      setShowSubscriptionNoticeModal(true);
+    }
+  }, [hasActiveSubscription, currentView]);
+
+  const handleNavigateSafely = (targetView: typeof currentView) => {
+    if (!hasActiveSubscription && targetView !== 'home' && targetView !== 'kickoff' && targetView !== 'auth') {
+      setCurrentView('home');
+      setShowSubscriptionNoticeModal(true);
+      return;
+    }
+    setCurrentView(targetView);
+  };
 
   // Derived current tenant data
   const currentCatalog = catalogsByTenant[tenant.slug] || {
@@ -406,64 +464,108 @@ export default function App() {
           {/* Zone 1: Single Text Element Brand Wordmark */}
           <button
             type="button"
-            onClick={() => setCurrentView('home')}
+            onClick={() => handleNavigateSafely('home')}
             className="text-lg font-black tracking-tight text-neutral-950 hover:text-emerald-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
             Aladay
           </button>
 
-          {/* Zone 2: Navigation Links separated by role */}
+          {/* Zone 2: Navigation Links - Unsubscribed clients ONLY see Home & Public Sections */}
           <nav className="hidden md:flex items-center gap-5 text-xs font-medium text-neutral-600">
-            <button
-              type="button"
-              onClick={() => setCurrentView('home')}
-              className={`hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                currentView === 'home' ? 'text-neutral-950 font-semibold underline underline-offset-8' : ''
-              }`}
-            >
-              Início
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentView('consumer')}
-              className={`hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                currentView === 'consumer' ? 'text-neutral-950 font-semibold underline underline-offset-8' : ''
-              }`}
-            >
-              Cardápio Digital
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentView('admin')}
-              className={`hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                currentView === 'admin' ? 'text-neutral-950 font-semibold underline underline-offset-8' : ''
-              }`}
-            >
-              Painel &amp; KDS (Loja)
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentView('whatsapp')}
-              className={`hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                currentView === 'whatsapp' ? 'text-neutral-950 font-semibold underline underline-offset-8' : ''
-              }`}
-            >
-              WhatsApp
-            </button>
+            {hasActiveSubscription ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleNavigateSafely('home')}
+                  className={`hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    currentView === 'home' ? 'text-neutral-950 font-semibold underline underline-offset-8' : ''
+                  }`}
+                >
+                  Início
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNavigateSafely('consumer')}
+                  className={`hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    currentView === 'consumer' ? 'text-neutral-950 font-semibold underline underline-offset-8' : ''
+                  }`}
+                >
+                  Cardápio Digital
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNavigateSafely('admin')}
+                  className={`hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    currentView === 'admin' ? 'text-neutral-950 font-semibold underline underline-offset-8' : ''
+                  }`}
+                >
+                  Painel &amp; KDS (Loja)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNavigateSafely('whatsapp')}
+                  className={`hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    currentView === 'whatsapp' ? 'text-neutral-950 font-semibold underline underline-offset-8' : ''
+                  }`}
+                >
+                  WhatsApp
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleNavigateSafely('home')}
+                  className={`hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    currentView === 'home' ? 'text-neutral-950 font-semibold underline underline-offset-8' : ''
+                  }`}
+                >
+                  Início
+                </button>
+                <a
+                  href="#demonstracao-celular"
+                  className="hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0"
+                >
+                  Demonstração no Celular
+                </a>
+                <a
+                  href="#planos"
+                  className="hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0"
+                >
+                  Planos &amp; Preço (R$ 129,90)
+                </a>
+                <a
+                  href="#calculadora"
+                  className="hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0"
+                >
+                  Calculadora de Economia
+                </a>
+              </>
+            )}
           </nav>
 
           {/* Zone 3: Active Profile Badge & Login / Auth Portal */}
           <div className="flex items-center gap-2.5 shrink-0">
-            {authSession ? (
+            {authSession && hasActiveSubscription ? (
               <>
                 {authSession.user.role === 'SUPER_ADMIN' ? (
                   <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-purple-50 text-purple-800 border border-purple-200 text-[11px] font-bold">
                     <span>👑 Super Admin</span>
                   </span>
                 ) : authSession.user.role === 'TENANT_OWNER' ? (
-                  <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold">
-                    <span>🏪 {tenant.name}</span>
-                  </span>
+                  <div className="hidden sm:flex items-center gap-1.5">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold">
+                      <span>🏪 {tenant.name}</span>
+                    </span>
+                    {isTrialActiveAndValid && (
+                      <span
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold font-mono"
+                        title={`Período de Teste Grátis de 15 dias ativo (${trialDaysLeft} dias restantes)`}
+                      >
+                        <span>🎁 Teste Grátis: {trialDaysLeft}d</span>
+                      </span>
+                    )}
+                  </div>
                 ) : (
                   <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold">
                     <span>🍳 Cozinha</span>
@@ -472,7 +574,7 @@ export default function App() {
 
                 <button
                   type="button"
-                  onClick={() => setCurrentView('auth')}
+                  onClick={() => handleNavigateSafely('auth')}
                   className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                   title="Gerenciar conta"
                 >
@@ -490,14 +592,24 @@ export default function App() {
                 </button>
               </>
             ) : (
-              <button
-                type="button"
-                onClick={() => setCurrentView('auth')}
-                className="flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-2xs"
-              >
-                <LogIn className="w-3.5 h-3.5" />
-                <span>Fazer Login</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleNavigateSafely('auth')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <LogIn className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>Entrar</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleNavigateSafely('kickoff')}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-2xs"
+                >
+                  <span>Teste Grátis 15 Dias</span>
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -509,10 +621,10 @@ export default function App() {
           <LandingPageView
             tenant={tenant}
             authSession={authSession}
-            onNavigateToLogin={() => setCurrentView('auth')}
-            onNavigateToSetup={() => setCurrentView('kickoff')}
-            onNavigateToDemoMenu={() => setCurrentView('consumer')}
-            onNavigateToAdmin={() => setCurrentView('admin')}
+            onNavigateToLogin={() => handleNavigateSafely('auth')}
+            onNavigateToSetup={() => handleNavigateSafely('kickoff')}
+            onNavigateToDemoMenu={() => handleNavigateSafely('consumer')}
+            onNavigateToAdmin={() => handleNavigateSafely('admin')}
           />
         )}
 
@@ -594,6 +706,76 @@ export default function App() {
 
         {currentView === 'diagrams' && <TechDiagramsView />}
       </div>
+
+      {/* Modal de Proteção / Aviso de Assinatura para Clientes Não-Assinantes */}
+      {showSubscriptionNoticeModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 space-y-5 shadow-2xl border border-neutral-200 relative animate-in fade-in duration-150">
+            <div className="flex items-start justify-between border-b border-neutral-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700 shrink-0">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-neutral-950">
+                    Acesso Exclusivo para Assinantes
+                  </h3>
+                  <p className="text-xs text-neutral-500">
+                    Plano Aladay Pro &middot; R$ 129,90/mês
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSubscriptionNoticeModal(false)}
+                className="text-neutral-400 hover:text-neutral-700 p-1 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-neutral-600 leading-relaxed">
+              <p>
+                O <strong>Cardápio Digital personalizado</strong> e o <strong>Painel de Gestão da Loja (KDS &amp; WhatsApp)</strong> são liberados imediatamente ao iniciar seu <strong>Período de Teste Grátis de 15 Dias</strong> ou assinar o plano Aladay Pro.
+              </p>
+              <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-neutral-900 font-semibold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span>Teste Grátis por 15 Dias:</span>
+                </div>
+                <p className="text-[11px] text-neutral-500 pl-3.5">
+                  Experimente todos os recursos da plataforma por 15 dias sem nenhuma cobrança hoje (R$ 0,00).
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-2 space-y-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSubscriptionNoticeModal(false);
+                  setCurrentView('kickoff');
+                }}
+                className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+              >
+                <span>Começar Teste Grátis de 15 Dias (R$ 0,00)</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSubscriptionNoticeModal(false);
+                  setCurrentView('auth');
+                }}
+                className="w-full py-2.5 bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-medium text-xs rounded-xl transition-colors cursor-pointer text-center"
+              >
+                Já tenho Cadastro &middot; Fazer Login
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Clean quiet footer */}
       <footer className="border-t border-neutral-200 bg-white py-4 mt-auto">
