@@ -181,7 +181,8 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
   // Pix Key Editor state (Cada restaurante edita sua própria chave Pix direta)
   const [isEditingPixKey, setIsEditingPixKey] = useState(false);
-  const [pixKey, setPixKey] = useState(tenant.pixConfig?.pixKey || tenant.phone || '');
+  const [pixKey, setPixKey] = useState(tenant.pixConfig?.pixKey || '');
+  const [pixAutoApproveWebhook, setPixAutoApproveWebhook] = useState(tenant.pixConfig?.autoApproveWebhook ?? false);
   const [pixKeyType, setPixKeyType] = useState<PixGatewayConfig['pixKeyType']>(tenant.pixConfig?.pixKeyType || 'phone');
   const [pixMerchantName, setPixMerchantName] = useState(tenant.pixConfig?.merchantName || tenant.name || 'MEU RESTAURANTE');
   const [pixMerchantCity, setPixMerchantCity] = useState(tenant.pixConfig?.merchantCity || 'SAO PAULO');
@@ -202,7 +203,8 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     setDeliveryZones(tenant.deliveryZones || []);
 
     // Sync Pix Config when tenant switches
-    setPixKey(tenant.pixConfig?.pixKey || tenant.phone || '');
+    setPixKey(tenant.pixConfig?.pixKey || '');
+    setPixAutoApproveWebhook(tenant.pixConfig?.autoApproveWebhook ?? false);
     setPixKeyType(tenant.pixConfig?.pixKeyType || 'phone');
     setPixMerchantName(tenant.pixConfig?.merchantName || tenant.name || 'MEU RESTAURANTE');
     setPixMerchantCity(tenant.pixConfig?.merchantCity || 'SAO PAULO');
@@ -769,7 +771,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
         merchantName: pixMerchantName.trim().slice(0, 25),
         merchantCity: pixMerchantCity.trim().slice(0, 15).toUpperCase(),
         bankName: pixBankName.trim() || 'Conta Bancária da Loja',
-        autoApproveWebhook: true,
+        autoApproveWebhook: pixAutoApproveWebhook,
       };
 
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -777,11 +779,13 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
         headers['Authorization'] = `Bearer ${authSession.token}`;
       }
 
-      await fetch(`/api/v1/tenants/${tenant.slug}/pix-config`, {
+      const response = await fetch(`/api/v1/tenants/${tenant.slug}/pix-config`, {
         method: 'PUT',
         headers,
         body: JSON.stringify(payload),
       });
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(responseData.error || 'Não foi possível salvar a configuração Pix.');
 
       const updatedTenant: RestaurantTenant = {
         ...tenant,
@@ -2015,7 +2019,7 @@ ETag: "catalog_version_1729482930"`}
                           {tenant.pixConfig?.pixKeyType || 'telefone'}
                         </span>
                         <p className="font-mono font-bold text-neutral-900 text-xs truncate">
-                          {tenant.pixConfig?.pixKey || tenant.phone || '+5511987654321'}
+                          {tenant.pixConfig?.pixKey || 'Chave Pix não configurada'}
                         </p>
                       </div>
 
@@ -2138,11 +2142,11 @@ ETag: "catalog_version_1729482930"`}
                           <label className="flex items-center gap-2 cursor-pointer text-[11px] text-neutral-700 font-medium">
                             <input
                               type="checkbox"
-                              checked={true}
-                              readOnly
+                              checked={pixAutoApproveWebhook}
+                              onChange={(e) => setPixAutoApproveWebhook(e.target.checked)}
                               className="w-4 h-4 text-emerald-600 rounded accent-emerald-600"
                             />
-                            <span>O pagamento do cliente cai 100% direto na conta deste restaurante</span>
+                            <span>Confirmar pagamentos automaticamente após receber webhook Pix autenticado</span>
                           </label>
                         </div>
                       </div>
@@ -2156,7 +2160,7 @@ ETag: "catalog_version_1729482930"`}
                             type="button"
                             onClick={() => {
                               setIsEditingPixKey(false);
-                              setPixKey(tenant.pixConfig?.pixKey || tenant.phone || '5511987654321');
+                              setPixKey(tenant.pixConfig?.pixKey || '');
                             }}
                             className="px-3 py-1.5 text-xs font-semibold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded transition-colors"
                           >
