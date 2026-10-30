@@ -1449,113 +1449,156 @@ async function startServer() {
   app.patch('/api/v1/orders/:id/status', authenticateToken, async (req: Request, res: Response) => {
     const user = (req as any).user;
     const { status } = req.body || {};
-    if (!['received', 'confirmed', 'preparing', 'ready', 'delivered', 'cancelled'].includes(status)) return res.status(400).json({ error: 'Status de pedido inválido.' });
-    const order = memoryOrders.find((o) => o.id === req.params.id);
-    if (!order) {
-      return res.status(404).json({ error: 'Pedido não encontrado.' });
-    }
+    const validStatuses = ['received', 'confirmed', 'preparing', 'ready', 'delivered', 'cancelled'];
+    if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Status de pedido inválido.' });
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ error: 'PostgreSQL obrigatório para atualizar pedidos em produção.' });
 
-    // RBAC: Super Admin or tenant staff of the order
-    if (user.role !== 'SUPER_ADMIN' && user.tenant_slug !== '*' && user.tenant_slug !== order.tenantSlug) {
+    let order: any = memoryOrders.find((item) => item.id === req.params.id);
+    if (!order && pgPool) {
+      try {
+        const result = await pgPool.query('SELECT * FROM orders WHERE id = $1 LIMIT 1;', [req.params.id]);
+        const row = result.rows[0];
+        if (row) {
+          order = {
+            id: String(row.id), orderNumber: Number(row.order_number), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+            customerName: String(row.customer_name), customerPhone: String(row.customer_phone), type: String(row.order_type),
+            deliveryAddress: row.delivery_address || undefined, items: Array.isArray(row.items) ? row.items : [],
+            subtotalCents: Number(row.subtotal_cents), deliveryFeeCents: Number(row.delivery_fee_cents), totalCents: Number(row.total_cents),
+            status: String(row.status), paymentStatus: String(row.payment_status || 'pending'), paymentMethod: String(row.payment_method || 'Pix'),
+            whatsAppLogs: Array.isArray(row.whatsapp_logs) ? row.whatsapp_logs : [], createdAt: row.created_at, updatedAt: row.updated_at,
+          };
+          memoryOrders.push(order);
+        }
+      } catch (error: any) {
+        console.error('[Order Status] PostgreSQL lookup failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível carregar o pedido.' });
+      }
+    }
+    if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
+
+    if (user.role !== 'SUPER_ADMIN' && user.tenant_slug !== '*' && user.tenant_slug !== order.tenantSlug && user.tenant_id !== order.tenantId) {
       return res.status(403).json({ error: 'Acesso negado: você não tem permissão para alterar pedidos deste restaurante.' });
     }
-
-    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
+    const tenant = memoryTenants.find((item) => item.slug === order.tenantSlug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante do pedido não encontrado.' });
-    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
+    const transitions: Record<string, string[]> = {
+      received: ['confirmed', 'cancelled'],
+      confirmed: ['preparing', 'cancelled'],
+      preparing: ['ready', 'cancelled'],
+      ready: ['delivered', 'cancelled'],
+      delivered: [],
+      cancelled: [],
+    };
+    if (status === order.status) return res.json({ message: 'O pedido já está neste status.', data: order, notification: { dispatched: false } });
+    if (!transitions[order.status]?.includes(status)) return res.status(409).json({ error: 'Transição de status não permitida.' });
+
+    const previousStatus = order.status;
+    const currentTime = new Date().toISOString();
     order.status = status;
     order.updatedAt = currentTime;
-
-    // Build notification message text
-    const notificationText = buildStatusNotificationText(order, tenant, status);
-
-    // Append to order's internal WhatsApp audit trail
     if (!order.whatsAppLogs) order.whatsAppLogs = [];
-    const logItem = {
+    const notificationText = buildStatusNotificationText(order, tenant, status);
+    const logItem: any = {
       timestamp: currentTime,
       event: `order.status_${status}`,
-      detail: `Status alterado para "${status}". Mensagem WhatsApp despachada via Evolution API (${tenant.evolutionInstanceId || 'aladay'}).`,
+      detail: 'Notificação aguardando confirmação de envio pela Evolution API.',
       messageText: notificationText,
-      statusSent: status,
+      statusSent: 'pending',
     };
     order.whatsAppLogs.unshift(logItem);
 
-    // Record Outbox event
-    memoryOutboxEvents.push({
-      id: `evt_${Date.now()}`,
+    const outboxEvent: any = {
+      id: `evt_${crypto.randomBytes(16).toString('hex')}`,
       tenantId: order.tenantId,
       aggregateType: 'order',
       aggregateId: order.id,
-      eventType: `order.status_changed`,
+      eventType: 'order.status_changed',
       payload: { orderId: order.id, status, notificationText },
-      status: 'completed',
-      processedAt: new Date().toISOString(),
-    });
+      status: 'pending',
+      processedAt: null,
+    };
 
-    // Record to Webhook Logs inspector
+    if (pgPool) {
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          'UPDATE orders SET status = $1, updated_at = NOW(), whatsapp_logs = $2::jsonb WHERE id = $3 AND tenant_slug = $4;',
+          [status, JSON.stringify(order.whatsAppLogs), order.id, tenant.slug]
+        );
+        await client.query(
+          'INSERT INTO outbox_events (id, tenant_id, aggregate_type, aggregate_id, event_type, payload, status, processed_at) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NULL);',
+          [outboxEvent.id, outboxEvent.tenantId, outboxEvent.aggregateType, outboxEvent.aggregateId, outboxEvent.eventType, JSON.stringify(outboxEvent.payload), outboxEvent.status]
+        );
+        await client.query('COMMIT');
+      } catch (error: any) {
+        try { await client.query('ROLLBACK'); } catch { /* transaction already closed */ }
+        order.status = previousStatus;
+        order.whatsAppLogs.shift();
+        console.error('[Order Status] PostgreSQL transaction failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível persistir a atualização do pedido.' });
+      } finally {
+        client.release();
+      }
+    }
+
+    const instanceName = tenant.evolutionInstanceId || 'aladay';
+    const tenantEvolutionUrl = String((tenant as any).evolutionApiUrl || '');
+    const evolutionApiUrl = tenantEvolutionUrl && isSafeExternalHttpsUrl(tenantEvolutionUrl) ? tenantEvolutionUrl : (process.env.EVOLUTION_API_URL || '');
+    const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
+    let notificationDispatched = false;
+    if (evolutionApiUrl && evolutionApiKey && order.customerPhone) {
+      try {
+        const sendResponse = await fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${encodeURIComponent(instanceName)}`, {
+          method: 'POST',
+          headers: { apikey: evolutionApiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ number: order.customerPhone, text: notificationText, options: { delay: 1200, presence: 'composing', linkPreview: true } }),
+        });
+        notificationDispatched = sendResponse.ok;
+      } catch (error: any) {
+        console.warn('[Evolution API Notification] Send failed:', error?.message);
+      }
+    }
+
+    logItem.statusSent = notificationDispatched ? 'sent' : 'pending';
+    logItem.detail = notificationDispatched ? 'Mensagem aceita pela Evolution API.' : 'Mensagem pendente: Evolution API não configurada ou envio não confirmado.';
+    outboxEvent.status = notificationDispatched ? 'completed' : 'pending';
+    outboxEvent.processedAt = notificationDispatched ? new Date().toISOString() : null;
+    memoryOutboxEvents.push(outboxEvent);
+
     const webhookLogEntry = {
       id: `log_dispatch_${Date.now()}`,
       timestamp: currentTime,
       source: 'evolution',
       eventType: 'SEND_MESSAGE',
-      instance: tenant.evolutionInstanceId || 'aladay',
+      instance: instanceName,
       senderPhone: order.customerPhone,
       messageText: notificationText,
       direction: 'outbound',
-      status: 'success',
-      payloadSummary: `Status "${status}" despachado para WhatsApp de ${order.customerName} (${order.customerPhone})`,
-      fullPayload: {
-        number: order.customerPhone,
-        text: notificationText,
-        options: { delay: 1000, presence: 'composing', linkPreview: true },
-        orderId: order.id,
-        orderStatus: status,
-      },
+      status: notificationDispatched ? 'success' : 'pending',
+      payloadSummary: notificationDispatched ? `Mensagem aceita pela Evolution API para o pedido #${order.orderNumber}.` : `Envio pendente para o pedido #${order.orderNumber}.`,
+      fullPayload: { number: order.customerPhone, orderId: order.id, orderStatus: status },
     };
     memoryWebhookLogs.unshift(webhookLogEntry);
     if (memoryWebhookLogs.length > 60) memoryWebhookLogs.pop();
 
-    // Fire actual HTTP request to Evolution API if server is reachable (non-blocking)
-    const tenantEvolutionUrl = String((tenant as any).evolutionApiUrl || '');
-    const evolutionApiUrl = tenantEvolutionUrl && isSafeExternalHttpsUrl(tenantEvolutionUrl) ? tenantEvolutionUrl : (process.env.EVOLUTION_API_URL || '');
-    const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
-    const instanceName = tenant.evolutionInstanceId || 'aladay';
-
-    try {
-      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${encodeURIComponent(instanceName)}`, {
-        method: 'POST',
-        headers: {
-          apikey: evolutionApiKey,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          number: order.customerPhone,
-          text: notificationText,
-          options: {
-            delay: 1200,
-            presence: 'composing',
-            linkPreview: true,
-          },
-        }),
-      }).catch((err) => {
-        console.log(`[Evolution API Notification] Disparo assíncrono finalizado para ${order.customerPhone}:`, err.message);
-      });
-    } catch {
-      // Graceful fallback in simulator mode
+    if (pgPool) {
+      try {
+        await pgPool.query(
+          'UPDATE orders SET whatsapp_logs = $1::jsonb WHERE id = $2 AND tenant_slug = $3;',
+          [JSON.stringify(order.whatsAppLogs), order.id, tenant.slug]
+        );
+        if (notificationDispatched) await pgPool.query('UPDATE outbox_events SET status = $1, processed_at = NOW() WHERE id = $2;', ['completed', outboxEvent.id]);
+      } catch (error: any) {
+        console.warn('[Outbox] Could not update notification delivery state:', error?.message);
+      }
     }
 
     res.json({
-      message: `Status do pedido #${order.orderNumber} atualizado para "${status}". Notificação WhatsApp despachada!`,
+      message: notificationDispatched ? `Status do pedido #${order.orderNumber} atualizado e mensagem aceita pela Evolution API.` : `Status do pedido #${order.orderNumber} atualizado; notificação permanece pendente.`,
       data: order,
-      notification: {
-        dispatched: true,
-        instance: instanceName,
-        customerPhone: order.customerPhone,
-        customerName: order.customerName,
-        messageText: notificationText,
-        timestamp: currentTime,
-      },
+      notification: { dispatched: notificationDispatched, instance: instanceName, customerPhone: order.customerPhone, customerName: order.customerName, messageText: notificationText, timestamp: currentTime },
     });
   });
 
