@@ -3182,6 +3182,10 @@ async function startServer() {
     if (resolvedPhone.length < 10 || resolvedPhone.length > 15) return res.status(400).json({ error: 'Informe um telefone válido com DDD.' });
 
     const safeBillingType = billingType;
+    const existingSubscriptionForSlug = memoryAsaasSubscriptions[slug];
+    if (existingSubscriptionForSlug && (existingSubscriptionForSlug.status === 'ACTIVE' || existingSubscriptionForSlug.status === 'PENDING' || (existingSubscriptionForSlug.status === 'TRIAL' && new Date(existingSubscriptionForSlug.trialEndsAt || 0).getTime() > Date.now()))) {
+      return res.status(409).json({ error: 'Este restaurante já possui uma assinatura ativa, pendente ou um teste em andamento.' });
+    }
     let asaasCustomerId = '';
     let realAsaasSubscriptionId = '';
     let realInvoiceId = '';
@@ -3632,8 +3636,11 @@ async function startServer() {
     const subscription = memoryAsaasSubscriptions[slug];
     if (!subscription) return res.status(404).json({ error: 'Assinatura não encontrada.' });
 
-    if (asaasGatewayConfig.apiKey && subscription.id.startsWith('sub_')) {
-      await callAsaasApi(`/subscriptions/${subscription.id}`, { method: 'DELETE' });
+    if (asaasGatewayConfig.apiKey && subscription.id.startsWith('sub_') && !subscription.id.startsWith('sub_trial_')) {
+      const cancelResult = await callAsaasApi(`/subscriptions/${encodeURIComponent(subscription.id)}`, { method: 'DELETE' });
+      if (!cancelResult.ok) return res.status(502).json({ error: 'O Asaas não confirmou o cancelamento. A assinatura permanece inalterada.' });
+    } else if (process.env.NODE_ENV === 'production' && !subscription.id.startsWith('sub_trial_')) {
+      return res.status(503).json({ error: 'Gateway Asaas indisponível; não foi possível cancelar a assinatura com segurança.' });
     }
 
     subscription.status = 'CANCELLED';
@@ -3658,7 +3665,7 @@ async function startServer() {
     res.json({
       success: true,
       message: 'Assinatura cancelada no gateway Asaas.',
-      subscription,
+      subscription: toPublicSubscription(subscription),
     });
   });
 
@@ -3668,14 +3675,9 @@ async function startServer() {
     const subscription = memoryAsaasSubscriptions[slug];
     if (!subscription) return res.status(404).json({ error: 'Assinatura não encontrada.' });
 
-    subscription.status = 'ACTIVE';
-    const tenant = memoryTenants.find((t) => t.slug === slug);
-    if (tenant) tenant.subscriptionStatus = 'active';
-
-    res.json({
-      success: true,
-      message: 'Assinatura reativada com sucesso no Asaas!',
-      subscription,
+    return res.status(409).json({
+      success: false,
+      error: 'A reativação direta foi desativada. Para evitar liberar acesso sem pagamento confirmado, crie uma nova cobrança Pix e aguarde a confirmação oficial do Asaas.',
     });
   });
 
@@ -3830,6 +3832,7 @@ async function startServer() {
     };
 
     req.body = mockPayload;
+    req.headers['asaas-access-token'] = String(process.env.ASAAS_WEBHOOK_TOKEN || asaasGatewayConfig.webhookToken || '');
     await handleAsaasWebhook(req, res);
   });
 
