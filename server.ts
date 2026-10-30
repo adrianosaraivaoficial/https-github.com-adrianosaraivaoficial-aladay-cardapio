@@ -702,7 +702,7 @@ async function startServer() {
             await client.query(
               `INSERT INTO categories (id, tenant_id, tenant_slug, name, display_order)
                VALUES ($1, $2, $3, $4, $5)
-               ON CONFLICT (id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, tenant_slug = EXCLUDED.tenant_slug, name = EXCLUDED.name, display_order = EXCLUDED.display_order;`,
+               ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, display_order = EXCLUDED.display_order WHERE categories.tenant_id = EXCLUDED.tenant_id;`,
               [String(cat.id).slice(0, 80), tenant.id, tenant.slug, String(cat.name).trim().slice(0, 120), Number(cat.order) || 1]
             );
           }
@@ -716,8 +716,6 @@ async function startServer() {
               `INSERT INTO products (id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups, updated_at)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())
                ON CONFLICT (id) DO UPDATE SET
-                 tenant_id = EXCLUDED.tenant_id,
-                 tenant_slug = EXCLUDED.tenant_slug,
                  category_id = EXCLUDED.category_id,
                  name = EXCLUDED.name,
                  description = EXCLUDED.description,
@@ -726,7 +724,8 @@ async function startServer() {
                  is_available = EXCLUDED.is_available,
                  is_featured = EXCLUDED.is_featured,
                  option_groups = EXCLUDED.option_groups,
-                 updated_at = NOW();`,
+                 updated_at = NOW()
+               WHERE products.tenant_id = EXCLUDED.tenant_id;`,
               [
                 String(prod.id).slice(0, 80), tenant.id, tenant.slug,
                 String(prod.categoryId || 'cat_geral').slice(0, 80),
