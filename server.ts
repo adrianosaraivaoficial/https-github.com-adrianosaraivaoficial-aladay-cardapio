@@ -1821,7 +1821,11 @@ async function startServer() {
     if (!webhookSecret || !suppliedSecret || expectedBuffer.length !== suppliedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, suppliedBuffer)) {
       return res.status(401).json({ success: false, error: 'Webhook Evolution não autenticado.' });
     }
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(`evolution_webhook_${clientIp}`, 600, 60 * 1000)) return res.status(429).json({ success: false, error: 'Limite de eventos Evolution excedido.' });
     const { event, instance, data } = req.body || {};
+    const safeWebhookPayload = { ...(req.body || {}) };
+    for (const secretField of ['apikey', 'apiKey', 'token', 'authorization']) delete (safeWebhookPayload as any)[secretField];
     const allowedTenant = memoryTenants.find((tenant) => tenant.evolutionInstanceId === String(instance || '') || tenant.slug === String(instance || ''));
     if (!allowedTenant) return res.status(404).json({ success: false, error: 'Instância Evolution não reconhecida.' });
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -1844,7 +1848,7 @@ async function startServer() {
       direction: 'inbound',
       status: (fromMe || isGroup) ? 'filtered' : 'success',
       payloadSummary: fromMe ? 'Mensagem enviada por mim (ignorada pelo bot)' : isGroup ? 'Mensagem em grupo (ignorada pelo bot)' : `Mensagem válida recebida de ${customerPhone}`,
-      fullPayload: req.body,
+      fullPayload: safeWebhookPayload,
     };
 
     memoryWebhookLogs.unshift(newLog);
@@ -1862,9 +1866,11 @@ async function startServer() {
   // Bot Simulation & n8n Inbound Process Endpoint
   app.post('/api/v1/bot/simulate-message', requireSuperAdmin, (req: Request, res: Response) => {
     if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'Endpoint de simulação desativado em produção.' });
-    const { tenantSlug, customerPhone, messageText } = req.body;
+    const { tenantSlug, customerPhone, messageText } = req.body || {};
     const tenant = memoryTenants.find((t) => t.slug === tenantSlug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    const cleanPhone = String(customerPhone || '').replace(/\D/g, '');
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) return res.status(400).json({ error: 'Informe um telefone de teste válido.' });
 
     const cleanText = String(messageText || '').trim().toLowerCase();
     const isHumanRequest = cleanText === '2' || cleanText.includes('atendente') || cleanText.includes('humano');
@@ -1891,7 +1897,7 @@ async function startServer() {
       source: 'evolution',
       eventType: 'MESSAGES_UPSERT',
       instance: tenant.evolutionInstanceId,
-      senderPhone: customerPhone || '',
+      senderPhone: cleanPhone,
       messageText,
       direction: 'inbound',
       status: 'success',
@@ -1919,7 +1925,7 @@ async function startServer() {
 
     res.json({
       success: true,
-      sender: customerPhone || '',
+      sender: cleanPhone,
       receivedText: messageText,
       replyMessage,
       actionType,
