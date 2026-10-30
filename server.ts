@@ -1080,9 +1080,29 @@ async function startServer() {
   }
 
   // CREATE DYNAMIC PIX CHARGE — only for an existing server-side order.
-  app.post('/api/v1/pix/charges', (req: Request, res: Response) => {
+  app.post('/api/v1/pix/charges', async (req: Request, res: Response) => {
     const { orderId, amountCents, tenantSlug } = req.body || {};
-    const order = memoryOrders.find((o) => o.id === String(orderId || ''));
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ success: false, error: 'PostgreSQL obrigatório para gerar cobranças em produção.' });
+
+    let order: any = memoryOrders.find((item) => item.id === String(orderId || ''));
+    if (!order && pgPool) {
+      try {
+        const result = await pgPool.query('SELECT * FROM orders WHERE id = $1 LIMIT 1;', [String(orderId || '')]);
+        const row = result.rows[0];
+        if (row) {
+          order = {
+            id: String(row.id), orderNumber: Number(row.order_number), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+            customerName: String(row.customer_name), customerPhone: String(row.customer_phone), type: String(row.order_type),
+            items: Array.isArray(row.items) ? row.items : [], subtotalCents: Number(row.subtotal_cents),
+            deliveryFeeCents: Number(row.delivery_fee_cents), totalCents: Number(row.total_cents), status: String(row.status),
+            paymentStatus: String(row.payment_status || 'pending'), paymentMethod: String(row.payment_method || 'Pix'),
+          };
+          memoryOrders.push(order);
+        }
+      } catch (error: any) {
+        return res.status(503).json({ success: false, error: 'Não foi possível consultar o pedido no banco de dados.' });
+      }
+    }
     if (!order) return res.status(404).json({ success: false, error: 'Pedido não encontrado para gerar a cobrança.' });
     if (String(order.tenantSlug) !== String(tenantSlug || '')) return res.status(403).json({ success: false, error: 'Pedido não pertence ao restaurante informado.' });
 
@@ -1090,8 +1110,7 @@ async function startServer() {
     if (!Number.isSafeInteger(amount) || amount <= 0 || amount !== Number(order.totalCents)) {
       return res.status(400).json({ success: false, error: 'O valor da cobrança deve corresponder exatamente ao total do pedido.' });
     }
-
-    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
+    const tenant = memoryTenants.find((item) => item.slug === order.tenantSlug);
     if (!tenant) return res.status(404).json({ success: false, error: 'Restaurante do pedido não encontrado.' });
     const pixKey = String((tenant as any).pixConfig?.pixKey || '').trim();
     if (!pixKey) return res.status(409).json({ success: false, error: 'O restaurante ainda não configurou sua chave Pix.' });
@@ -1104,23 +1123,37 @@ async function startServer() {
     const pixCopiaECola = generatePixPayload({ pixKey, merchantName, merchantCity, amountCents: amount, txid });
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
     const newCharge = {
-      txid,
-      orderId: order.id,
-      tenantSlug: tenant.slug,
-      amountCents: amount,
-      pixCopiaECola,
-      status: 'PENDING',
-      expiresAt,
-      psp: (tenant as any).pixConfig?.provider || 'direct_bank',
-      customerName: order.customerName,
-      customerPhone: order.customerPhone,
-      createdAt: new Date().toISOString(),
+      txid, orderId: order.id, tenantSlug: tenant.slug, amountCents: amount, pixCopiaECola,
+      status: 'PENDING', expiresAt, psp: (tenant as any).pixConfig?.provider || 'direct_bank',
+      customerName: order.customerName, customerPhone: order.customerPhone, createdAt: new Date().toISOString(),
     };
+
+    if (pgPool) {
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `INSERT INTO pix_transactions (txid, order_id, tenant_slug, amount_cents, pix_copia_e_cola, status, psp, customer_name, customer_phone, expires_at)
+           VALUES ($1,$2,$3,$4,$5,'PENDING',$6,$7,$8,$9);`,
+          [txid, order.id, tenant.slug, amount, pixCopiaECola, newCharge.psp, order.customerName, order.customerPhone, expiresAt]
+        );
+        await client.query(
+          'UPDATE orders SET pix_transaction=$1::jsonb, payment_method=$2 WHERE id=$3 AND tenant_slug=$4;',
+          [JSON.stringify(newCharge), 'Pix Direto Restaurante', order.id, tenant.slug]
+        );
+        await client.query('COMMIT');
+      } catch (error: any) {
+        try { await client.query('ROLLBACK'); } catch { /* transaction already closed */ }
+        console.error('[Pix Charge] PostgreSQL transaction failed:', error?.message);
+        return res.status(503).json({ success: false, error: 'Não foi possível registrar a cobrança Pix.' });
+      } finally {
+        client.release();
+      }
+    }
 
     memoryPixTransactions.unshift(newCharge);
     order.pixTransaction = newCharge;
     order.paymentMethod = 'Pix Direto Restaurante';
-
     res.status(201).json({
       success: true,
       message: 'Cobrança Pix gerada para o pedido.',
@@ -1129,17 +1162,21 @@ async function startServer() {
   });
 
   // Public polling endpoint exposes payment state only, never customer/order details.
-  app.get('/api/v1/pix/:txid/status', (req: Request, res: Response) => {
+  app.get('/api/v1/pix/:txid/status', async (req: Request, res: Response) => {
     const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
     if (!checkRateLimit(`pix_status_${clientIp}`, 60, 60 * 1000)) return res.status(429).json({ error: 'Muitas consultas. Tente novamente em instantes.' });
-    const charge = memoryPixTransactions.find((c) => c.txid === req.params.txid);
-    if (!charge) return res.status(404).json({ error: 'Cobrança Pix não encontrada.' });
-    res.json({
-      txid: charge.txid,
-      status: charge.status,
-      paidAt: charge.paidAt,
-      expiresAt: charge.expiresAt,
-    });
+    let charge: any = memoryPixTransactions.find((item) => item.txid === req.params.txid);
+    if (!charge && pgPool) {
+      try {
+        const result = await pgPool.query('SELECT txid, status, paid_at, expires_at FROM pix_transactions WHERE txid = $1 LIMIT 1;', [req.params.txid]);
+        const row = result.rows[0];
+        if (row) charge = { txid: row.txid, status: row.status, paidAt: row.paid_at, expiresAt: row.expires_at };
+      } catch (error: any) {
+        return res.status(503).json({ error: 'Não foi possível consultar o pagamento.' });
+      }
+    }
+    if (!charge) return res.status(process.env.NODE_ENV === 'production' && !pgPool ? 503 : 404).json({ error: 'Cobrança Pix não encontrada.' });
+    return res.json({ txid: charge.txid, status: charge.status, paidAt: charge.paidAt, expiresAt: charge.expiresAt });
   });
 
   // OFFICIAL WEBHOOK RECEIVER FOR RESTAURANT DIRECT PIX ORDERS
