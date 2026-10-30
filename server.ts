@@ -2058,17 +2058,32 @@ async function startServer() {
     return res.json({ data: memoryCategories.filter((category: any) => category.tenantSlug === tenant.slug) });
   });
 
-  app.post('/api/v1/tenants/:slug/categories', requireTenantAccess('slug'), (req: Request, res: Response) => {
-    const { name } = req.body;
-    if (!name) return res.status(400).json({ error: 'Nome da categoria é obrigatório.' });
+  app.post('/api/v1/tenants/:slug/categories', requireTenantAccess('slug'), async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    const name = String(req.body?.name || '').trim();
+    if (name.length < 2 || name.length > 120) return res.status(400).json({ error: 'Nome da categoria deve ter de 2 a 120 caracteres.' });
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ error: 'PostgreSQL obrigatório para criar categorias em produção.' });
 
     const newCat = {
-      id: `cat_${Date.now()}`,
-      tenantSlug: req.params.slug,
-      name: String(name).trim(),
-      order: memoryCategories.filter((c) => c.tenantSlug === req.params.slug).length + 1,
+      id: `cat_${crypto.randomBytes(12).toString('hex')}`,
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      name,
+      order: memoryCategories.filter((category: any) => category.tenantSlug === tenant.slug).length + 1,
     };
-    memoryCategories.push(newCat);
+    if (pgPool) {
+      try {
+        await pgPool.query(
+          'INSERT INTO categories (id, tenant_id, tenant_slug, name, display_order) VALUES ($1, $2, $3, $4, $5);',
+          [newCat.id, newCat.tenantId, newCat.tenantSlug, newCat.name, newCat.order]
+        );
+      } catch (error: any) {
+        console.error('[Category Create] PostgreSQL insert failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível persistir a categoria.' });
+      }
+    }
+    memoryCategories.push(newCat as any);
     res.status(201).json({ message: 'Categoria criada!', data: newCat });
   });
 
