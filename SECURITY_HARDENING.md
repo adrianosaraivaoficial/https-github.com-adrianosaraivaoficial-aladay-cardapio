@@ -12,6 +12,7 @@
 - Pix webhook checks its shared token, order/tenant/amount, expiry and EndToEndId. This is a shared-secret integration, not cryptographic verification with a bank/provider signature.
 - Asaas webhook fails closed without its token, matches known subscriptions, and checks the expected amount. Client-side payment confirmation now verifies the payment against the Asaas API.
 - Trial activation no longer creates a fake Pix payload, fake invoice URL or fake Asaas customer. It records a 15-day trial only; it does **not** automatically create or charge a recurring subscription.
+- The onboarding flow now binds the temporary trial/paid subscription to the newly created restaurant using a one-time random binding token.
 - Public tracking omits customer phone, delivery address and internal logs. Sensitive order reads and admin/integration routes require authentication.
 - Checkout prices and option prices are calculated from the server-side tenant catalog; browser-submitted prices are not accepted.
 - Compose no longer contains fallback credentials and exposes the app only to its internal network by default.
@@ -43,7 +44,7 @@ Configure these only in the deployment environment (EasyPanel), never in Git:
 
 - Users, products, categories, orders, OTP state, trial/subscription records and rate limits still rely in part on process memory. Restarting the service or running multiple replicas can lose or split state.
 - The current database initialization does not fully hydrate/persist every domain entity. Product catalog persistence and order/payment atomicity need a separate implementation.
-- Tenant creation and public trial onboarding still need a one-time signed onboarding token to prevent a third party from claiming a newly created tenant before its owner.
+- The one-time onboarding binding token is held in process memory and is lost on restart. Signup must be restarted if the server restarts between payment/trial activation and restaurant creation. The onboarding process also needs durable token storage and end-to-end ownership tests.
 - Tenant isolation has not been exhaustively audited across every API route and every SQL query. PostgreSQL row-level security, tenant-scoped foreign keys and comprehensive RBAC tests are still outstanding.
 - Webhook authentication uses shared secrets; provider-native signatures and replay/idempotency validation must be implemented and tested where supported.
 - No production deploy or database migration was performed by this PR.
