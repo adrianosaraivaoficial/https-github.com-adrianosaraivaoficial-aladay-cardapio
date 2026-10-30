@@ -1758,9 +1758,42 @@ async function startServer() {
   });
 
   // GET Products for Tenant (Multi-tenant scoped)
-  app.get('/api/v1/tenants/:slug/products', (req: Request, res: Response) => {
-    const tenantProducts = memoryProducts.filter((p) => p.tenantSlug === req.params.slug);
-    res.json({ data: tenantProducts });
+  app.get('/api/v1/tenants/:slug/products', async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    if (pgPool) {
+      try {
+        const result = await pgPool.query(
+          `SELECT id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups
+           FROM products WHERE tenant_slug = $1 ORDER BY updated_at DESC;`,
+          [tenant.slug]
+        );
+        const tenantProducts = result.rows.map((row: any) => ({
+          id: String(row.id),
+          tenantId: String(row.tenant_id),
+          tenantSlug: String(row.tenant_slug),
+          categoryId: String(row.category_id),
+          name: String(row.name),
+          description: String(row.description || ''),
+          priceCents: Number(row.price_cents),
+          imageUrl: row.image_url || undefined,
+          isAvailable: row.is_available !== false,
+          isFeatured: row.is_featured === true,
+          optionGroups: Array.isArray(row.option_groups) ? row.option_groups : (typeof row.option_groups === 'string' ? JSON.parse(row.option_groups) : []),
+        }));
+        for (let index = memoryProducts.length - 1; index >= 0; index--) {
+          if (memoryProducts[index].tenantSlug === tenant.slug) memoryProducts.splice(index, 1);
+        }
+        memoryProducts.push(...tenantProducts);
+        return res.json({ data: tenantProducts });
+      } catch (error: any) {
+        console.error('[Catalog Read] PostgreSQL query failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível carregar o cardápio persistido.' });
+      }
+    }
+    if (process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'Banco de dados obrigatório para carregar cardápio em produção.' });
+    const tenantProducts = memoryProducts.filter((product) => product.tenantSlug === tenant.slug);
+    return res.json({ data: tenantProducts });
   });
 
   // CREATE Product for Tenant
