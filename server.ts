@@ -3106,9 +3106,8 @@ async function startServer() {
 
     const tenant = memoryTenants.find((t) => t.slug === slug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
-    if (!['PIX', 'CREDIT_CARD', 'BOLETO'].includes(billingType)) return res.status(400).json({ error: 'Forma de pagamento inválida.' });
+    if (billingType !== 'PIX') return res.status(400).json({ error: 'No momento, somente Pix está habilitado para assinatura. Boleto e cartão permanecem desativados até validação específica.' });
     if (process.env.NODE_ENV === 'production' && !asaasGatewayConfig.apiKey) return res.status(503).json({ error: 'Gateway Asaas não configurado. A cobrança não pode ser criada em produção.' });
-    if (billingType === 'CREDIT_CARD') return res.status(400).json({ error: 'Pagamento com cartão temporariamente indisponível até coletarmos e validarmos os dados completos de cobrança.' });
 
     const resolvedName = String(customerName || '').trim();
     const resolvedEmail = String(customerEmail || '').trim().toLowerCase();
@@ -3207,41 +3206,9 @@ async function startServer() {
         if (firstPayment?.id) {
           realInvoiceId = firstPayment.id;
           if (firstPayment.invoiceUrl) realInvoiceUrl = firstPayment.invoiceUrl;
-        }
-      }
+          isRealGatewayCharged = ['RECEIVED', 'CONFIRMED'].includes(firstPayment.status);
 
-      // 3. Handle PIX with real Asaas QR code generation
-      else if (safeBillingType === 'PIX') {
-        const subRes = await callAsaasApi('/subscriptions', {
-          method: 'POST',
-          body: {
-            customer: asaasCustomerId,
-            billingType: 'PIX',
-            value: 129.9,
-            nextDueDate,
-            cycle: 'MONTHLY',
-            description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90/mês',
-          },
-        });
-
-        if (!subRes.ok || !subRes.data?.id) {
-          const asaasErrors = subRes.data?.errors?.map((e: any) => e.description).join('; ') || subRes.error || 'Erro ao gerar assinatura Pix no Asaas.';
-          return res.status(400).json({
-            error: `Falha ao criar assinatura Pix no Asaas: ${asaasErrors}`,
-          });
-        }
-
-        realAsaasSubscriptionId = subRes.data.id;
-
-        // Fetch first payment of subscription
-        const paymentsRes = await callAsaasApi(`/subscriptions/${realAsaasSubscriptionId}/payments`);
-        const firstPayment = paymentsRes.data?.data?.[0];
-        if (firstPayment?.id) {
-          realInvoiceId = firstPayment.id;
-          if (firstPayment.invoiceUrl) realInvoiceUrl = firstPayment.invoiceUrl;
-
-          // Request real Pix QR Code from Asaas
-          const qrRes = await callAsaasApi(`/payments/${firstPayment.id}/pixQrCode`);
+          const qrRes = await callAsaasApi(`/payments/${encodeURIComponent(firstPayment.id)}/pixQrCode`);
           if (qrRes.ok && qrRes.data) {
             if (qrRes.data.payload) realPixPayload = qrRes.data.payload;
             if (qrRes.data.encodedImage) realPixBase64 = `data:image/png;base64,${qrRes.data.encodedImage}`;
@@ -3250,6 +3217,11 @@ async function startServer() {
       }
     } else {
       console.log(`[Asaas] Aviso: Gateway sem chave de API configurada (Modo de Demonstração / Testes).`);
+    }
+
+    if (asaasGatewayConfig.apiKey && (!realAsaasSubscriptionId || !realInvoiceId || !realPixPayload)) {
+      if (realAsaasSubscriptionId) await callAsaasApi(`/subscriptions/${encodeURIComponent(realAsaasSubscriptionId)}`, { method: 'DELETE' });
+      return res.status(502).json({ error: 'O Asaas não retornou uma cobrança Pix válida. A assinatura não foi ativada; verifique o painel Asaas antes de tentar novamente.' });
     }
 
     // Build or update in-memory record
