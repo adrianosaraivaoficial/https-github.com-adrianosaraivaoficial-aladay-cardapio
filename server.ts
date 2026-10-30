@@ -468,7 +468,7 @@ async function startServer() {
   });
 
   const toPublicTenant = (tenant: InMemTenant) => {
-    const { evolutionApiKey, evolutionApiUrl, ...safeTenant } = tenant as any;
+    const { evolutionApiKey, evolutionApiUrl, n8nWebhookUrl, ...safeTenant } = tenant as any;
     return safeTenant;
   };
   app.get('/api/v1/tenants', (_req: Request, res: Response) => {
@@ -1771,7 +1771,7 @@ async function startServer() {
     if (typeof minOrderCents === 'number') tenant.minOrderCents = minOrderCents;
     if (Array.isArray(deliveryZones)) tenant.deliveryZones = deliveryZones;
 
-    res.json({ message: 'Configurações atualizadas com sucesso!', data: tenant });
+    res.json({ message: 'Configurações atualizadas com sucesso!', data: toPublicTenant(tenant) });
   });
 
   // GET Products for Tenant (Multi-tenant scoped)
@@ -2898,7 +2898,7 @@ async function startServer() {
       tenant: {
         slug: tenant.slug,
         evolutionInstanceId: tenant.evolutionInstanceId,
-        evolutionApiUrl: (tenant as any).evolutionApiUrl,
+        evolutionApiUrlConfigured: Boolean((tenant as any).evolutionApiUrl),
         evolutionApiKeyConfigured: Boolean((tenant as any).evolutionApiKey),
       },
     });
@@ -3084,8 +3084,6 @@ async function startServer() {
         environment: asaasGatewayConfig.environment,
         apiUrl: asaasGatewayConfig.environment === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/v3',
         webhookUrl: asaasGatewayConfig.webhookUrl,
-        apiKeyMasked: asaasGatewayConfig.apiKey ? `${asaasGatewayConfig.apiKey.substring(0, 10)}...${asaasGatewayConfig.apiKey.slice(-6)}` : '',
-        webhookTokenMasked: asaasGatewayConfig.webhookToken ? `tok_***${asaasGatewayConfig.webhookToken.slice(-4)}` : '',
         configured: Boolean(asaasGatewayConfig.apiKey),
       },
     });
