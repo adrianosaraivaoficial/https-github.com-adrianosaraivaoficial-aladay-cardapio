@@ -2047,11 +2047,12 @@ async function startServer() {
     };
     if (pgPool) {
       try {
-        await pgPool.query(
+        const updateResult = await pgPool.query(
           `UPDATE products SET category_id=$1, name=$2, description=$3, price_cents=$4, image_url=$5, is_available=$6, option_groups=$7::jsonb, updated_at=NOW()
            WHERE id=$8 AND tenant_slug=$9;`,
           [updated.categoryId, updated.name, updated.description, updated.priceCents, updated.imageUrl || null, updated.isAvailable, JSON.stringify(updated.optionGroups), updated.id, tenant.slug]
         );
+        if (updateResult.rowCount === 0) return res.status(404).json({ error: 'Produto não encontrado no banco de dados deste restaurante.' });
       } catch (error: any) {
         console.error('[Product Update] PostgreSQL update failed:', error?.message);
         return res.status(503).json({ error: 'Não foi possível persistir a atualização do produto.' });
@@ -2078,7 +2079,8 @@ async function startServer() {
     const nextAvailability = !prod.isAvailable;
     if (pgPool) {
       try {
-        await pgPool.query('UPDATE products SET is_available=$1, updated_at=NOW() WHERE id=$2 AND tenant_slug=$3;', [nextAvailability, prod.id, tenant.slug]);
+        const updateResult = await pgPool.query('UPDATE products SET is_available=$1, updated_at=NOW() WHERE id=$2 AND tenant_slug=$3;', [nextAvailability, prod.id, tenant.slug]);
+        if (updateResult.rowCount === 0) return res.status(404).json({ error: 'Produto não encontrado no banco de dados deste restaurante.' });
       } catch (error: any) {
         return res.status(503).json({ error: 'Não foi possível persistir a disponibilidade do produto.' });
       }
@@ -2091,18 +2093,21 @@ async function startServer() {
   app.delete('/api/v1/tenants/:slug/products/:id', requireTenantAccess('slug'), async (req: Request, res: Response) => {
     const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    const idx = memoryProducts.findIndex((item) => item.tenantSlug === tenant.slug && item.id === req.params.id);
+    let deleted: any = idx >= 0 ? memoryProducts[idx] : undefined;
     if (pgPool) {
       try {
-        await pgPool.query('DELETE FROM products WHERE id=$1 AND tenant_slug=$2;', [req.params.id, tenant.slug]);
+        const deleteResult = await pgPool.query('DELETE FROM products WHERE id=$1 AND tenant_slug=$2 RETURNING id, name;', [req.params.id, tenant.slug]);
+        if (deleteResult.rowCount === 0 && idx === -1) return res.status(404).json({ error: 'Produto não encontrado.' });
+        if (!deleted && deleteResult.rows[0]) deleted = { id: deleteResult.rows[0].id, name: deleteResult.rows[0].name };
       } catch (error: any) {
         return res.status(503).json({ error: 'Não foi possível remover o produto do banco de dados.' });
       }
     } else if (process.env.NODE_ENV === 'production') {
       return res.status(503).json({ error: 'PostgreSQL obrigatório para remover produtos em produção.' });
     }
-    const idx = memoryProducts.findIndex((item) => item.tenantSlug === tenant.slug && item.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ error: 'Produto não encontrado.' });
-    const [deleted] = memoryProducts.splice(idx, 1);
+    if (idx >= 0) memoryProducts.splice(idx, 1);
+    if (!deleted) return res.status(404).json({ error: 'Produto não encontrado.' });
     res.json({ message: 'Produto removido do cardápio.', data: deleted });
   });
 
