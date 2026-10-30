@@ -423,6 +423,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
               tenantId: tenantData.id,
               tenantSlug: tenantData.slug,
               tenantName: tenantData.name,
+              registrationToken: (boundSubscription as any)?.ownerRegistrationToken,
             }),
           });
           if (authRes.ok) {
