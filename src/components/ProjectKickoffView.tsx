@@ -884,30 +884,14 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                         <span>Pix Imediato</span>
                       </button>
 
-                      <button
-                        type="button"
-                        onClick={() => setBillingType('CREDIT_CARD')}
-                        className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
-                          billingType === 'CREDIT_CARD'
-                            ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
-                            : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
-                        }`}
-                      >
-                        <CreditCard className="w-4 h-4 text-emerald-600" />
-                        <span>Cartão de Crédito</span>
+                      <button type="button" disabled className="p-3 rounded-xl border border-neutral-200 bg-neutral-50 text-neutral-400 text-xs font-semibold flex flex-col items-center gap-1.5 cursor-not-allowed">
+                        <CreditCard className="w-4 h-4" />
+                        <span>Cartão (em breve)</span>
                       </button>
 
-                      <button
-                        type="button"
-                        onClick={() => setBillingType('BOLETO')}
-                        className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
-                          billingType === 'BOLETO'
-                            ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
-                            : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
-                        }`}
-                      >
-                        <FileText className="w-4 h-4 text-emerald-600" />
-                        <span>Boleto Asaas</span>
+                      <button type="button" disabled className="p-3 rounded-xl border border-neutral-200 bg-neutral-50 text-neutral-400 text-xs font-semibold flex flex-col items-center gap-1.5 cursor-not-allowed">
+                        <FileText className="w-4 h-4" />
+                        <span>Boleto (em breve)</span>
                       </button>
                     </div>
 
