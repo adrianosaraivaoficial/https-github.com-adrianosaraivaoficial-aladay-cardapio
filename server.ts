@@ -2225,7 +2225,7 @@ async function startServer() {
 
   // POST /api/v1/auth/register-tenant-owner (Registra o lojista assinante após ativação do plano e criação do restaurante)
   app.post('/api/v1/auth/register-tenant-owner', (req: Request, res: Response) => {
-    const { name, email, password, phone, tenantId, tenantSlug, tenantName } = req.body;
+    const { name, email, password, phone, tenantId, tenantSlug, tenantName, registrationToken } = req.body || {};
     const cleanEmail = String(email || '').trim().toLowerCase();
     if (!cleanEmail || !password || !tenantSlug) {
       return res.status(400).json({
