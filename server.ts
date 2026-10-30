@@ -1462,7 +1462,7 @@ async function startServer() {
   });
 
   // PUT Tenant Pix Config (Protected by Tenant JWT Guard)
-  app.put('/api/v1/tenants/:slug/pix-config', requireTenantAccess('slug'), (req: Request, res: Response) => {
+  app.put('/api/v1/tenants/:slug/pix-config', requireTenantAccess('slug'), async (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
 
@@ -1476,7 +1476,8 @@ async function startServer() {
     if (cleanMerchantCity.length < 2 || cleanMerchantCity.length > 15) return res.status(400).json({ error: 'Cidade do recebedor deve ter de 2 a 15 caracteres.' });
     if (autoApproveWebhook === true && !process.env.PIX_WEBHOOK_TOKEN) return res.status(503).json({ error: 'Configure PIX_WEBHOOK_TOKEN antes de habilitar confirmação automática.' });
 
-    tenant.pixConfig = {
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ error: 'PostgreSQL obrigatório para salvar a configuração Pix em produção.' });
+    const updatedPixConfig = {
       ...(tenant.pixConfig || {}),
       provider: provider || 'direct_bank',
       pixKey: cleanPixKey,
@@ -1486,6 +1487,16 @@ async function startServer() {
       autoApproveWebhook: autoApproveWebhook === true,
       updatedAt: new Date().toISOString(),
     };
+    if (pgPool) {
+      try {
+        const result = await pgPool.query('UPDATE tenants SET pix_config=$1::jsonb, updated_at=NOW() WHERE slug=$2;', [JSON.stringify(updatedPixConfig), tenant.slug]);
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Restaurante não encontrado no banco de dados.' });
+      } catch (error: any) {
+        console.error('[Pix Config] PostgreSQL update failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível persistir a configuração Pix.' });
+      }
+    }
+    tenant.pixConfig = updatedPixConfig;
 
     res.json({
       success: true,
