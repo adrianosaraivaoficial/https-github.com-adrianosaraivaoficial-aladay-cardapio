@@ -1152,6 +1152,19 @@ async function startServer() {
       const client = await pgPool.connect();
       try {
         await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1));', [order.id]);
+        const paidCheck = await client.query("SELECT txid FROM pix_transactions WHERE order_id=$1 AND tenant_slug=$2 AND status='PAID' LIMIT 1;", [order.id, tenant.slug]);
+        if (paidCheck.rows[0]) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ success: false, error: 'Este pedido já possui um pagamento Pix confirmado.' });
+        }
+        const pendingCheck = await client.query("SELECT txid, amount_cents, pix_copia_e_cola, status, expires_at FROM pix_transactions WHERE order_id=$1 AND tenant_slug=$2 AND status='PENDING' AND expires_at>NOW() ORDER BY created_at DESC LIMIT 1 FOR UPDATE;", [order.id, tenant.slug]);
+        if (pendingCheck.rows[0]) {
+          await client.query('ROLLBACK');
+          const row = pendingCheck.rows[0];
+          return res.json({ success: true, message: 'Já existe uma cobrança Pix pendente para este pedido.', data: { txid: row.txid, orderId: order.id, amountCents: Number(row.amount_cents), pixCopiaECola: row.pix_copia_e_cola, status: row.status, expiresAt: row.expires_at } });
+        }
+        await client.query("UPDATE pix_transactions SET status='EXPIRED' WHERE order_id=$1 AND tenant_slug=$2 AND status='PENDING' AND expires_at<=NOW();", [order.id, tenant.slug]);
         await client.query(
           `INSERT INTO pix_transactions (txid, order_id, tenant_slug, amount_cents, pix_copia_e_cola, status, psp, customer_name, customer_phone, expires_at)
            VALUES ($1,$2,$3,$4,$5,'PENDING',$6,$7,$8,$9);`,
