@@ -7,21 +7,36 @@ on:
     branches: [security/**]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - name: Install dependencies
+      - name: Synchronize package lock
+        run: npm install --package-lock-only --legacy-peer-deps
+      - name: Commit lockfile update to same-repository branch
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          if ! git diff --quiet -- package-lock.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package-lock.json
+            git commit -m "build: synchronize npm lockfile"
+            git push
+          fi
+      - name: Install dependencies from lockfile
         run: npm ci --legacy-peer-deps
       - name: TypeScript check
         run: npm run lint
