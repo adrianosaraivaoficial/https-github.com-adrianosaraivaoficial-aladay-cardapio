@@ -157,31 +157,6 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
     }
   };
 
-  // Simulate Asaas Webhook
-  const handleSimulateWebhook = async (eventType: 'PAYMENT_RECEIVED' | 'PAYMENT_OVERDUE') => {
-    try {
-      const res = await fetch('/api/v1/asaas/simulate-webhook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          eventType,
-          tenantSlug: tenant.slug,
-        }),
-      });
-      if (res.ok) {
-        showToast(
-          eventType === 'PAYMENT_RECEIVED' ? 'success' : 'error',
-          eventType === 'PAYMENT_RECEIVED'
-            ? 'Webhook Asaas: PAYMENT_RECEIVED recebido! Mensalidade de R$ 129,90 liquidada e plano renovado.'
-            : 'Webhook Asaas: PAYMENT_OVERDUE recebido! Status alterado para Em Atraso.'
-        );
-        fetchSubscription();
-      }
-    } catch {
-      showToast('error', 'Falha ao acionar simulação de webhook.');
-    }
-  };
-
   // Save Gateway Credentials
   const handleSaveGatewayConfig = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -660,30 +635,11 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                     1. Copie o código acima ou escaneie o QR Code no aplicativo do seu banco.
                   </p>
                   <p className="text-[11px] leading-relaxed">
-                    2. Ao confirmar o pagamento de <strong>R$ 129,90</strong>, o Asaas envia um webhook para o Aladay em até 3 segundos liberando o próximo mês da sua licença.
+                    2. Após a confirmação do pagamento pelo Asaas, o webhook atualiza a situação da assinatura. O prazo depende do provedor e da compensação bancária.
                   </p>
                 </div>
 
-                {/* Sandbox / Testing Buttons */}
-                <div className="pt-2 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleSimulateWebhook('PAYMENT_RECEIVED')}
-                    className="px-3 py-2 text-xs font-semibold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-lg flex items-center gap-1.5 transition-colors"
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
-                    <span>Simular Pagamento no Asaas (Webhook PAYMENT_RECEIVED)</span>
-                  </button>
 
-                  <button
-                    type="button"
-                    onClick={() => handleSimulateWebhook('PAYMENT_OVERDUE')}
-                    className="px-3 py-2 text-xs font-semibold text-red-800 bg-red-100 hover:bg-red-200 border border-red-300 rounded-lg flex items-center gap-1.5 transition-colors"
-                  >
-                    <AlertTriangle className="w-3.5 h-3.5 text-red-700" />
-                    <span>Simular Atraso (PAYMENT_OVERDUE)</span>
-                  </button>
-                </div>
               </div>
             </div>
           </div>
