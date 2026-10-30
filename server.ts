@@ -1065,24 +1065,28 @@ async function startServer() {
   // OFFICIAL WEBHOOK RECEIVER FOR GATEWAY NACIONAL ASAAS (EXCLUSIVO ASSINATURAS SAAS R$ 129,90/MÊS)
   const handleAsaasSubscriptionWebhook = async (req: Request, res: Response) => {
     // SECURITY: Validate Asaas Access Token Header
-    const receivedToken = (req.headers['asaas-access-token'] as string) || '';
-    const configuredToken = process.env.ASAAS_WEBHOOK_TOKEN || asaasGatewayConfig.webhookToken;
-    if (configuredToken && receivedToken !== configuredToken) {
-      console.warn(`[Segurança Asaas] Tentativa de webhook rejeitada por token inválido ou ausente.`);
+    const receivedToken = String(req.headers['asaas-access-token'] || '');
+    const configuredToken = String(process.env.ASAAS_WEBHOOK_TOKEN || asaasGatewayConfig.webhookToken || '');
+    const expectedTokenBuffer = Buffer.from(configuredToken);
+    const receivedTokenBuffer = Buffer.from(receivedToken);
+    if (!configuredToken || !receivedToken || expectedTokenBuffer.length !== receivedTokenBuffer.length || !crypto.timingSafeEqual(expectedTokenBuffer, receivedTokenBuffer)) {
+      console.warn('[Segurança Asaas] Webhook rejeitado: token ausente ou inválido.');
       return res.status(401).json({ error: 'Acesso não autorizado: token de webhook Asaas inválido.' });
     }
 
-    const { event, payment, subscription } = req.body;
+    const { event, payment, subscription } = req.body || {};
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-    console.log(`[Asaas SaaS Billing aladay.com.br] Evento de assinatura recebido: ${event}`);
-
     if (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED') {
-      const tenantSlug = payment?.externalReference || subscription?.externalReference || 'aladay';
-      const paymentId = payment?.id || `pay_asaas_${Date.now()}`;
-      const amountReais = payment?.value || 129.9;
+      const tenantSlug = String(payment?.externalReference || subscription?.externalReference || '');
+      const paymentId = String(payment?.id || '');
+      const amountReais = Number(payment?.value);
+      if (!tenantSlug || !paymentId || !Number.isFinite(amountReais) || Math.abs(amountReais - 129.9) > 0.001) {
+        return res.status(400).json({ error: 'Evento Asaas sem referência, identificador ou valor esperado da assinatura.' });
+      }
 
-      const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.id === tenantSlug) || memoryTenants[0];
+      const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.id === tenantSlug);
+      if (!tenant) return res.status(404).json({ error: 'Restaurante associado ao pagamento não encontrado.' });
       tenant.subscriptionStatus = 'active';
 
       memoryWebhookLogs.unshift({
@@ -3572,17 +3576,19 @@ async function startServer() {
 
     const pendingInvoice = subscription.invoices.find((i) => i.status === 'PENDING') || subscription.invoices[0];
 
-    // If real Asaas is configured, STRICTLY VERIFY WITH ASAAS API! Do NOT allow bypassing!
-    if (asaasGatewayConfig.apiKey && pendingInvoice?.id?.startsWith('pay_')) {
-      const checkRes = await callAsaasApi(`/payments/${pendingInvoice.id}`);
-      if (checkRes.ok && checkRes.data) {
-        const asaasStatus = checkRes.data.status;
-        if (asaasStatus !== 'RECEIVED' && asaasStatus !== 'CONFIRMED') {
-          return res.status(400).json({
-            error: `O Asaas ainda não identificou o pagamento de R$ 129,90 (status atual no Asaas: ${asaasStatus}). Efetue o Pix no app do seu banco e aguarde a confirmação.`,
-          });
-        }
-      }
+    // Never allow a client request to mark a payment as received without server-side confirmation.
+    if (!asaasGatewayConfig.apiKey || !pendingInvoice?.id?.startsWith('pay_')) {
+      return res.status(process.env.NODE_ENV === 'production' ? 503 : 409).json({
+        error: 'Confirmação manual indisponível. Configure o Asaas e aguarde a confirmação oficial do pagamento.',
+      });
+    }
+    const checkRes = await callAsaasApi(`/payments/${encodeURIComponent(pendingInvoice.id)}`);
+    if (!checkRes.ok || !checkRes.data) return res.status(502).json({ error: 'Não foi possível validar o pagamento diretamente no Asaas. Tente novamente.' });
+    const asaasStatus = checkRes.data.status;
+    if (Number(checkRes.data.value) !== Number(pendingInvoice.value) || !['RECEIVED', 'CONFIRMED'].includes(asaasStatus)) {
+      return res.status(400).json({
+        error: `O Asaas ainda não confirmou o pagamento integral de R$ ${Number(pendingInvoice.value).toFixed(2).replace('.', ',')} (status: ${asaasStatus || 'desconhecido'}).`,
+      });
     }
 
     subscription.status = 'ACTIVE';
