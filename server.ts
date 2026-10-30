@@ -699,12 +699,13 @@ async function startServer() {
         if (Array.isArray(categories)) {
           for (const cat of categories) {
             if (!cat || !cat.id || !String(cat.name || '').trim()) continue;
-            await client.query(
+            const categoryWrite = await client.query(
               `INSERT INTO categories (id, tenant_id, tenant_slug, name, display_order)
                VALUES ($1, $2, $3, $4, $5)
                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, display_order = EXCLUDED.display_order WHERE categories.tenant_id = EXCLUDED.tenant_id;`,
               [String(cat.id).slice(0, 80), tenant.id, tenant.slug, String(cat.name).trim().slice(0, 120), Number(cat.order) || 1]
             );
+            if (categoryWrite.rowCount === 0) throw new Error('Categoria pertence a outro restaurante.');
           }
         }
         if (Array.isArray(products)) {
@@ -712,7 +713,7 @@ async function startServer() {
             if (!prod || !prod.id || !String(prod.name || '').trim()) continue;
             const priceCents = Number(prod.priceCents);
             if (!Number.isSafeInteger(priceCents) || priceCents < 0) throw new Error('Preço de produto inválido no catálogo.');
-            await client.query(
+            const productWrite = await client.query(
               `INSERT INTO products (id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups, updated_at)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())
                ON CONFLICT (id) DO UPDATE SET
@@ -736,6 +737,7 @@ async function startServer() {
                 JSON.stringify(Array.isArray(prod.optionGroups) ? prod.optionGroups : []),
               ]
             );
+            if (productWrite.rowCount === 0) throw new Error('Produto pertence a outro restaurante.');
           }
         }
         await client.query('COMMIT');
