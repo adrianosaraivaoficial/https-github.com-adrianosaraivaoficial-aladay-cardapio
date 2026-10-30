@@ -355,6 +355,7 @@ async function startServer() {
   const app = express();
   app.set('trust proxy', 1);
   let memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {};
+  const memoryOnboardingBindingTokens = new Map<string, string>();
   const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '1mb' }));
@@ -3384,12 +3385,14 @@ async function startServer() {
       });
     }
 
+    const onboardingBindingToken = crypto.randomBytes(32).toString('hex');
+    memoryOnboardingBindingTokens.set(slug, onboardingBindingToken);
     res.json({
       success: true,
       message: isRealGatewayCharged
-        ? 'Assinatura criada e debitada com sucesso no Asaas!'
-        : 'Assinatura Asaas configurada! Realize o pagamento para prosseguir.',
-      subscription: toPublicSubscription(subscription),
+        ? 'Assinatura criada e pagamento confirmado pelo Asaas.'
+        : 'Cobrança Pix criada. Conclua o pagamento para prosseguir.',
+      subscription: { ...toPublicSubscription(subscription), onboardingBindingToken },
       isRealGateway: Boolean(asaasGatewayConfig.apiKey),
       isDemoMode: !asaasGatewayConfig.apiKey,
     });
@@ -3408,6 +3411,11 @@ async function startServer() {
 
     const sourceSubscription = memoryAsaasSubscriptions[sourceSlug];
     if (!sourceSubscription) return res.status(404).json({ success: false, error: 'Assinatura temporária não encontrada. Refaça a etapa de contratação.' });
+    const expectedBindingToken = Buffer.from(memoryOnboardingBindingTokens.get(sourceSlug) || '');
+    const suppliedBindingToken = Buffer.from(String(req.body?.bindingToken || ''));
+    if (!expectedBindingToken.length || expectedBindingToken.length !== suppliedBindingToken.length || !crypto.timingSafeEqual(expectedBindingToken, suppliedBindingToken)) {
+      return res.status(401).json({ success: false, error: 'Token de vinculação inválido ou expirado. Refaça a etapa de contratação.' });
+    }
     const activeTrial = sourceSubscription.status === 'TRIAL' && Boolean(sourceSubscription.trialEndsAt) && new Date(String(sourceSubscription.trialEndsAt)).getTime() > Date.now();
     if (!activeTrial && sourceSubscription.status !== 'ACTIVE') return res.status(409).json({ success: false, error: 'A assinatura ainda não foi confirmada. Conclua o pagamento antes de criar o restaurante.' });
 
@@ -3415,6 +3423,7 @@ async function startServer() {
     boundSubscription.tenantSlug = slug;
     memoryAsaasSubscriptions[slug] = boundSubscription;
     delete memoryAsaasSubscriptions[sourceSlug];
+    memoryOnboardingBindingTokens.delete(sourceSlug);
 
     tenant.subscriptionStatus = activeTrial ? 'trial' : 'active';
     tenant.trialEndsAt = activeTrial ? boundSubscription.trialEndsAt : undefined;
@@ -3525,10 +3534,12 @@ async function startServer() {
       },
     });
 
+    const onboardingBindingToken = crypto.randomBytes(32).toString('hex');
+    memoryOnboardingBindingTokens.set(slug, onboardingBindingToken);
     res.status(201).json({
       success: true,
       message: 'Período de teste grátis de 15 dias ativado. Nenhuma cobrança foi criada.',
-      subscription,
+      subscription: { ...toPublicSubscription(subscription), onboardingBindingToken },
     });
   });
 
