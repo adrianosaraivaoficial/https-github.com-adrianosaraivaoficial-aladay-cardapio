@@ -554,10 +554,10 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
               <div>
                 <h4 className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
                   <QrCode className="w-4 h-4 text-emerald-700" />
-                  <span>Fatura Atual &bull; Pix Copia e Cola &amp; QR Code (R$ 129,90)</span>
+                  <span>{pendingInvoice ? 'Fatura pendente · Pix Copia e Cola & QR Code (R$ 129,90)' : 'Nenhuma fatura Pix pendente'}</span>
                 </h4>
                 <p className="text-[11px] text-neutral-500">
-                  Emitido pelo Asaas com liquidação instantânea por webhook.
+                  {pendingInvoice ? 'Cobrança Pix retornada pelo Asaas.' : 'Se a conta estiver em teste grátis, nenhuma cobrança é criada durante o período de teste.'}
                 </p>
               </div>
               <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
@@ -580,7 +580,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                   </div>
                 )}
                 <p className="text-[11px] text-neutral-500 mt-2 font-medium">
-                  Aponte o app do seu banco para o QR Code
+                  {pendingInvoice ? 'Aponte o app do seu banco para o QR Code' : 'QR Code indisponível sem fatura pendente'}
                 </p>
               </div>
 
@@ -595,17 +595,16 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                       type="text"
                       readOnly
                       value={
-                        pendingInvoice?.pixCopiaECola ||
-                        '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br5204000053039865406129.905802BR5915ALADAY SAAS6009SAO PAULO62070503***6304E2C9'
+                        pendingInvoice?.pixCopiaECola || ''
                       }
                       className="flex-1 p-2.5 bg-white border border-neutral-200 rounded-lg text-xs font-mono text-neutral-700 select-all"
                     />
                     <button
                       type="button"
+                      disabled={!pendingInvoice?.pixCopiaECola}
                       onClick={() =>
                         handleCopy(
-                          pendingInvoice?.pixCopiaECola ||
-                            '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br5204000053039865406129.905802BR5915ALADAY SAAS6009SAO PAULO62070503***6304E2C9',
+                          pendingInvoice?.pixCopiaECola || '',
                           'Código Pix Asaas'
                         )
                       }
