@@ -368,7 +368,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
       const bindRes = await fetch(`/api/v1/asaas/subscription/${slug}/bind`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceSlug: onboardingTempSlug }),
+        body: JSON.stringify({ sourceSlug: onboardingTempSlug, bindingToken: (subscriptionData as any)?.onboardingBindingToken }),
       });
       const bindJson = await bindRes.json();
       if (!bindRes.ok || !bindJson.subscription) {
