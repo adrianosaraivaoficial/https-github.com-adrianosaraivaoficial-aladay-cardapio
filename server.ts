@@ -372,8 +372,8 @@ async function startServer() {
   }
   app.set('trust proxy', 1);
   let memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {};
-  const memoryOnboardingBindingTokens = new Map<string, string>();
-  const memoryTenantRegistrationTokens = new Map<string, string>();
+  const memoryOnboardingBindingTokens = new Map<string, { token: string; expiresAt: number }>();
+  const memoryTenantRegistrationTokens = new Map<string, { token: string; expiresAt: number }>();
   const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '1mb' }));
@@ -2199,7 +2199,8 @@ async function startServer() {
     if (cleanPhone.length < 10 || cleanPhone.length > 15) return res.status(400).json({ success: false, error: 'Informe um telefone válido com DDD.' });
     const targetTenant = memoryTenants.find((t) => t.slug === String(tenantSlug));
     if (!targetTenant || (tenantId && targetTenant.id !== String(tenantId))) return res.status(404).json({ success: false, error: 'Restaurante não encontrado para concluir o cadastro.' });
-    const expectedRegistrationToken = Buffer.from(memoryTenantRegistrationTokens.get(String(tenantSlug)) || '');
+    const registrationTokenRecord = memoryTenantRegistrationTokens.get(String(tenantSlug));
+    const expectedRegistrationToken = Buffer.from(registrationTokenRecord && registrationTokenRecord.expiresAt > Date.now() ? registrationTokenRecord.token : '');
     const suppliedRegistrationToken = Buffer.from(String(registrationToken || ''));
     if (!expectedRegistrationToken.length || expectedRegistrationToken.length !== suppliedRegistrationToken.length || !crypto.timingSafeEqual(expectedRegistrationToken, suppliedRegistrationToken)) {
       return res.status(401).json({ success: false, error: 'Token de cadastro inválido ou expirado. Reinicie a vinculação da assinatura.' });
@@ -3369,7 +3370,7 @@ async function startServer() {
     }
 
     const onboardingBindingToken = crypto.randomBytes(32).toString('hex');
-    memoryOnboardingBindingTokens.set(slug, onboardingBindingToken);
+    memoryOnboardingBindingTokens.set(slug, { token: onboardingBindingToken, expiresAt: Date.now() + 30 * 60 * 1000 });
     res.json({
       success: true,
       message: isRealGatewayCharged
@@ -3394,7 +3395,8 @@ async function startServer() {
 
     const sourceSubscription = memoryAsaasSubscriptions[sourceSlug];
     if (!sourceSubscription) return res.status(404).json({ success: false, error: 'Assinatura temporária não encontrada. Refaça a etapa de contratação.' });
-    const expectedBindingToken = Buffer.from(memoryOnboardingBindingTokens.get(sourceSlug) || '');
+    const bindingTokenRecord = memoryOnboardingBindingTokens.get(sourceSlug);
+    const expectedBindingToken = Buffer.from(bindingTokenRecord && bindingTokenRecord.expiresAt > Date.now() ? bindingTokenRecord.token : '');
     const suppliedBindingToken = Buffer.from(String(req.body?.bindingToken || ''));
     if (!expectedBindingToken.length || expectedBindingToken.length !== suppliedBindingToken.length || !crypto.timingSafeEqual(expectedBindingToken, suppliedBindingToken)) {
       return res.status(401).json({ success: false, error: 'Token de vinculação inválido ou expirado. Refaça a etapa de contratação.' });
@@ -3408,7 +3410,7 @@ async function startServer() {
     delete memoryAsaasSubscriptions[sourceSlug];
     memoryOnboardingBindingTokens.delete(sourceSlug);
     const ownerRegistrationToken = crypto.randomBytes(32).toString('hex');
-    memoryTenantRegistrationTokens.set(slug, ownerRegistrationToken);
+    memoryTenantRegistrationTokens.set(slug, { token: ownerRegistrationToken, expiresAt: Date.now() + 15 * 60 * 1000 });
 
     tenant.subscriptionStatus = activeTrial ? 'trial' : 'active';
     tenant.trialEndsAt = activeTrial ? boundSubscription.trialEndsAt : undefined;
