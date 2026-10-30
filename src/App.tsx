@@ -22,6 +22,20 @@ import { WhatsAppAutomationView } from './components/WhatsAppAutomationView';
 import { AuthPortalView } from './components/AuthPortalView';
 import { LandingPageView } from './components/LandingPageView';
 
+const sanitizeTenantForClient = (value: RestaurantTenant): RestaurantTenant => {
+  const {
+    evolutionApiKey,
+    n8nWebhookUrl,
+    asaasSubscription,
+    ...safeTenant
+  } = value as RestaurantTenant & {
+    evolutionApiKey?: string;
+    n8nWebhookUrl?: string;
+    asaasSubscription?: unknown;
+  };
+  return safeTenant as RestaurantTenant;
+};
+
 export default function App() {
   const [currentView, setCurrentView] = useState<'home' | 'kickoff' | 'consumer' | 'admin' | 'calculator' | 'diagrams' | 'tracking' | 'whatsapp' | 'auth'>('home');
   const [selectedTrackingOrder, setSelectedTrackingOrder] = useState<Order | null>(null);
@@ -40,7 +54,7 @@ export default function App() {
   const [tenantsList, setTenantsList] = useState<RestaurantTenant[]>(() => {
     try {
       const saved = localStorage.getItem('aladay_prod_tenants_list_v2');
-      return saved ? JSON.parse(saved) : INITIAL_TENANTS_LIST;
+      return saved ? (JSON.parse(saved) as RestaurantTenant[]).map(sanitizeTenantForClient) : INITIAL_TENANTS_LIST.map(sanitizeTenantForClient);
     } catch {
       return INITIAL_TENANTS_LIST;
     }
@@ -49,7 +63,7 @@ export default function App() {
   const [tenant, setTenant] = useState<RestaurantTenant>(() => {
     try {
       const saved = localStorage.getItem('aladay_prod_tenant_v2');
-      return saved ? JSON.parse(saved) : INITIAL_TENANT;
+      return saved ? sanitizeTenantForClient(JSON.parse(saved)) : sanitizeTenantForClient(INITIAL_TENANT);
     } catch {
       return INITIAL_TENANT;
     }
@@ -85,8 +99,8 @@ export default function App() {
 
   React.useEffect(() => {
     try {
-      localStorage.setItem('aladay_prod_tenant_v2', JSON.stringify(tenant));
-      localStorage.setItem('aladay_prod_tenants_list_v2', JSON.stringify(tenantsList));
+      localStorage.setItem('aladay_prod_tenant_v2', JSON.stringify(sanitizeTenantForClient(tenant)));
+      localStorage.setItem('aladay_prod_tenants_list_v2', JSON.stringify(tenantsList.map(sanitizeTenantForClient)));
       localStorage.setItem('aladay_prod_catalogs_v2', JSON.stringify(catalogsByTenant));
       localStorage.setItem('aladay_prod_customers_v2', JSON.stringify(customers));
     } catch {
@@ -202,14 +216,15 @@ export default function App() {
   };
 
   const handleUpdateTenant = (updatedTenant: RestaurantTenant) => {
-    setTenant(updatedTenant);
+    const safeTenant = sanitizeTenantForClient(updatedTenant);
+    setTenant(safeTenant);
     setTenantsList((prev) =>
-      prev.map((t) => (t.slug === updatedTenant.slug ? updatedTenant : t))
+      prev.map((t) => (t.slug === safeTenant.slug ? safeTenant : t))
     );
   };
 
   const handleSelectTenant = (selected: RestaurantTenant) => {
-    setTenant(selected);
+    setTenant(sanitizeTenantForClient(selected));
   };
 
   const handleSessionAuthenticated = (newSession: AuthSession) => {

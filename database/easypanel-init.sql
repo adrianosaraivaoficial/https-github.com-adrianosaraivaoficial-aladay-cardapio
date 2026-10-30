@@ -113,6 +113,10 @@ CREATE TABLE IF NOT EXISTS pix_transactions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pix_tenant_slug ON pix_transactions(tenant_slug);
+CREATE INDEX IF NOT EXISTS idx_pix_transactions_tenant_status ON pix_transactions(tenant_slug, status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_pix_transactions_order_tenant ON pix_transactions(order_id, tenant_slug);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pix_transactions_end_to_end_unique ON pix_transactions(end_to_end_id) WHERE end_to_end_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_tenant_idempotency ON orders(tenant_slug, idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 -- 6. TABELA OUTBOX PATTERN (FILA TRANSACIONAL DE EVENTOS PARA N8N / EVOLUTION API)
 CREATE TABLE IF NOT EXISTS outbox_events (

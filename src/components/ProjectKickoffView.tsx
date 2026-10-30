@@ -364,48 +364,19 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
       const isTrialActivation = Boolean(subscriptionData?.isTrial || signupMode === 'trial_15_days');
       let boundSubscription = subscriptionData;
 
-      if (isTrialActivation) {
-        // Bind 15-day Free Trial subscription to the newly created restaurant slug
-        try {
-          const bindTrialRes = await fetch(`/api/v1/asaas/subscription/${slug}/start-trial`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              customerName: subscriberName.trim() || name,
-              customerEmail: subscriberEmail.trim(),
-              customerCpfCnpj: subscriberCpfCnpj.trim(),
-              customerPhone: phone.replace(/\D/g, ''),
-              billingType: 'PIX',
-            }),
-          });
-          if (bindTrialRes.ok) {
-            const bindTrialJson = await bindTrialRes.json();
-            if (bindTrialJson.subscription) {
-              boundSubscription = bindTrialJson.subscription;
-            }
-          }
-        } catch {
-          // fallback to existing subscriptionData
-        }
-      } else {
-        // Bind the active paid Asaas subscription to the newly created restaurant slug
-        await fetch(`/api/v1/asaas/subscription/${slug}/subscribe`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            billingType,
-            customerName: subscriberName.trim() || name,
-            customerEmail: subscriberEmail.trim(),
-            customerCpfCnpj: subscriberCpfCnpj.trim(),
-            customerPhone: phone.replace(/\D/g, ''),
-          }),
-        }).catch(() => {});
-
-        await fetch(`/api/v1/asaas/subscription/${slug}/confirm-payment`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        }).catch(() => {});
+      // Bind the already verified temporary signup subscription to this new restaurant.
+      const bindRes = await fetch(`/api/v1/asaas/subscription/${slug}/bind`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceSlug: onboardingTempSlug, bindingToken: (subscriptionData as any)?.onboardingBindingToken }),
+      });
+      const bindJson = await bindRes.json();
+      if (!bindRes.ok || !bindJson.subscription) {
+        setTenantError(bindJson.error || 'Não foi possível vincular a assinatura ao restaurante. Verifique o status do pagamento e tente novamente.');
+        setIsCreating(false);
+        return;
       }
+      boundSubscription = bindJson.subscription;
 
       const tenantData: RestaurantTenant = {
         id: json.data?.id || `tenant_${Date.now()}`,
@@ -423,18 +394,18 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
         deliveryFeeCents: 900,
         minOrderCents: 3000,
         evolutionInstanceId: `instancia_${slug}`,
-        evolutionStatus: 'connected',
-        evolutionApiKeyConfigured: true,
-        subscriptionStatus: isTrialActivation ? 'trial' : 'active',
+        evolutionStatus: 'disconnected',
+        evolutionApiKeyConfigured: false,
+        subscriptionStatus: boundSubscription?.status === 'TRIAL' ? 'trial' : 'active',
         trialEndsAt: boundSubscription?.trialEndsAt,
         asaasSubscription: boundSubscription || undefined,
         pixConfig: {
           provider: 'direct_bank',
-          pixKey: pixKey.trim() || subscriberCpfCnpj.trim() || phone.trim(),
+          pixKey: pixKey.trim(),
           pixKeyType: 'cnpj',
           merchantName: name.slice(0, 25),
           merchantCity: 'SAO PAULO',
-          autoApproveWebhook: true,
+          autoApproveWebhook: false,
         },
       };
 
@@ -452,6 +423,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
               tenantId: tenantData.id,
               tenantSlug: tenantData.slug,
               tenantName: tenantData.name,
+              registrationToken: (boundSubscription as any)?.ownerRegistrationToken,
             }),
           });
           if (authRes.ok) {
@@ -912,30 +884,14 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                         <span>Pix Imediato</span>
                       </button>
 
-                      <button
-                        type="button"
-                        onClick={() => setBillingType('CREDIT_CARD')}
-                        className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
-                          billingType === 'CREDIT_CARD'
-                            ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
-                            : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
-                        }`}
-                      >
-                        <CreditCard className="w-4 h-4 text-emerald-600" />
-                        <span>Cartão de Crédito</span>
+                      <button type="button" disabled className="p-3 rounded-xl border border-neutral-200 bg-neutral-50 text-neutral-400 text-xs font-semibold flex flex-col items-center gap-1.5 cursor-not-allowed">
+                        <CreditCard className="w-4 h-4" />
+                        <span>Cartão (em breve)</span>
                       </button>
 
-                      <button
-                        type="button"
-                        onClick={() => setBillingType('BOLETO')}
-                        className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
-                          billingType === 'BOLETO'
-                            ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
-                            : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
-                        }`}
-                      >
-                        <FileText className="w-4 h-4 text-emerald-600" />
-                        <span>Boleto Asaas</span>
+                      <button type="button" disabled className="p-3 rounded-xl border border-neutral-200 bg-neutral-50 text-neutral-400 text-xs font-semibold flex flex-col items-center gap-1.5 cursor-not-allowed">
+                        <FileText className="w-4 h-4" />
+                        <span>Boleto (em breve)</span>
                       </button>
                     </div>
 

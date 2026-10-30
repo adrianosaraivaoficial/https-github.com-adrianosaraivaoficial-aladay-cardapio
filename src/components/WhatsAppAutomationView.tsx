@@ -71,13 +71,13 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
 
   // Form settings state (defaults populated from user's Easypanel setup)
   const [evolutionUrl, setEvolutionUrl] = useState(
-    tenant.evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host'
+    tenant.evolutionApiUrl || ''
   );
   const [evolutionApiKey, setEvolutionApiKey] = useState(
-    tenant.evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405'
+    tenant.evolutionApiKey || ''
   );
   const [n8nWebhookUrl, setN8nWebhookUrl] = useState(
-    tenant.n8nWebhookUrl || 'https://agencia-n8n.2eoc7n.easypanel.host/webhook/saas'
+    tenant.n8nWebhookUrl || ''
   );
   const [isAutoReplyActive, setIsAutoReplyActive] = useState(tenant.botAutoReplyEnabled ?? true);
 
@@ -1853,7 +1853,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const envText = `PORT=3000\nNODE_ENV=production\nDATABASE_URL=${generatedEasyPanelDbUrl}\nPGSSLMODE=disable\nJWT_SECRET=9f8d7a6b5c4e3f2a1b0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b\nEVOLUTION_API_URL=${evolutionUrl}\nEVOLUTION_API_KEY=${evolutionApiKey}\nN8N_WEBHOOK_URL=${n8nWebhookUrl}`;
+                      const envText = `PORT=3000\nNODE_ENV=production\nAPP_URL=HTTPS_URL_PUBLICA_DO_APP\nDATABASE_URL=${generatedEasyPanelDbUrl}\nPGSSLMODE=disable\nJWT_SECRET=GERAR_COM_OPENSSL_RAND_HEX_48\nADMIN_EMAIL=SEU_EMAIL_ADMIN\nADMIN_PASSWORD=SENHA_FORTE_COM_14_CARACTERES_OU_MAIS\nADMIN_PHONE=DDD_TELEFONE_INTERNACIONAL\nEVOLUTION_API_URL=${evolutionUrl}\nEVOLUTION_API_KEY=${evolutionApiKey}\nEVOLUTION_WEBHOOK_TOKEN=GERAR_TOKEN_ALEATORIO_FORTE\nPIX_WEBHOOK_TOKEN=GERAR_TOKEN_ALEATORIO_FORTE\nN8N_WEBHOOK_URL=${n8nWebhookUrl}\nASAAS_ENVIRONMENT=sandbox\nASAAS_API_KEY=\nASAAS_WEBHOOK_TOKEN=`;
                       navigator.clipboard.writeText(envText);
                       setCopiedEnvBlock(true);
                       setTimeout(() => setCopiedEnvBlock(false), 3000);
@@ -1868,12 +1868,21 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                 <pre className="bg-neutral-900 text-neutral-200 p-3.5 rounded-lg font-mono text-[11px] overflow-x-auto leading-relaxed">
 {`PORT=3000
 NODE_ENV=production
+APP_URL=HTTPS_URL_PUBLICA_DO_APP
 DATABASE_URL=${generatedEasyPanelDbUrl}
 PGSSLMODE=disable
-JWT_SECRET=9f8d7a6b5c4e3f2a1b0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b
+JWT_SECRET=GERAR_COM_OPENSSL_RAND_HEX_48
+ADMIN_EMAIL=SEU_EMAIL_ADMIN
+ADMIN_PASSWORD=SENHA_FORTE_COM_14_CARACTERES_OU_MAIS
+ADMIN_PHONE=DDD_TELEFONE_INTERNACIONAL
 EVOLUTION_API_URL=${evolutionUrl}
 EVOLUTION_API_KEY=${evolutionApiKey}
-N8N_WEBHOOK_URL=${n8nWebhookUrl}`}
+EVOLUTION_WEBHOOK_TOKEN=GERAR_TOKEN_ALEATORIO_FORTE
+PIX_WEBHOOK_TOKEN=GERAR_TOKEN_ALEATORIO_FORTE
+N8N_WEBHOOK_URL=${n8nWebhookUrl}
+ASAAS_ENVIRONMENT=sandbox
+ASAAS_API_KEY=
+ASAAS_WEBHOOK_TOKEN=`}
                 </pre>
               </div>
 
@@ -1924,8 +1933,8 @@ N8N_WEBHOOK_URL=${n8nWebhookUrl}`}
                 <span className="font-bold text-neutral-900">Variáveis de Ambiente da Evolution API no Easypanel:</span>
               </div>
               <pre className="bg-neutral-900 text-neutral-200 p-3 rounded font-mono text-[11px] overflow-x-auto">
-{`SERVER_URL=https://agencia-evolution-api.2eoc7n.easypanel.host
-AUTHENTICATION_API_KEY=21C3D49F3F00-48FA-BFA2-2CD290850405
+{`SERVER_URL=https://SUA_EVOLUTION_API
+AUTHENTICATION_API_KEY=SUBSTITUA_POR_CHAVE_FORTE_UNICA
 DATABASE_ENABLED=true
 DATABASE_CONNECTION_URI=postgresql://postgres:senha@postgres:5432/evolution
 REDIS_ENABLED=true
@@ -1942,7 +1951,7 @@ REDIS_URI=redis://default:senha@redis:6379`}
                 <span className="font-bold text-neutral-900">Variáveis de Ambiente do n8n no Easypanel:</span>
               </div>
               <pre className="bg-neutral-900 text-neutral-200 p-3 rounded font-mono text-[11px] overflow-x-auto">
-{`WEBHOOK_URL=https://agencia-n8n.2eoc7n.easypanel.host/
+{`WEBHOOK_URL=https://SEU_N8N/
 N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
 EXECUTIONS_DATA_PRUNE=true
 EXECUTIONS_DATA_MAX_AGE=168`}

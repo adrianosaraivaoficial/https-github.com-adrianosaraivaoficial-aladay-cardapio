@@ -148,15 +148,14 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
 
   const formattedAmount = `R$ ${(order.totalCents / 100).toFixed(2).replace('.', ',')}`;
 
-  const pixPayload =
-    transaction?.pixCopiaECola ||
-    `00020101021226580014BR.GOV.BCB.PIX0114+551198765432152040000530398654${(order.totalCents / 100).toFixed(2)}5802BR5925${tenant.name.slice(0, 25)}6015SAO PAULO62190515${order.id || 'PEDIDO1042'}6304`;
+  const pixPayload = transaction?.pixCopiaECola || '';
 
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=10&data=${encodeURIComponent(
-    pixPayload
-  )}`;
+  const qrCodeUrl = pixPayload
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=10&data=${encodeURIComponent(pixPayload)}`
+    : '';
 
   const handleCopyCode = async () => {
+    if (!pixPayload) return;
     try {
       await navigator.clipboard.writeText(pixPayload);
       setCopiedCode(true);
@@ -214,7 +213,7 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-bold leading-tight">Pix Dinâmico Instantâneo</h3>
-              <p className="text-[11px] text-emerald-100">Baixa automática em até 10 segundos</p>
+              <p className="text-[11px] text-emerald-100">Confirmação automática após retorno do provedor</p>
             </div>
           </div>
 
@@ -253,7 +252,7 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
               <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 text-left text-xs space-y-1.5 font-mono">
                 <div className="flex justify-between text-neutral-500">
                   <span>ID Transação Pix:</span>
-                  <span className="text-neutral-800 font-bold">{transaction?.txid?.slice(0, 18) || 'PIX_OK_20261021'}...</span>
+                  <span className="text-neutral-800 font-bold">{transaction?.txid?.slice(0, 18) || '—'}</span>
                 </div>
                 <div className="flex justify-between text-neutral-500">
                   <span>Horário da Baixa:</span>
@@ -263,7 +262,7 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
                 </div>
                 <div className="flex justify-between text-neutral-500">
                   <span>Notificação WhatsApp:</span>
-                  <span className="text-emerald-700 font-bold">Disparada (aladay) ✓</span>
+                  <span className="text-neutral-700 font-bold">Atualizado pelo sistema</span>
                 </div>
               </div>
 
@@ -332,7 +331,7 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
                     <RefreshCw className="w-6 h-6 animate-spin text-emerald-600" />
                     <span className="text-xs">Gerando QR Code Seguro...</span>
                   </div>
-                ) : (
+                ) : pixPayload ? (
                   <div className="bg-white p-3 rounded-xl shadow-xs border border-neutral-200 relative group">
                     <img
                       src={qrCodeUrl}
@@ -340,6 +339,11 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
                       className="w-48 h-48 rounded-lg object-contain"
                     />
                     <div className="absolute inset-0 bg-emerald-600/5 pointer-events-none rounded-lg" />
+                  </div>
+                ) : (
+                  <div className="w-48 h-48 flex flex-col items-center justify-center gap-2 text-center text-neutral-500">
+                    <AlertCircle className="w-8 h-8" />
+                    <span className="text-xs">Não foi possível gerar a cobrança Pix. Feche e tente novamente.</span>
                   </div>
                 )}
 
@@ -359,12 +363,14 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
                     type="text"
                     readOnly
                     value={pixPayload}
+                    disabled={!pixPayload}
                     onClick={handleCopyCode}
                     className="flex-1 p-2 bg-neutral-100 border border-neutral-300 rounded-lg text-[11px] font-mono text-neutral-700 truncate cursor-pointer focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={handleCopyCode}
+                    disabled={!pixPayload}
                     className="px-3.5 py-2 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shrink-0 shadow-xs"
                   >
                     {copiedCode ? (
@@ -396,11 +402,11 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
                 </div>
 
                 <span className="text-[10px] font-mono font-bold bg-white px-2 py-0.5 rounded border border-emerald-200 text-emerald-800">
-                  Asaas Webhook 200 OK
+                  Aguardando provedor
                 </span>
               </div>
 
-              {/* Fast Testing Simulation Box */}
+              {import.meta.env.DEV ? (
               <div className="p-3 bg-neutral-900 text-white rounded-xl space-y-2 border border-neutral-700">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-300 flex items-center gap-1">
@@ -433,6 +439,8 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
                   )}
                 </button>
               </div>
+              ) : null}
+
             </>
           )}
         </div>

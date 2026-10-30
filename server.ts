@@ -71,7 +71,7 @@ const memoryTenants: InMemTenant[] = [
       merchantName: 'MEU RESTAURANTE',
       merchantCity: 'SAO PAULO',
       bankName: '',
-      autoApproveWebhook: true,
+      autoApproveWebhook: false,
     },
   },
 ];
@@ -189,6 +189,25 @@ CREATE TABLE IF NOT EXISTS orders (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS pix_transactions (
+  txid VARCHAR(80) PRIMARY KEY,
+  order_id VARCHAR(80) NOT NULL,
+  tenant_slug VARCHAR(100) NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  pix_copia_e_cola TEXT NOT NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
+  psp VARCHAR(60) DEFAULT 'direct_bank',
+  customer_name VARCHAR(120),
+  customer_phone VARCHAR(30),
+  end_to_end_id VARCHAR(100),
+  paid_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pix_transactions_tenant_status ON pix_transactions(tenant_slug, status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_pix_transactions_order_tenant ON pix_transactions(order_id, tenant_slug);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pix_transactions_end_to_end_unique ON pix_transactions(end_to_end_id) WHERE end_to_end_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_tenant_idempotency ON orders(tenant_slug, idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE TABLE IF NOT EXISTS outbox_events (
   id VARCHAR(80) PRIMARY KEY,
   tenant_id VARCHAR(80) NOT NULL,
@@ -353,9 +372,30 @@ async function initializePostgresConnection(connectionString: string, runMigrati
 
 async function startServer() {
   const app = express();
+  function isSafeExternalHttpsUrl(value: string): boolean {
+    try {
+      const parsed = new URL(String(value || '').trim());
+      if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return false;
+      const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+      if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return false;
+      const octets = host.split('.').map(Number);
+      if (octets.length === 4 && octets.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
+        const [a, b] = octets;
+        if (a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19))) return false;
+      }
+      if (host.includes(':') && (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80') || host.startsWith('::ffff:127.') || host.startsWith('::ffff:10.'))) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  app.set('trust proxy', 1);
+  let memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {};
+  const memoryOnboardingBindingTokens = new Map<string, { token: string; expiresAt: number }>();
+  const memoryTenantRegistrationTokens = new Map<string, { token: string; expiresAt: number }>();
   const PORT = Number(process.env.PORT) || 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: '1mb' }));
 
   // Auto-initialize PostgreSQL if DATABASE_URL is set in EasyPanel Environment
   if (process.env.DATABASE_URL) {
@@ -365,7 +405,11 @@ async function startServer() {
   // ============================================================================
   // SECURITY & MULTI-TENANT AUTHENTICATION GUARDS (OWASP / LGPD COMPLIANCE)
   // ============================================================================
-  const JWT_SECRET = process.env.JWT_SECRET || 'aladay-cloudflare-jwt-secret-key-2026-hmac-sha256';
+  const isProductionEnv = process.env.NODE_ENV === 'production';
+  const JWT_SECRET = process.env.JWT_SECRET || (isProductionEnv ? '' : crypto.randomBytes(48).toString('hex'));
+  if (isProductionEnv && Buffer.byteLength(JWT_SECRET, 'utf8') < 32) throw new Error('Configuração insegura: defina JWT_SECRET com pelo menos 32 bytes no ambiente de produção.');
+  if (isProductionEnv && String(process.env.ADMIN_PASSWORD || '').length < 14) throw new Error('Configuração insegura: defina ADMIN_PASSWORD com pelo menos 14 caracteres.');
+  if (isProductionEnv && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(process.env.ADMIN_EMAIL || ''))) throw new Error('Configuração obrigatória: defina um ADMIN_EMAIL válido.');
 
   function base64UrlEncode(input: string | Buffer): string {
     return Buffer.from(input)
@@ -377,65 +421,20 @@ async function startServer() {
 
   function verifyJwtToken(token: string): any | null {
     try {
+      if (!JWT_SECRET || typeof token !== 'string' || token.length > 8192) return null;
       const parts = token.split('.');
       if (parts.length !== 3) return null;
       const [headerB64, payloadB64, signature] = parts;
-
-      // 1. Accept bootstrap token signature from client app
-      if (signature === 'aladay_hmac_sha256_sig') {
-        try {
-          const claims = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf-8'));
-          return claims;
-        } catch {
-          return null;
-        }
-      }
-
-      // 2. Validate HMAC against active JWT_SECRET and known deployment keys
-      const secretsToTest = [
-        JWT_SECRET,
-        '9f8d7a6b5c4e3f2a1b0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b',
-        'aladay-cloudflare-jwt-secret-key-2026-hmac-sha256',
-      ];
-
-      for (const secret of secretsToTest) {
-        try {
-          const expectedSignature = crypto
-            .createHmac('sha256', secret)
-            .update(`${headerB64}.${payloadB64}`)
-            .digest('base64')
-            .replace(/=/g, '')
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_');
-
-          const sigBuf = Buffer.from(signature);
-          const expBuf = Buffer.from(expectedSignature);
-          if (sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf)) {
-            const claims = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf-8'));
-            if (claims.exp && claims.exp < Math.floor(Date.now() / 1000) - 86400) {
-              return null; // Expired by more than 24h
-            }
-            return claims;
-          }
-        } catch {
-          // continue checking next secret
-        }
-      }
-
-      // 3. Fallback: Parse claims if structured properly
-      try {
-        const claims = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf-8'));
-        if (claims && claims.sub && claims.role) {
-          return claims;
-        }
-      } catch {
-        // failed parse
-      }
-
-      return null;
-    } catch {
-      return null;
-    }
+      const header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf-8'));
+      if (!header || header.alg !== 'HS256' || header.typ !== 'JWT') return null;
+      const expectedSignature = crypto.createHmac('sha256', JWT_SECRET).update(`${headerB64}.${payloadB64}`).digest();
+      const suppliedSignature = Buffer.from(signature, 'base64url');
+      if (suppliedSignature.length !== expectedSignature.length || !crypto.timingSafeEqual(suppliedSignature, expectedSignature)) return null;
+      const claims = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8'));
+      const now = Math.floor(Date.now() / 1000);
+      if (!claims || typeof claims.sub !== 'string' || !claims.sub || !Number.isInteger(claims.iat) || claims.iat > now + 60 || !Number.isInteger(claims.exp) || claims.exp <= now || claims.exp - claims.iat > 12 * 60 * 60 || claims.iss !== 'https://aladay.com.br' || !['SUPER_ADMIN', 'TENANT_OWNER', 'KITCHEN_STAFF'].includes(claims.role) || typeof claims.tenant_slug !== 'string' || typeof claims.tenant_id !== 'string') return null;
+      return claims;
+    } catch { return null; }
   }
 
   const authenticateToken = (req: Request, res: Response, next: express.NextFunction) => {
@@ -507,19 +506,22 @@ async function startServer() {
     });
   });
 
-  // Get list of tenants
+  const toPublicTenant = (tenant: InMemTenant) => {
+    const { evolutionApiKey, evolutionApiUrl, n8nWebhookUrl, ...safeTenant } = tenant as any;
+    return safeTenant;
+  };
   app.get('/api/v1/tenants', (_req: Request, res: Response) => {
-    res.json({ data: memoryTenants });
+    res.json({ data: memoryTenants.map((tenant) => ({ slug: tenant.slug, name: tenant.name, primaryColor: tenant.primaryColor, isOpen: tenant.isOpen })) });
   });
 
   // Create new tenant (Onboarding Step 1 & 2)
   app.post('/api/v1/tenants', (req: Request, res: Response) => {
     const { name, slug, phone, primaryColor, address } = req.body;
-    if (!name || !slug || !phone) {
-      return res.status(400).json({ error: 'Campos obrigatórios: name, slug, phone' });
-    }
-
-    const cleanSlug = String(slug).toLowerCase().trim().replace(/[^a-z0-9-]/g, '-');
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(`tenant_create_${clientIp}`, 5, 60 * 60 * 1000)) return res.status(429).json({ error: 'Limite de cadastros excedido. Tente novamente mais tarde.' });
+    if (!name || !slug || !phone || String(name).trim().length < 2 || String(name).trim().length > 120 || String(phone).replace(/\D/g, '').length < 10 || String(phone).replace(/\D/g, '').length > 15) return res.status(400).json({ error: 'Informe nome, identificador e telefone válidos.' });
+    const cleanSlug = String(slug).toLowerCase().trim().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    if (cleanSlug.length < 3 || cleanSlug.length > 60) return res.status(400).json({ error: 'O identificador deve conter de 3 a 60 caracteres válidos.' });
     const existing = memoryTenants.find((t) => t.slug === cleanSlug);
     if (existing) {
       return res.status(409).json({ error: `O slug "${cleanSlug}" já está em uso por outro restaurante.` });
@@ -536,7 +538,7 @@ async function startServer() {
       deliveryFeeCents: 700,
       minOrderCents: 2000,
       evolutionInstanceId: `instancia_${cleanSlug}`,
-      evolutionStatus: 'connected',
+      evolutionStatus: 'disconnected',
     };
 
     memoryTenants.push(newTenant);
@@ -646,91 +648,125 @@ async function startServer() {
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
     }
-    res.json({ data: tenant });
+    res.json({ data: toPublicTenant(tenant) });
   });
 
   // Bulk Import / Sync Catalog (Categories & Products) from Spreadsheet per Tenant
-  app.post('/api/v1/tenants/:slug/catalog/import', requireTenantAccess('slug'), (req: Request, res: Response) => {
+  app.post('/api/v1/tenants/:slug/catalog/import', requireTenantAccess('slug'), async (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
     }
 
-    const { products, categories, mode } = req.body;
+    const { products, categories, mode } = req.body || {};
+    if (mode === 'replace') {
+      for (let index = memoryProducts.length - 1; index >= 0; index--) {
+        if (memoryProducts[index].tenantSlug === tenant.slug) memoryProducts.splice(index, 1);
+      }
+      for (let index = memoryCategories.length - 1; index >= 0; index--) {
+        if ((memoryCategories[index] as any).tenantSlug === tenant.slug) memoryCategories.splice(index, 1);
+      }
+    }
     if (Array.isArray(products)) {
       products.forEach((prod: any) => {
-        if (!prod || !prod.id) return;
-        const cleanPrice = Math.max(0, parseInt(prod.priceCents, 10) || 0);
-        const existingIdx = memoryProducts.findIndex((p) => p.id === prod.id);
-        if (existingIdx >= 0) {
-          memoryProducts[existingIdx].priceCents = cleanPrice;
-          memoryProducts[existingIdx].name = String(prod.name || memoryProducts[existingIdx].name).slice(0, 120);
-        } else {
-          memoryProducts.push({
-            id: String(prod.id),
-            tenantId: tenant.id,
-            name: String(prod.name || 'Produto').slice(0, 120),
-            priceCents: cleanPrice,
-          });
-        }
+        if (!prod || !prod.id || !String(prod.name || '').trim()) return;
+        const cleanPrice = Number(prod.priceCents);
+        if (!Number.isSafeInteger(cleanPrice) || cleanPrice < 0) return;
+        const normalizedProduct = {
+          id: String(prod.id).slice(0, 80),
+          tenantId: tenant.id,
+          tenantSlug: tenant.slug,
+          categoryId: String(prod.categoryId || 'cat_geral').slice(0, 80),
+          name: String(prod.name).trim().slice(0, 150),
+          description: String(prod.description || '').slice(0, 2000),
+          priceCents: cleanPrice,
+          imageUrl: prod.imageUrl ? String(prod.imageUrl).slice(0, 2000) : undefined,
+          isAvailable: prod.isAvailable !== false,
+          isFeatured: prod.isFeatured === true,
+          optionGroups: Array.isArray(prod.optionGroups) ? prod.optionGroups : [],
+        };
+        const existingIdx = memoryProducts.findIndex((p) => p.id === normalizedProduct.id && p.tenantSlug === tenant.slug);
+        if (existingIdx >= 0) Object.assign(memoryProducts[existingIdx], normalizedProduct);
+        else memoryProducts.push(normalizedProduct);
+      });
+    }
+    if (Array.isArray(categories)) {
+      categories.forEach((category: any) => {
+        if (!category?.id || !String(category.name || '').trim()) return;
+        const normalizedCategory = {
+          id: String(category.id).slice(0, 80),
+          tenantId: tenant.id,
+          tenantSlug: tenant.slug,
+          name: String(category.name).trim().slice(0, 120),
+          order: Number(category.order) || 1,
+        };
+        const existingIndex = memoryCategories.findIndex((item: any) => item.id === normalizedCategory.id && item.tenantSlug === tenant.slug);
+        if (existingIndex >= 0) Object.assign(memoryCategories[existingIndex], normalizedCategory);
+        else memoryCategories.push(normalizedCategory as any);
       });
     }
 
-    // Persist categories and products to PostgreSQL if connected on EasyPanel VPS
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ error: 'PostgreSQL obrigatório para importar cardápio em produção.' });
     if (pgPool) {
-      (async () => {
-        try {
-          if (mode === 'replace') {
-            await pgPool.query('DELETE FROM products WHERE tenant_slug = $1;', [tenant.slug]);
-            await pgPool.query('DELETE FROM categories WHERE tenant_slug = $1;', [tenant.slug]);
-          }
-          if (Array.isArray(categories)) {
-            for (const cat of categories) {
-              if (!cat || !cat.id) continue;
-              await pgPool.query(
-                `INSERT INTO categories (id, tenant_id, tenant_slug, name, display_order)
-                 VALUES ($1, $2, $3, $4, $5)
-                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, display_order = EXCLUDED.display_order;`,
-                [String(cat.id), tenant.id, tenant.slug, String(cat.name || 'Categoria'), Number(cat.order) || 1]
-              );
-            }
-          }
-          if (Array.isArray(products)) {
-            for (const prod of products) {
-              if (!prod || !prod.id) continue;
-              await pgPool.query(
-                `INSERT INTO products (id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())
-                 ON CONFLICT (id) DO UPDATE SET
-                   category_id = EXCLUDED.category_id,
-                   name = EXCLUDED.name,
-                   description = EXCLUDED.description,
-                   price_cents = EXCLUDED.price_cents,
-                   image_url = EXCLUDED.image_url,
-                   is_available = EXCLUDED.is_available,
-                   is_featured = EXCLUDED.is_featured,
-                   option_groups = EXCLUDED.option_groups,
-                   updated_at = NOW();`,
-                [
-                  String(prod.id),
-                  tenant.id,
-                  tenant.slug,
-                  String(prod.categoryId || 'cat_1'),
-                  String(prod.name || 'Produto').slice(0, 150),
-                  String(prod.description || ''),
-                  Math.max(0, parseInt(prod.priceCents, 10) || 0),
-                  prod.imageUrl || null,
-                  prod.isAvailable ?? true,
-                  prod.isFeatured ?? false,
-                  JSON.stringify(prod.optionGroups || []),
-                ]
-              );
-            }
-          }
-        } catch (err) {
-          console.warn('[PostgreSQL Sync Catalog] Erro ao persistir cardápio:', err);
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        if (mode === 'replace') {
+          await client.query('DELETE FROM products WHERE tenant_slug = $1;', [tenant.slug]);
+          await client.query('DELETE FROM categories WHERE tenant_slug = $1;', [tenant.slug]);
         }
-      })();
+        if (Array.isArray(categories)) {
+          for (const cat of categories) {
+            if (!cat || !cat.id || !String(cat.name || '').trim()) continue;
+            const categoryWrite = await client.query(
+              `INSERT INTO categories (id, tenant_id, tenant_slug, name, display_order)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, display_order = EXCLUDED.display_order WHERE categories.tenant_id = EXCLUDED.tenant_id;`,
+              [String(cat.id).slice(0, 80), tenant.id, tenant.slug, String(cat.name).trim().slice(0, 120), Number(cat.order) || 1]
+            );
+            if (categoryWrite.rowCount === 0) throw new Error('Categoria pertence a outro restaurante.');
+          }
+        }
+        if (Array.isArray(products)) {
+          for (const prod of products) {
+            if (!prod || !prod.id || !String(prod.name || '').trim()) continue;
+            const priceCents = Number(prod.priceCents);
+            if (!Number.isSafeInteger(priceCents) || priceCents < 0) throw new Error('Preço de produto inválido no catálogo.');
+            const productWrite = await client.query(
+              `INSERT INTO products (id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())
+               ON CONFLICT (id) DO UPDATE SET
+                 category_id = EXCLUDED.category_id,
+                 name = EXCLUDED.name,
+                 description = EXCLUDED.description,
+                 price_cents = EXCLUDED.price_cents,
+                 image_url = EXCLUDED.image_url,
+                 is_available = EXCLUDED.is_available,
+                 is_featured = EXCLUDED.is_featured,
+                 option_groups = EXCLUDED.option_groups,
+                 updated_at = NOW()
+               WHERE products.tenant_id = EXCLUDED.tenant_id;`,
+              [
+                String(prod.id).slice(0, 80), tenant.id, tenant.slug,
+                String(prod.categoryId || 'cat_geral').slice(0, 80),
+                String(prod.name).trim().slice(0, 150),
+                String(prod.description || '').slice(0, 2000),
+                priceCents, prod.imageUrl ? String(prod.imageUrl).slice(0, 2000) : null,
+                prod.isAvailable !== false, prod.isFeatured === true,
+                JSON.stringify(Array.isArray(prod.optionGroups) ? prod.optionGroups : []),
+              ]
+            );
+            if (productWrite.rowCount === 0) throw new Error('Produto pertence a outro restaurante.');
+          }
+        }
+        await client.query('COMMIT');
+      } catch (error: any) {
+        try { await client.query('ROLLBACK'); } catch { /* transaction already closed */ }
+        console.error('[PostgreSQL Sync Catalog] Transaction failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível persistir o cardápio. Nenhuma confirmação foi emitida.' });
+      } finally {
+        client.release();
+      }
     }
 
     res.json({
@@ -740,67 +776,152 @@ async function startServer() {
   });
 
   // Zero-Trust Checkout: server recalculates everything and writes to outbox
-  app.post('/api/v1/orders/checkout', (req: Request, res: Response) => {
-    const { tenantSlug, customerName, customerPhone, type, deliveryAddress, items, idempotencyKey } = req.body;
+  app.post('/api/v1/orders/checkout', async (req: Request, res: Response) => {
+    const { tenantSlug, customerName, customerPhone, type, deliveryAddress, items, idempotencyKey } = req.body || {};
 
     const tenant = memoryTenants.find((t) => t.slug === tenantSlug);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
     }
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'O carrinho está vazio.' });
+    if (!items || !Array.isArray(items) || items.length === 0 || items.length > 50) {
+      return res.status(400).json({ error: 'O carrinho deve conter de 1 a 50 itens.' });
     }
+    const cleanCustomerName = String(customerName || '').trim();
+    const cleanCustomerPhone = String(customerPhone || '').replace(/\D/g, '');
+    if (cleanCustomerName.length < 2 || cleanCustomerName.length > 80) return res.status(400).json({ error: 'Informe o nome do cliente.' });
+    if (cleanCustomerPhone.length < 10 || cleanCustomerPhone.length > 15) return res.status(400).json({ error: 'Informe um telefone válido com DDD.' });
+    if (!['delivery', 'pickup'].includes(type)) return res.status(400).json({ error: 'Tipo de pedido inválido.' });
+    if (type === 'delivery' && String(deliveryAddress || '').trim().length < 8) return res.status(400).json({ error: 'Informe o endereço completo para entrega.' });
+    if (idempotencyKey && (typeof idempotencyKey !== 'string' || idempotencyKey.length > 120)) return res.status(400).json({ error: 'Chave de idempotência inválida.' });
 
-    // Check idempotency
-    if (idempotencyKey) {
-      const existing = memoryOrders.find((o) => o.idempotencyKey === idempotencyKey);
-      if (existing) {
-        return res.json({ message: 'Pedido já processado anteriormente.', data: existing });
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ error: 'PostgreSQL obrigatório para criar pedidos em produção.' });
+
+    const scopedIdempotencyKey = idempotencyKey
+      ? crypto.createHash('sha256').update(`${tenant.slug}:${String(idempotencyKey)}`).digest('hex')
+      : undefined;
+
+    // Durable idempotency check scoped to the restaurant.
+    if (scopedIdempotencyKey) {
+      const existingMemory = memoryOrders.find((order) => order.idempotencyKey === scopedIdempotencyKey && order.tenantSlug === tenant.slug);
+      if (existingMemory) return res.json({ message: 'Pedido já processado anteriormente.', data: existingMemory });
+      if (pgPool) {
+        try {
+          const existingDb = await pgPool.query('SELECT * FROM orders WHERE tenant_slug = $1 AND idempotency_key = $2 LIMIT 1;', [tenant.slug, scopedIdempotencyKey]);
+          if (existingDb.rows[0]) {
+            const row = existingDb.rows[0];
+            const existingOrder = {
+              id: row.id, orderNumber: row.order_number, tenantId: row.tenant_id, tenantSlug: row.tenant_slug,
+              customerName: row.customer_name, customerPhone: row.customer_phone, type: row.order_type,
+              deliveryAddress: row.delivery_address, items: row.items, subtotalCents: row.subtotal_cents,
+              deliveryFeeCents: row.delivery_fee_cents, totalCents: row.total_cents, status: row.status,
+              paymentStatus: row.payment_status, paymentMethod: row.payment_method, idempotencyKey: row.idempotency_key,
+              createdAt: row.created_at,
+            };
+            return res.json({ message: 'Pedido já processado anteriormente.', data: existingOrder });
+          }
+        } catch {
+          return res.status(503).json({ error: 'Não foi possível verificar a idempotência do pedido.' });
+        }
       }
     }
 
-    // Server-Side Price Verification (Prevents Client-Side Price Tampering)
-    let subtotalCents = 0;
-    const validatedItems = items.map((item: any) => {
-      const catalogProduct = memoryProducts.find((p) => p.id === item.productId);
-      const unitPriceCents = catalogProduct
-        ? catalogProduct.priceCents
-        : Math.max(0, parseInt(item.unitPriceCents, 10) || 0);
-      const quantity = Math.max(1, Math.min(99, parseInt(item.quantity, 10) || 1));
-
-      let optionsTotalCents = 0;
-      if (Array.isArray(item.selectedOptions)) {
-        optionsTotalCents = item.selectedOptions.reduce(
-          (acc: number, opt: any) => acc + Math.max(0, parseInt(opt.priceCents, 10) || 0),
-          0
+    // Load canonical product data from PostgreSQL; never trust prices or options from the browser.
+    let serverCatalog: any[] = memoryProducts.filter((product) => product.tenantSlug === tenant.slug);
+    if (pgPool) {
+      try {
+        const productIds = [...new Set(items.map((item: any) => String(item?.productId || '')).filter(Boolean))];
+        const catalogResult = await pgPool.query(
+          `SELECT id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups
+           FROM products WHERE tenant_slug = $1 AND id = ANY($2::varchar[]);`,
+          [tenant.slug, productIds]
         );
+        serverCatalog = catalogResult.rows.map((row: any) => ({
+          id: String(row.id), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+          categoryId: String(row.category_id), name: String(row.name), description: String(row.description || ''),
+          priceCents: Number(row.price_cents), imageUrl: row.image_url || undefined,
+          isAvailable: row.is_available !== false, isFeatured: row.is_featured === true,
+          optionGroups: Array.isArray(row.option_groups) ? row.option_groups : (typeof row.option_groups === 'string' ? JSON.parse(row.option_groups) : []),
+        }));
+        for (let index = memoryProducts.length - 1; index >= 0; index--) {
+          if (memoryProducts[index].tenantSlug === tenant.slug) memoryProducts.splice(index, 1);
+        }
+        memoryProducts.push(...serverCatalog);
+      } catch (error: any) {
+        console.error('[Checkout Catalog] PostgreSQL query failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível validar os produtos no catálogo persistido.' });
       }
+    }
+    const catalogById = new Map(serverCatalog.map((product) => [String(product.id), product]));
 
+    // All prices and options must come from this tenant's server-side catalog.
+    let subtotalCents = 0;
+    const validatedItems = [];
+    for (const item of items) {
+      const productId = String(item?.productId || '');
+      const catalogProduct = catalogById.get(productId);
+      if (!catalogProduct || catalogProduct.isAvailable === false) return res.status(409).json({ error: 'Um ou mais produtos não estão disponíveis no cardápio deste restaurante.' });
+
+      const quantity = Number(item.quantity);
+      if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 99) return res.status(400).json({ error: 'Quantidade de item inválida.' });
+
+      const requestedOptions = Array.isArray(item.selectedOptions) ? item.selectedOptions : [];
+      if (requestedOptions.length > 30) return res.status(400).json({ error: 'Quantidade de opções selecionadas excede o limite.' });
+      const productGroups = Array.isArray(catalogProduct.optionGroups) ? catalogProduct.optionGroups : [];
+      const validatedOptions: any[] = [];
+      for (const group of productGroups) {
+        const selected = requestedOptions.filter((option: any) => String(option.groupId) === String(group.id));
+        const minSelections = Number(group.minSelections ?? (group.required ? 1 : 0));
+        const maxSelections = Number(group.maxSelections ?? group.items?.length ?? 0);
+        if (!Number.isSafeInteger(minSelections) || !Number.isSafeInteger(maxSelections) || minSelections < 0 || maxSelections < minSelections || selected.length < minSelections || selected.length > maxSelections) {
+          return res.status(400).json({ error: `Seleção inválida para o grupo "${group.name}".` });
+        }
+        const selectedIds = selected.map((option: any) => String(option.itemId));
+        if (new Set(selectedIds).size !== selectedIds.length) return res.status(400).json({ error: 'Não é permitido selecionar a mesma opção mais de uma vez.' });
+        for (const selectedOption of selected) {
+          const canonicalOption = (group.items || []).find((option: any) => String(option.id) === String(selectedOption.itemId));
+          if (!canonicalOption) return res.status(400).json({ error: 'Opção de produto inválida.' });
+          const optionPriceCents = Number(canonicalOption.priceCents);
+          if (!Number.isSafeInteger(optionPriceCents) || optionPriceCents < 0) return res.status(409).json({ error: 'Preço de adicional inválido no catálogo.' });
+          validatedOptions.push({
+            groupId: group.id,
+            groupName: String(group.name || '').slice(0, 100),
+            itemId: canonicalOption.id,
+            itemName: String(canonicalOption.name || '').slice(0, 100),
+            priceCents: optionPriceCents,
+          });
+        }
+      }
+      if (validatedOptions.length !== requestedOptions.length) return res.status(400).json({ error: 'O carrinho contém opções não cadastradas para este produto.' });
+
+      const unitPriceCents = Number(catalogProduct.priceCents);
+      if (!Number.isSafeInteger(unitPriceCents) || unitPriceCents < 0) return res.status(409).json({ error: 'Preço inválido no catálogo do restaurante.' });
+      const optionsTotalCents = validatedOptions.reduce((sum, option) => sum + option.priceCents, 0);
       const calculatedItemTotal = (unitPriceCents + optionsTotalCents) * quantity;
       subtotalCents += calculatedItemTotal;
-
-      return {
-        ...item,
-        productId: String(item.productId || ''),
-        productName: String(item.productName || 'Item').slice(0, 100),
+      validatedItems.push({
+        productId: catalogProduct.id,
+        productName: String(catalogProduct.name).slice(0, 100),
         unitPriceCents,
         quantity,
+        selectedOptions: validatedOptions,
+        notes: String(item.notes || '').slice(0, 300),
         totalCents: calculatedItemTotal,
-      };
-    });
+      });
+    }
 
-    const deliveryFeeCents = type === 'delivery' ? Math.max(0, tenant.deliveryFeeCents || 0) : 0;
+    if (subtotalCents < Number(tenant.minOrderCents || 0)) return res.status(400).json({ error: 'O pedido não atingiu o valor mínimo do restaurante.' });
+    const deliveryFeeCents = type === 'delivery' ? Math.max(0, Number(tenant.deliveryFeeCents) || 0) : 0;
     const totalCents = subtotalCents + deliveryFeeCents;
 
     const orderNumber = 1040 + memoryOrders.length + 1;
     const newOrder = {
-      id: `ord_${orderNumber}`,
+      id: `ord_${crypto.randomBytes(16).toString('hex')}`,
       orderNumber,
       tenantId: tenant.id,
       tenantSlug: tenant.slug,
-      customerName: String(customerName || 'Cliente').trim().slice(0, 80),
-      customerPhone: String(customerPhone || '').replace(/\D/g, '').slice(0, 15),
+      customerName: cleanCustomerName,
+      customerPhone: cleanCustomerPhone,
       type: type === 'pickup' ? 'pickup' : 'delivery',
       deliveryAddress: deliveryAddress ? String(deliveryAddress).trim().slice(0, 200) : undefined,
       items: validatedItems,
@@ -808,79 +929,123 @@ async function startServer() {
       deliveryFeeCents,
       totalCents,
       status: 'received',
-      idempotencyKey,
+      idempotencyKey: scopedIdempotencyKey,
       createdAt: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
     };
 
-    memoryOrders.unshift(newOrder);
-
-    // Write to Outbox table
-    const outboxEvent = {
-      id: `evt_${Date.now()}`,
-      tenantId: tenant.id,
-      aggregateType: 'order',
-      aggregateId: newOrder.id,
-      eventType: 'order.created',
-      payload: newOrder,
-      status: 'completed',
-      processedAt: new Date().toISOString(),
-    };
-    memoryOutboxEvents.push(outboxEvent);
-
+    let outboxEvent: any;
     if (pgPool) {
-      (async () => {
-        try {
-          await pgPool.query(
-            `INSERT INTO orders (id, order_number, tenant_id, tenant_slug, customer_name, customer_phone, order_type, delivery_address, items, subtotal_cents, delivery_fee_cents, total_cents, status, idempotency_key)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14)
-             ON CONFLICT (id) DO NOTHING;`,
-            [
-              newOrder.id,
-              newOrder.orderNumber,
-              newOrder.tenantId,
-              newOrder.tenantSlug,
-              newOrder.customerName,
-              newOrder.customerPhone,
-              newOrder.type,
-              newOrder.deliveryAddress || null,
-              JSON.stringify(newOrder.items),
-              newOrder.subtotalCents,
-              newOrder.deliveryFeeCents,
-              newOrder.totalCents,
-              newOrder.status,
-              newOrder.idempotencyKey || null,
-            ]
-          );
-          await pgPool.query(
-            `INSERT INTO outbox_events (id, tenant_id, aggregate_type, aggregate_id, event_type, payload, status, processed_at)
-             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NOW())
-             ON CONFLICT (id) DO NOTHING;`,
-            [
-              outboxEvent.id,
-              outboxEvent.tenantId,
-              outboxEvent.aggregateType,
-              outboxEvent.aggregateId,
-              outboxEvent.eventType,
-              JSON.stringify(outboxEvent.payload),
-              outboxEvent.status,
-            ]
-          );
-        } catch (err) {
-          console.warn('[PostgreSQL Order Persist] Erro ao gravar pedido no PostgreSQL:', err);
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1));', [tenant.slug]);
+
+        if (scopedIdempotencyKey) {
+          const duplicate = await client.query('SELECT * FROM orders WHERE tenant_slug = $1 AND idempotency_key = $2 LIMIT 1;', [tenant.slug, scopedIdempotencyKey]);
+          if (duplicate.rows[0]) {
+            await client.query('ROLLBACK');
+            const row = duplicate.rows[0];
+            return res.json({
+              message: 'Pedido já processado anteriormente.',
+              data: {
+                id: row.id, orderNumber: row.order_number, tenantId: row.tenant_id, tenantSlug: row.tenant_slug,
+                customerName: row.customer_name, customerPhone: row.customer_phone, type: row.order_type,
+                deliveryAddress: row.delivery_address, items: row.items, subtotalCents: row.subtotal_cents,
+                deliveryFeeCents: row.delivery_fee_cents, totalCents: row.total_cents, status: row.status,
+                paymentStatus: row.payment_status, paymentMethod: row.payment_method, idempotencyKey: row.idempotency_key,
+                createdAt: row.created_at,
+              },
+            });
+          }
         }
-      })();
+
+        const nextNumber = await client.query('SELECT COALESCE(MAX(order_number), 1039) + 1 AS next_number FROM orders WHERE tenant_slug = $1;', [tenant.slug]);
+        newOrder.orderNumber = Number(nextNumber.rows[0]?.next_number || newOrder.orderNumber);
+
+        await client.query(
+          `INSERT INTO orders (id, order_number, tenant_id, tenant_slug, customer_name, customer_phone, order_type, delivery_address, items, subtotal_cents, delivery_fee_cents, total_cents, status, idempotency_key)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14);`,
+          [
+            newOrder.id, newOrder.orderNumber, newOrder.tenantId, newOrder.tenantSlug,
+            newOrder.customerName, newOrder.customerPhone, newOrder.type, newOrder.deliveryAddress || null,
+            JSON.stringify(newOrder.items), newOrder.subtotalCents, newOrder.deliveryFeeCents,
+            newOrder.totalCents, newOrder.status, newOrder.idempotencyKey || null,
+          ]
+        );
+
+        outboxEvent = {
+          id: `evt_${crypto.randomBytes(16).toString('hex')}`,
+          tenantId: tenant.id,
+          aggregateType: 'order',
+          aggregateId: newOrder.id,
+          eventType: 'order.created',
+          payload: newOrder,
+          status: 'pending',
+          processedAt: null,
+        };
+        await client.query(
+          `INSERT INTO outbox_events (id, tenant_id, aggregate_type, aggregate_id, event_type, payload, status, processed_at)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NULL);`,
+          [outboxEvent.id, outboxEvent.tenantId, outboxEvent.aggregateType, outboxEvent.aggregateId, outboxEvent.eventType, JSON.stringify(outboxEvent.payload), outboxEvent.status]
+        );
+        await client.query('COMMIT');
+      } catch (error: any) {
+        try { await client.query('ROLLBACK'); } catch { /* transaction already closed */ }
+        console.error('[Checkout Transaction] PostgreSQL write failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível registrar o pedido com segurança. Tente novamente.' });
+      } finally {
+        client.release();
+      }
+    } else {
+      outboxEvent = {
+        id: `evt_${crypto.randomBytes(16).toString('hex')}`,
+        tenantId: tenant.id,
+        aggregateType: 'order',
+        aggregateId: newOrder.id,
+        eventType: 'order.created',
+        payload: newOrder,
+        status: 'pending',
+        processedAt: null,
+      };
     }
 
+    memoryOrders.unshift(newOrder);
+    memoryOutboxEvents.push(outboxEvent);
+
     res.status(201).json({
-      message: 'Pedido gravado no banco de dados e evento Outbox despachado!',
+      message: 'Pedido criado e registrado com sucesso.',
       data: newOrder,
     });
   });
 
   // Get orders for a tenant (Protected by Multi-Tenant JWT Guard)
-  app.get('/api/v1/tenants/:slug/orders', requireTenantAccess('slug'), (req: Request, res: Response) => {
-    const tenantOrders = memoryOrders.filter((o) => o.tenantSlug === req.params.slug);
-    res.json({ data: tenantOrders });
+  app.get('/api/v1/tenants/:slug/orders', requireTenantAccess('slug'), async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    if (pgPool) {
+      try {
+        const result = await pgPool.query('SELECT * FROM orders WHERE tenant_slug = $1 ORDER BY created_at DESC LIMIT 500;', [tenant.slug]);
+        const tenantOrders = result.rows.map((row: any) => ({
+          id: String(row.id), orderNumber: Number(row.order_number), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+          customerName: String(row.customer_name), customerPhone: String(row.customer_phone), type: String(row.order_type),
+          deliveryAddress: row.delivery_address || undefined, items: Array.isArray(row.items) ? row.items : [],
+          subtotalCents: Number(row.subtotal_cents), deliveryFeeCents: Number(row.delivery_fee_cents), totalCents: Number(row.total_cents),
+          status: String(row.status), paymentStatus: String(row.payment_status || 'pending'), paymentMethod: String(row.payment_method || 'Pix'),
+          idempotencyKey: row.idempotency_key || undefined, whatsAppLogs: Array.isArray(row.whatsapp_logs) ? row.whatsapp_logs : [],
+          createdAt: row.created_at, updatedAt: row.updated_at,
+        }));
+        for (let index = memoryOrders.length - 1; index >= 0; index--) {
+          if (memoryOrders[index].tenantSlug === tenant.slug) memoryOrders.splice(index, 1);
+        }
+        memoryOrders.push(...tenantOrders);
+        return res.json({ data: tenantOrders });
+      } catch (error: any) {
+        console.error('[Orders Read] PostgreSQL query failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível carregar os pedidos persistidos.' });
+      }
+    }
+    if (process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'PostgreSQL obrigatório para consultar pedidos em produção.' });
+    return res.json({ data: memoryOrders.filter((order) => order.tenantSlug === tenant.slug) });
   });
 
   // --- PIX DINÂMICO HELPERS (BACEN STANDARD) ---
@@ -933,200 +1098,338 @@ async function startServer() {
     return `${payload}${crc}`;
   }
 
-  // CREATE / GET DYNAMIC PIX CHARGE
-  app.post('/api/v1/pix/charges', (req: Request, res: Response) => {
-    const { orderId, amountCents, tenantSlug, customerName, customerPhone } = req.body;
-    const tenant = memoryTenants.find((t) => t.slug === tenantSlug) || memoryTenants[0];
-    const order = memoryOrders.find((o) => o.id === orderId);
+  // CREATE DYNAMIC PIX CHARGE — only for an existing server-side order.
+  app.post('/api/v1/pix/charges', async (req: Request, res: Response) => {
+    const { orderId, amountCents, tenantSlug } = req.body || {};
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(`pix_charge_${clientIp}`, 10, 10 * 60 * 1000)) return res.status(429).json({ success: false, error: 'Muitas solicitações de cobrança Pix. Aguarde alguns minutos.' });
+    if (!orderId || !tenantSlug) return res.status(400).json({ success: false, error: 'Pedido e restaurante são obrigatórios.' });
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ success: false, error: 'PostgreSQL obrigatório para gerar cobranças em produção.' });
 
-    const amount = Number(amountCents) || order?.totalCents || 8580;
-    const txid = `PIX${Date.now().toString(36).toUpperCase()}${Math.floor(100 + Math.random() * 900)}`;
-    const pixKey = (tenant as any).pixConfig?.pixKey || '+5511987654321';
-    const merchantName = (tenant as any).pixConfig?.merchantName || tenant.name || 'Brasas Burger';
-    const merchantCity = (tenant as any).pixConfig?.merchantCity || 'SAO PAULO';
+    let order: any = memoryOrders.find((item) => item.id === String(orderId || ''));
+    if (!order && pgPool) {
+      try {
+        const result = await pgPool.query('SELECT * FROM orders WHERE id = $1 LIMIT 1;', [String(orderId || '')]);
+        const row = result.rows[0];
+        if (row) {
+          order = {
+            id: String(row.id), orderNumber: Number(row.order_number), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+            customerName: String(row.customer_name), customerPhone: String(row.customer_phone), type: String(row.order_type),
+            items: Array.isArray(row.items) ? row.items : [], subtotalCents: Number(row.subtotal_cents),
+            deliveryFeeCents: Number(row.delivery_fee_cents), totalCents: Number(row.total_cents), status: String(row.status),
+            paymentStatus: String(row.payment_status || 'pending'), paymentMethod: String(row.payment_method || 'Pix'),
+          };
+          memoryOrders.push(order);
+        }
+      } catch (error: any) {
+        return res.status(503).json({ success: false, error: 'Não foi possível consultar o pedido no banco de dados.' });
+      }
+    }
+    if (!order) return res.status(404).json({ success: false, error: 'Pedido não encontrado para gerar a cobrança.' });
+    if (String(order.tenantSlug) !== String(tenantSlug || '')) return res.status(403).json({ success: false, error: 'Pedido não pertence ao restaurante informado.' });
 
-    const pixCopiaECola = generatePixPayload({
-      pixKey,
-      merchantName,
-      merchantCity,
-      amountCents: amount,
-      txid,
-    });
+    const amount = Number(amountCents);
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount !== Number(order.totalCents)) {
+      return res.status(400).json({ success: false, error: 'O valor da cobrança deve corresponder exatamente ao total do pedido.' });
+    }
+    if (order.paymentStatus === 'paid_online' || order.status === 'cancelled') return res.status(409).json({ success: false, error: 'Este pedido não aceita uma nova cobrança Pix.' });
 
+    const existingMemoryCharge = memoryPixTransactions.find((item) => item.orderId === order.id && item.tenantSlug === order.tenantSlug && item.status === 'PENDING' && new Date(item.expiresAt).getTime() > Date.now());
+    if (existingMemoryCharge) return res.json({ success: true, message: 'Já existe uma cobrança Pix pendente para este pedido.', data: { txid: existingMemoryCharge.txid, orderId: order.id, amountCents: existingMemoryCharge.amountCents, pixCopiaECola: existingMemoryCharge.pixCopiaECola, status: existingMemoryCharge.status, expiresAt: existingMemoryCharge.expiresAt } });
+    if (pgPool) {
+      try {
+        const existingPaid = await pgPool.query("SELECT txid FROM pix_transactions WHERE order_id=$1 AND tenant_slug=$2 AND status='PAID' LIMIT 1;", [order.id, order.tenantSlug]);
+        if (existingPaid.rows[0]) return res.status(409).json({ success: false, error: 'Este pedido já possui um pagamento Pix confirmado.' });
+        const existingPending = await pgPool.query("SELECT txid, amount_cents, pix_copia_e_cola, status, expires_at FROM pix_transactions WHERE order_id=$1 AND tenant_slug=$2 AND status='PENDING' AND expires_at>NOW() ORDER BY created_at DESC LIMIT 1;", [order.id, order.tenantSlug]);
+        if (existingPending.rows[0]) {
+          const row = existingPending.rows[0];
+          return res.json({ success: true, message: 'Já existe uma cobrança Pix pendente para este pedido.', data: { txid: row.txid, orderId: order.id, amountCents: Number(row.amount_cents), pixCopiaECola: row.pix_copia_e_cola, status: row.status, expiresAt: row.expires_at } });
+        }
+      } catch (error: any) {
+        return res.status(503).json({ success: false, error: 'Não foi possível verificar cobranças existentes.' });
+      }
+    }
+    const tenant = memoryTenants.find((item) => item.slug === order.tenantSlug);
+    if (!tenant) return res.status(404).json({ success: false, error: 'Restaurante do pedido não encontrado.' });
+    const pixKey = String((tenant as any).pixConfig?.pixKey || '').trim();
+    if (!pixKey) return res.status(409).json({ success: false, error: 'O restaurante ainda não configurou sua chave Pix.' });
+
+    const txid = `PIX${crypto.randomBytes(10).toString('hex').toUpperCase()}`;
+    const merchantName = String((tenant as any).pixConfig?.merchantName || tenant.name || '').trim();
+    const merchantCity = String((tenant as any).pixConfig?.merchantCity || '').trim();
+    if (!merchantName || !merchantCity) return res.status(409).json({ success: false, error: 'Os dados do recebedor Pix estão incompletos.' });
+
+    const pixCopiaECola = generatePixPayload({ pixKey, merchantName, merchantCity, amountCents: amount, txid });
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-
     const newCharge = {
-      txid,
-      orderId: orderId || order?.id || `ord_${Date.now()}`,
-      tenantSlug: tenant.slug,
-      amountCents: amount,
-      pixCopiaECola,
-      status: 'PENDING',
-      expiresAt,
-      psp: (tenant as any).pixConfig?.provider || 'direct_bank',
-      customerName: customerName || order?.customerName || 'Cliente',
-      customerPhone: customerPhone || order?.customerPhone || '559181214188',
-      createdAt: new Date().toISOString(),
+      txid, orderId: order.id, tenantSlug: tenant.slug, amountCents: amount, pixCopiaECola,
+      status: 'PENDING', expiresAt, psp: (tenant as any).pixConfig?.provider || 'direct_bank',
+      customerName: order.customerName, customerPhone: order.customerPhone, createdAt: new Date().toISOString(),
     };
 
-    memoryPixTransactions.unshift(newCharge);
-
-    if (order) {
-      order.pixTransaction = newCharge;
-      order.paymentMethod = 'Pix Direto Restaurante';
+    if (pgPool) {
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1));', [order.id]);
+        const paidCheck = await client.query("SELECT txid FROM pix_transactions WHERE order_id=$1 AND tenant_slug=$2 AND status='PAID' LIMIT 1;", [order.id, tenant.slug]);
+        if (paidCheck.rows[0]) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ success: false, error: 'Este pedido já possui um pagamento Pix confirmado.' });
+        }
+        const pendingCheck = await client.query("SELECT txid, amount_cents, pix_copia_e_cola, status, expires_at FROM pix_transactions WHERE order_id=$1 AND tenant_slug=$2 AND status='PENDING' AND expires_at>NOW() ORDER BY created_at DESC LIMIT 1 FOR UPDATE;", [order.id, tenant.slug]);
+        if (pendingCheck.rows[0]) {
+          await client.query('ROLLBACK');
+          const row = pendingCheck.rows[0];
+          return res.json({ success: true, message: 'Já existe uma cobrança Pix pendente para este pedido.', data: { txid: row.txid, orderId: order.id, amountCents: Number(row.amount_cents), pixCopiaECola: row.pix_copia_e_cola, status: row.status, expiresAt: row.expires_at } });
+        }
+        await client.query("UPDATE pix_transactions SET status='EXPIRED' WHERE order_id=$1 AND tenant_slug=$2 AND status='PENDING' AND expires_at<=NOW();", [order.id, tenant.slug]);
+        await client.query(
+          `INSERT INTO pix_transactions (txid, order_id, tenant_slug, amount_cents, pix_copia_e_cola, status, psp, customer_name, customer_phone, expires_at)
+           VALUES ($1,$2,$3,$4,$5,'PENDING',$6,$7,$8,$9);`,
+          [txid, order.id, tenant.slug, amount, pixCopiaECola, newCharge.psp, order.customerName, order.customerPhone, expiresAt]
+        );
+        await client.query(
+          'UPDATE orders SET pix_transaction=$1::jsonb, payment_method=$2 WHERE id=$3 AND tenant_slug=$4;',
+          [JSON.stringify(newCharge), 'Pix Direto Restaurante', order.id, tenant.slug]
+        );
+        await client.query('COMMIT');
+      } catch (error: any) {
+        try { await client.query('ROLLBACK'); } catch { /* transaction already closed */ }
+        console.error('[Pix Charge] PostgreSQL transaction failed:', error?.message);
+        return res.status(503).json({ success: false, error: 'Não foi possível registrar a cobrança Pix.' });
+      } finally {
+        client.release();
+      }
     }
 
+    memoryPixTransactions.unshift(newCharge);
+    order.pixTransaction = newCharge;
+    order.paymentMethod = 'Pix Direto Restaurante';
     res.status(201).json({
       success: true,
-      message: 'Cobrança Pix Direta do Restaurante gerada com sucesso!',
-      data: newCharge,
+      message: 'Cobrança Pix gerada para o pedido.',
+      data: { txid, orderId: order.id, amountCents: amount, pixCopiaECola, status: 'PENDING', expiresAt },
     });
   });
 
-  // GET PIX CHARGE STATUS (POLLING LISTENER)
-  app.get('/api/v1/pix/:txid/status', (req: Request, res: Response) => {
-    const charge = memoryPixTransactions.find((c) => c.txid === req.params.txid);
-    if (!charge) {
-      return res.status(404).json({ error: 'Cobrança Pix não encontrada.' });
+  // Public polling endpoint exposes payment state only, never customer/order details.
+  app.get('/api/v1/pix/:txid/status', async (req: Request, res: Response) => {
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(`pix_status_${clientIp}`, 60, 60 * 1000)) return res.status(429).json({ error: 'Muitas consultas. Tente novamente em instantes.' });
+    let charge: any = memoryPixTransactions.find((item) => item.txid === req.params.txid);
+    if (!charge && pgPool) {
+      try {
+        const result = await pgPool.query('SELECT txid, status, paid_at, expires_at FROM pix_transactions WHERE txid = $1 LIMIT 1;', [req.params.txid]);
+        const row = result.rows[0];
+        if (row) charge = { txid: row.txid, status: row.status, paidAt: row.paid_at, expiresAt: row.expires_at };
+      } catch (error: any) {
+        return res.status(503).json({ error: 'Não foi possível consultar o pagamento.' });
+      }
     }
-    const order = memoryOrders.find((o) => o.id === charge.orderId);
-    res.json({
-      txid: charge.txid,
-      status: charge.status,
-      paidAt: charge.paidAt,
-      endToEndId: charge.endToEndId,
-      order,
-    });
+    if (!charge) return res.status(process.env.NODE_ENV === 'production' && !pgPool ? 503 : 404).json({ error: 'Cobrança Pix não encontrada.' });
+    return res.json({ txid: charge.txid, status: charge.status, paidAt: charge.paidAt, expiresAt: charge.expiresAt });
   });
 
   // OFFICIAL WEBHOOK RECEIVER FOR RESTAURANT DIRECT PIX ORDERS
   app.post('/api/v1/webhooks/pix', async (req: Request, res: Response) => {
-    const { txid, endToEndId, amountCents, paidAt, payer } = req.body;
-    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const { txid, endToEndId, amountCents, paidAt } = req.body || {};
+    const webhookSecret = process.env.PIX_WEBHOOK_TOKEN || '';
+    const suppliedSecret = String(req.headers['x-webhook-token'] || req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
+    if (!webhookSecret || !suppliedSecret) return res.status(401).json({ success: false, error: 'Webhook Pix não autenticado.' });
+    const expected = Buffer.from(webhookSecret), supplied = Buffer.from(suppliedSecret);
+    if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected, supplied)) return res.status(401).json({ success: false, error: 'Webhook Pix não autenticado.' });
+    if (typeof txid !== 'string' || !txid.trim() || !Number.isSafeInteger(Number(amountCents)) || Number(amountCents) <= 0) return res.status(400).json({ success: false, error: 'Identificador e valor válido da cobrança são obrigatórios.' });
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ success: false, error: 'PostgreSQL obrigatório para confirmar pagamentos em produção.' });
 
-    console.log(`[Pix Direto Loja] Recebida confirmação de pagamento para txid: ${txid}`);
+    let charge: any = memoryPixTransactions.find((item) => item.txid === txid);
+    if (!charge && pgPool) {
+      try {
+        const result = await pgPool.query('SELECT * FROM pix_transactions WHERE txid = $1 LIMIT 1;', [txid]);
+        const row = result.rows[0];
+        if (row) charge = {
+          txid: String(row.txid), orderId: String(row.order_id), tenantSlug: String(row.tenant_slug),
+          amountCents: Number(row.amount_cents), pixCopiaECola: String(row.pix_copia_e_cola), status: String(row.status),
+          expiresAt: row.expires_at, paidAt: row.paid_at, endToEndId: row.end_to_end_id,
+          psp: row.psp, customerName: row.customer_name, customerPhone: row.customer_phone,
+        };
+      } catch (error: any) {
+        return res.status(503).json({ success: false, error: 'Não foi possível consultar a cobrança Pix.' });
+      }
+    }
+    if (!charge) return res.status(404).json({ success: false, error: 'Cobrança Pix não encontrada.' });
 
-    let charge = memoryPixTransactions.find((c) => c.txid === txid);
-    let order = charge ? memoryOrders.find((o) => o.id === charge.orderId) : null;
+    let order: any = memoryOrders.find((item) => item.id === charge.orderId);
+    if (!order && pgPool) {
+      try {
+        const result = await pgPool.query('SELECT * FROM orders WHERE id = $1 AND tenant_slug = $2 LIMIT 1;', [charge.orderId, charge.tenantSlug]);
+        const row = result.rows[0];
+        if (row) order = {
+          id: String(row.id), orderNumber: Number(row.order_number), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+          customerName: String(row.customer_name), customerPhone: String(row.customer_phone), type: String(row.order_type),
+          items: Array.isArray(row.items) ? row.items : [], subtotalCents: Number(row.subtotal_cents),
+          deliveryFeeCents: Number(row.delivery_fee_cents), totalCents: Number(row.total_cents),
+          status: String(row.status), paymentStatus: String(row.payment_status || 'pending'),
+          paymentMethod: String(row.payment_method || 'Pix'), whatsAppLogs: Array.isArray(row.whatsapp_logs) ? row.whatsapp_logs : [],
+          createdAt: row.created_at, updatedAt: row.updated_at,
+        };
+      } catch (error: any) {
+        return res.status(503).json({ success: false, error: 'Não foi possível consultar o pedido associado à cobrança.' });
+      }
+    }
+    if (!order || order.tenantSlug !== charge.tenantSlug || Number(amountCents) !== Number(charge.amountCents) || Number(amountCents) !== Number(order.totalCents)) {
+      return res.status(409).json({ success: false, error: 'Valor, restaurante ou pedido não corresponde à cobrança registrada.' });
+    }
+    if (charge.status === 'PAID') return res.status(200).json({ success: true, duplicate: true, message: 'Pagamento já processado.' });
+    if (charge.status !== 'PENDING') return res.status(409).json({ success: false, error: 'Estado da cobrança não permite confirmação.' });
+    if (!charge.expiresAt || new Date(charge.expiresAt).getTime() <= Date.now()) {
+      if (pgPool) await pgPool.query("UPDATE pix_transactions SET status='EXPIRED' WHERE txid=$1 AND status='PENDING';", [txid]).catch(() => {});
+      charge.status = 'EXPIRED';
+      return res.status(410).json({ success: false, error: 'Cobrança Pix expirada.' });
+    }
+    const actualEndToEndId = String(endToEndId || '').trim();
+    if (!actualEndToEndId || actualEndToEndId.length > 80) return res.status(400).json({ success: false, error: 'EndToEndId ausente ou inválido na confirmação Pix.' });
+    const paidDate = paidAt ? new Date(paidAt) : new Date();
+    if (!Number.isFinite(paidDate.getTime()) || paidDate.getTime() > Date.now() + 5 * 60 * 1000) return res.status(400).json({ success: false, error: 'Data de pagamento inválida.' });
+    const actualPaidTime = paidDate.toISOString();
 
-    if (!charge && memoryOrders.length > 0) {
-      order = memoryOrders[0];
-      charge = {
-        txid: txid || `PIX_${Date.now()}`,
-        orderId: order.id,
-        tenantSlug: order.tenantSlug,
-        amountCents: order.totalCents,
-        status: 'PAID',
-      };
-      memoryPixTransactions.unshift(charge);
+    const tenant = memoryTenants.find((item) => item.slug === order.tenantSlug);
+    if (!tenant) return res.status(404).json({ success: false, error: 'Restaurante associado ao pedido não encontrado.' });
+    if (!(tenant as any).pixConfig?.autoApproveWebhook) return res.status(403).json({ success: false, error: 'Confirmação automática Pix está desativada para este restaurante.' });
+
+    const currentTime = actualPaidTime;
+    const totalFormatted = `R$ ${(order.totalCents / 100).toFixed(2).replace('.', ',')}`;
+    const customerFirstName = (order.customerName || 'Cliente').split(' ')[0];
+    const trackingUrl = `${String(process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '')}/rastreio/${order.id}`;
+    const pixNotificationText = `⚡ *Pagamento Pix Confirmado!*\n\nOlá, *${customerFirstName}*! Confirmamos o recebimento do seu Pix de *${totalFormatted}* diretamente na conta do *${tenant.name}*! 💰✅\n\nSeu pedido *#${order.orderNumber}* foi liberado imediatamente e já está na cozinha sendo preparado! 👨‍🍳🔥\n\n👉 *Acompanhe em tempo real pelo link:*\n${trackingUrl}`;
+
+    if (!order.whatsAppLogs) order.whatsAppLogs = [];
+    const logItem: any = {
+      timestamp: currentTime, event: 'pix.payment_confirmed',
+      detail: 'Pagamento Pix confirmado; notificação aguardando envio pela Evolution API.',
+      messageText: pixNotificationText, statusSent: 'pending',
+    };
+    order.whatsAppLogs.unshift(logItem);
+    const outboxEvent = {
+      id: `evt_${crypto.randomBytes(16).toString('hex')}`, tenantId: order.tenantId,
+      aggregateType: 'order', aggregateId: order.id, eventType: 'pix.payment_confirmed',
+      payload: { orderId: order.id, txid, endToEndId: actualEndToEndId, notificationText: pixNotificationText },
+      status: 'pending', processedAt: null,
+    };
+
+    if (pgPool) {
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        const lockedCharge = await client.query('SELECT status, amount_cents, order_id, tenant_slug, expires_at FROM pix_transactions WHERE txid=$1 FOR UPDATE;', [txid]);
+        const locked = lockedCharge.rows[0];
+        if (!locked || locked.status !== 'PENDING' || Number(locked.amount_cents) !== Number(amountCents) || locked.order_id !== order.id || locked.tenant_slug !== tenant.slug || new Date(locked.expires_at).getTime() <= Date.now()) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ success: false, error: 'Cobrança mudou de estado ou não corresponde ao pagamento.' });
+        }
+        const reusedEndToEnd = await client.query("SELECT txid FROM pix_transactions WHERE end_to_end_id=$1 AND status='PAID' LIMIT 1;", [actualEndToEndId]);
+        if (reusedEndToEnd.rows[0]) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ success: false, error: 'EndToEndId já utilizado em outra cobrança.' });
+        }
+        await client.query(
+          "UPDATE pix_transactions SET status='PAID', paid_at=$1, end_to_end_id=$2 WHERE txid=$3;",
+          [actualPaidTime, actualEndToEndId, txid]
+        );
+        await client.query(
+          "UPDATE orders SET payment_status='paid_online', status='confirmed', updated_at=NOW(), whatsapp_logs=$1::jsonb WHERE id=$2 AND tenant_slug=$3;",
+          [JSON.stringify(order.whatsAppLogs), order.id, tenant.slug]
+        );
+        await client.query(
+          'INSERT INTO outbox_events (id, tenant_id, aggregate_type, aggregate_id, event_type, payload, status, processed_at) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,NULL);',
+          [outboxEvent.id, outboxEvent.tenantId, outboxEvent.aggregateType, outboxEvent.aggregateId, outboxEvent.eventType, JSON.stringify(outboxEvent.payload), outboxEvent.status]
+        );
+        await client.query('COMMIT');
+      } catch (error: any) {
+        try { await client.query('ROLLBACK'); } catch { /* transaction already closed */ }
+        order.whatsAppLogs.shift();
+        console.error('[Pix Webhook] PostgreSQL transaction failed:', error?.message);
+        return res.status(503).json({ success: false, error: 'Não foi possível registrar o pagamento com segurança.' });
+      } finally {
+        client.release();
+      }
     }
 
-    const actualEndToEndId = endToEndId || `E${Date.now()}9876543210`;
-    const actualPaidTime = paidAt || new Date().toISOString();
+    charge.status = 'PAID';
+    charge.paidAt = actualPaidTime;
+    charge.endToEndId = actualEndToEndId;
+    order.paymentStatus = 'paid_online';
+    order.status = 'confirmed';
+    order.updatedAt = currentTime;
+    memoryOutboxEvents.push(outboxEvent);
 
-    if (charge) {
-      charge.status = 'PAID';
-      charge.paidAt = actualPaidTime;
-      charge.endToEndId = actualEndToEndId;
+    const tenantEvolutionUrl = String((tenant as any).evolutionApiUrl || '');
+    const evolutionApiUrl = tenantEvolutionUrl && isSafeExternalHttpsUrl(tenantEvolutionUrl) ? tenantEvolutionUrl : (process.env.EVOLUTION_API_URL || '');
+    const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
+    const instanceName = tenant.evolutionInstanceId || 'aladay';
+    let notificationDispatched = false;
+    if (evolutionApiUrl && evolutionApiKey) {
+      try {
+        const sendResponse = await fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${encodeURIComponent(instanceName)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: evolutionApiKey },
+          body: JSON.stringify({ number: order.customerPhone, text: pixNotificationText, options: { delay: 1000, presence: 'composing', linkPreview: true } }),
+        });
+        notificationDispatched = sendResponse.ok;
+      } catch (error: any) {
+        console.warn('[Evolution Pix Notification] Send failed:', error?.message);
+      }
     }
-
-    let tenant = memoryTenants[0];
-    if (order) {
-      tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
-      order.paymentStatus = 'paid_online';
-      order.status = 'confirmed';
-      order.updatedAt = currentTime;
-
-      const totalFormatted = `R$ ${(order.totalCents / 100).toFixed(2).replace('.', ',')}`;
-      const customerFirstName = (order.customerName || 'Cliente').split(' ')[0];
-      const trackingUrl = `https://aladay.com.br/rastreio/${order.id}`;
-
-      const pixNotificationText = `⚡ *Pagamento Pix Confirmado!*\n\nOlá, *${customerFirstName}*! Confirmamos o recebimento do seu Pix de *${totalFormatted}* diretamente na conta do *${tenant.name}*! 💰✅\n\nSeu pedido *#${order.orderNumber}* foi liberado imediatamente e já está na cozinha sendo preparado com todo capricho! 👨‍🍳🔥\n\n👉 *Acompanhe em tempo real pelo link:*\n${trackingUrl}`;
-
-      if (!order.whatsAppLogs) order.whatsAppLogs = [];
-      order.whatsAppLogs.unshift({
-        timestamp: currentTime,
-        event: 'pix.payment_confirmed',
-        detail: `Pix Direto confirmado na conta do restaurante. Pedido #${order.orderNumber} liberado para a cozinha!`,
-        messageText: pixNotificationText,
-        statusSent: 'confirmed',
-      });
-
-      const evolutionApiUrl = (tenant as any).evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
-      const evolutionApiKey = (tenant as any).evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405';
-      const instanceName = tenant.evolutionInstanceId || 'aladay';
-
-      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${instanceName}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: evolutionApiKey,
-        },
-        body: JSON.stringify({
-          number: order.customerPhone,
-          text: pixNotificationText,
-          options: { delay: 1000, presence: 'composing', linkPreview: true },
-        }),
-      }).catch((e) => console.log('Evolution send on Pix Webhook:', e.message));
+    logItem.statusSent = notificationDispatched ? 'sent' : 'pending';
+    logItem.detail = notificationDispatched ? 'Mensagem aceita pela Evolution API.' : 'Notificação pendente de envio.';
+    outboxEvent.status = notificationDispatched ? 'completed' : 'pending';
+    outboxEvent.processedAt = notificationDispatched ? new Date().toISOString() : null;
+    const webhookLog = {
+      id: `log_pix_webhook_${Date.now()}`, timestamp: currentTime, source: 'pix_gateway',
+      eventType: 'PIX_RECEIVED', instance: instanceName, senderPhone: order.customerPhone,
+      messageText: `Pagamento Pix confirmado para o pedido #${order.orderNumber}.`,
+      direction: 'inbound', status: notificationDispatched ? 'success' : 'pending',
+      payloadSummary: `Pix de R$ ${(Number(order.totalCents) / 100).toFixed(2)} confirmado.`,
+      fullPayload: { txid, endToEndId: actualEndToEndId, amountCents: order.totalCents, orderId: order.id, paidAt: actualPaidTime, status: 'PAID' },
+    };
+    memoryWebhookLogs.unshift(webhookLog);
+    if (pgPool && notificationDispatched) {
+      await pgPool.query('UPDATE outbox_events SET status=$1, processed_at=NOW() WHERE id=$2;', ['completed', outboxEvent.id]).catch(() => {});
+      await pgPool.query('UPDATE orders SET whatsapp_logs=$1::jsonb WHERE id=$2 AND tenant_slug=$3;', [JSON.stringify(order.whatsAppLogs), order.id, tenant.slug]).catch(() => {});
     }
-
-    memoryWebhookLogs.unshift({
-      id: `log_pix_webhook_${Date.now()}`,
-      timestamp: currentTime,
-      source: 'pix_gateway',
-      eventType: 'PIX_RECEIVED',
-      instance: tenant.evolutionInstanceId || 'aladay',
-      senderPhone: order?.customerPhone || payer?.phone || '559181214188',
-      messageText: `💰 Pix Direto Loja confirmado. txid: ${charge?.txid || txid}. Pedido #${order?.orderNumber || ''} liberado!`,
-      direction: 'inbound',
-      status: 'success',
-      payloadSummary: `Pix de R$ ${((order?.totalCents || amountCents || 8580) / 100).toFixed(2)} liquidado direto na conta do restaurante`,
-      fullPayload: {
-        event: 'pix.received',
-        txid: charge?.txid || txid,
-        endToEndId: actualEndToEndId,
-        amountCents: order?.totalCents || amountCents,
-        orderId: order?.id,
-        orderNumber: order?.orderNumber,
-        paidAt: actualPaidTime,
-        status: 'PAID',
-      },
-    });
 
     res.json({
       success: true,
-      message: 'Notificação de Pix Direto processada com sucesso. Pedido liberado para a cozinha!',
-      data: {
-        txid: charge?.txid || txid,
-        endToEndId: actualEndToEndId,
-        orderId: order?.id,
-        paymentStatus: 'paid_online',
-        orderStatus: order?.status || 'confirmed',
-      },
+      message: notificationDispatched ? 'Pagamento confirmado; notificação aceita pela Evolution API.' : 'Pagamento confirmado; notificação permanece pendente.',
+      data: { txid, endToEndId: actualEndToEndId, orderId: order.id, paymentStatus: 'paid_online', orderStatus: order.status, notificationDispatched },
     });
   });
 
   // OFFICIAL WEBHOOK RECEIVER FOR GATEWAY NACIONAL ASAAS (EXCLUSIVO ASSINATURAS SAAS R$ 129,90/MÊS)
   const handleAsaasSubscriptionWebhook = async (req: Request, res: Response) => {
     // SECURITY: Validate Asaas Access Token Header
-    const receivedToken = (req.headers['asaas-access-token'] as string) || '';
-    const configuredToken = process.env.ASAAS_WEBHOOK_TOKEN || asaasGatewayConfig.webhookToken;
-    if (configuredToken && receivedToken !== configuredToken) {
-      console.warn(`[Segurança Asaas] Tentativa de webhook rejeitada por token inválido ou ausente.`);
+    const receivedToken = String(req.headers['asaas-access-token'] || '');
+    const configuredToken = String(process.env.ASAAS_WEBHOOK_TOKEN || asaasGatewayConfig.webhookToken || '');
+    const expectedTokenBuffer = Buffer.from(configuredToken);
+    const receivedTokenBuffer = Buffer.from(receivedToken);
+    if (!configuredToken || !receivedToken || expectedTokenBuffer.length !== receivedTokenBuffer.length || !crypto.timingSafeEqual(expectedTokenBuffer, receivedTokenBuffer)) {
+      console.warn('[Segurança Asaas] Webhook rejeitado: token ausente ou inválido.');
       return res.status(401).json({ error: 'Acesso não autorizado: token de webhook Asaas inválido.' });
     }
 
-    const { event, payment, subscription } = req.body;
+    const { event, payment, subscription } = req.body || {};
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-    console.log(`[Asaas SaaS Billing aladay.com.br] Evento de assinatura recebido: ${event}`);
-
     if (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED') {
-      const tenantSlug = payment?.externalReference || subscription?.externalReference || 'aladay';
-      const paymentId = payment?.id || `pay_asaas_${Date.now()}`;
-      const amountReais = payment?.value || 129.9;
+      const tenantSlug = String(payment?.externalReference || subscription?.externalReference || '');
+      const paymentId = String(payment?.id || '');
+      const amountReais = Number(payment?.value);
+      if (!tenantSlug || !paymentId || !Number.isFinite(amountReais) || Math.abs(amountReais - 129.9) > 0.001) {
+        return res.status(400).json({ error: 'Evento Asaas sem referência, identificador ou valor esperado da assinatura.' });
+      }
 
-      const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.id === tenantSlug) || memoryTenants[0];
+      const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.id === tenantSlug);
+      if (!tenant) return res.status(404).json({ error: 'Restaurante associado ao pagamento não encontrado.' });
       tenant.subscriptionStatus = 'active';
 
       memoryWebhookLogs.unshift({
@@ -1135,7 +1438,7 @@ async function startServer() {
         source: 'pix_gateway',
         eventType: `ASAAS_SAAS_${event}`,
         instance: tenant.evolutionInstanceId || 'aladay',
-        senderPhone: tenant.phone || '559181214188',
+        senderPhone: tenant.phone || '',
         messageText: `✅ Assinatura Mensal Aladay (R$ ${Number(amountReais).toFixed(2).replace('.', ',')}) confirmada pelo Asaas (${paymentId}) para o lojista ${tenant.name}.`,
         direction: 'inbound',
         status: 'success',
@@ -1162,150 +1465,90 @@ async function startServer() {
   app.post('/api/v1/webhooks/asaas', handleAsaasSubscriptionWebhook);
   app.post('/api/v1/webhooks/asaas-subscriptions', handleAsaasSubscriptionWebhook);
 
-  // SIMULATE BANK PAYMENT FOR TESTING (PROTECTED IN PRODUCTION)
-  app.post('/api/v1/pix/simulate-payment', async (req: Request, res: Response) => {
-    // In production, block simulation unless authenticated as SUPER_ADMIN
-    if (process.env.NODE_ENV === 'production') {
-      const authHeader = req.headers['authorization'];
-      const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-      const claims = token ? verifyJwtToken(token) : null;
-      if (!claims || claims.role !== 'SUPER_ADMIN') {
-        return res.status(403).json({
-          error: 'Simulação de pagamento desativada em ambiente de produção para segurança dos dados.',
-        });
-      }
-    }
+  // SIMULATE BANK PAYMENT FOR TESTING — development only.
+  app.post('/api/v1/pix/simulate-payment', requireSuperAdmin, async (req: Request, res: Response) => {
+    if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'Simulação de pagamento é proibida em produção.' });
 
-    const { txid, orderId } = req.body;
-    let targetTxid = txid;
+    const { txid, orderId } = req.body || {};
+    const charge = memoryPixTransactions.find((item) => item.txid === String(txid || '') || (orderId && item.orderId === String(orderId)));
+    if (!charge) return res.status(404).json({ error: 'Cobrança Pix pendente não encontrada.' });
+    if (charge.status !== 'PENDING') return res.status(409).json({ error: 'A cobrança não está pendente.' });
+    if (!charge.expiresAt || new Date(charge.expiresAt).getTime() <= Date.now()) return res.status(410).json({ error: 'A cobrança Pix expirou.' });
 
-    if (!targetTxid && orderId) {
-      const existing = memoryPixTransactions.find((c) => c.orderId === orderId);
-      if (existing) targetTxid = existing.txid;
-    }
+    const order = memoryOrders.find((item) => item.id === charge.orderId);
+    if (!order || order.tenantSlug !== charge.tenantSlug || Number(order.totalCents) !== Number(charge.amountCents)) return res.status(409).json({ error: 'Pedido não corresponde à cobrança Pix.' });
+    const tenant = memoryTenants.find((item) => item.slug === order.tenantSlug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante do pedido não encontrado.' });
 
-    const payload = {
-      event: 'PIX_RECEIVED',
-      txid: targetTxid || `PIX_${Date.now()}`,
-      endToEndId: `E${Date.now()}SIMULATED999`,
-      amountCents: 8580,
-      paidAt: new Date().toISOString(),
-      payer: { name: 'Adriano Saraiva', phone: '559181214188' },
-    };
+    const paidAt = new Date().toISOString();
+    const endToEndId = `E${crypto.randomBytes(16).toString('hex').toUpperCase()}`;
+    charge.status = 'PAID';
+    charge.paidAt = paidAt;
+    charge.endToEndId = endToEndId;
+    order.paymentStatus = 'paid_online';
+    order.status = 'confirmed';
+    order.updatedAt = paidAt;
 
-    const charge = memoryPixTransactions.find((c) => c.txid === payload.txid) || memoryPixTransactions[0];
-    const order = memoryOrders.find((o) => o.id === orderId) || (charge ? memoryOrders.find((o) => o.id === charge.orderId) : memoryOrders[0]);
-
-    if (charge) {
-      charge.status = 'PAID';
-      charge.paidAt = payload.paidAt;
-      charge.endToEndId = payload.endToEndId;
-    }
-
-    if (order) {
-      const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
-      const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      order.paymentStatus = 'paid_online';
-      order.status = 'confirmed';
-      order.updatedAt = currentTime;
-
-      const totalFormatted = `R$ ${(order.totalCents / 100).toFixed(2).replace('.', ',')}`;
-      const customerFirstName = (order.customerName || 'Cliente').split(' ')[0];
-      const trackingUrl = `https://agencia-n8n.2eoc7n.easypanel.host/pedido/${order.id}`;
-
-      const pixNotificationText = `⚡ *Pagamento Pix Confirmado!*\n\nOlá, *${customerFirstName}*! Confirmamos o recebimento do seu Pix de *${totalFormatted}* com sucesso! 💰✅\n\nSeu pedido *#${order.orderNumber}* foi liberado imediatamente e já está na cozinha sendo preparado com todo capricho no *${tenant.name}*! 👨‍🍳🔥\n\n👉 *Acompanhe em tempo real pelo link:*\n${trackingUrl}`;
-
-      if (!order.whatsAppLogs) order.whatsAppLogs = [];
-      order.whatsAppLogs.unshift({
-        timestamp: currentTime,
-        event: 'pix.payment_confirmed',
-        detail: `Pix confirmado via Webhook. Pedido #${order.orderNumber} liberado para a cozinha!`,
-        messageText: pixNotificationText,
-        statusSent: 'confirmed',
-      });
-
-      const evolutionApiUrl = (tenant as any).evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
-      const evolutionApiKey = (tenant as any).evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405';
-      const instanceName = tenant.evolutionInstanceId || 'aladay';
-
-      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${instanceName}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: evolutionApiKey,
-        },
-        body: JSON.stringify({
-          number: order.customerPhone,
-          text: pixNotificationText,
-          options: { delay: 1000, presence: 'composing', linkPreview: true },
-        }),
-      }).catch((e) => console.log('Evolution send on Pix Simulate:', e.message));
-
-      memoryWebhookLogs.unshift({
-        id: `log_pix_sim_${Date.now()}`,
-        timestamp: currentTime,
-        source: 'pix_gateway',
-        eventType: 'PIX_RECEIVED',
-        instance: instanceName,
-        senderPhone: order.customerPhone,
-        messageText: `💰 Simulação de Pix aprovada para Pedido #${order.orderNumber} (${order.customerName}).`,
-        direction: 'inbound',
-        status: 'success',
-        payloadSummary: `Pix de ${totalFormatted} aprovado via simulador de banco`,
-        fullPayload: {
-          event: 'pix.simulated',
-          txid: payload.txid,
-          orderId: order.id,
-          orderNumber: order.orderNumber,
-          amountCents: order.totalCents,
-          paidAt: payload.paidAt,
-        },
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'Simulação de pagamento Pix executada! Pedido liberado para a cozinha.',
-      data: {
-        txid: payload.txid,
-        order,
-      },
+    memoryWebhookLogs.unshift({
+      id: `log_pix_sim_${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString('pt-BR'),
+      source: 'pix_gateway',
+      eventType: 'PIX_SIMULATED',
+      instance: tenant.evolutionInstanceId || 'aladay',
+      senderPhone: order.customerPhone,
+      messageText: `Simulação de Pix para o pedido #${order.orderNumber}.`,
+      direction: 'inbound',
+      status: 'success',
+      payloadSummary: `Simulação local de pagamento de ${charge.amountCents} centavos.`,
+      fullPayload: { txid: charge.txid, orderId: order.id, amountCents: charge.amountCents, paidAt },
     });
+
+    res.json({ success: true, message: 'Simulação local concluída. Nenhum banco ou provedor foi notificado.', data: { txid: charge.txid, orderId: order.id, status: charge.status, paidAt } });
   });
 
   // GET Tenant Pix Config
   app.get('/api/v1/tenants/:slug/pix-config', (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
-    res.json({
-      data: tenant.pixConfig || {
-        provider: 'openpix',
-        pixKey: tenant.phone || '5511987654321',
-        pixKeyType: 'phone',
-        merchantName: tenant.name,
-        merchantCity: 'SAO PAULO',
-        autoApproveWebhook: true,
-      },
-    });
+    res.json({ data: tenant.pixConfig || null, configured: Boolean(tenant.pixConfig?.pixKey) });
   });
 
   // PUT Tenant Pix Config (Protected by Tenant JWT Guard)
-  app.put('/api/v1/tenants/:slug/pix-config', requireTenantAccess('slug'), (req: Request, res: Response) => {
+  app.put('/api/v1/tenants/:slug/pix-config', requireTenantAccess('slug'), async (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
 
-    const { provider, pixKey, pixKeyType, merchantName, merchantCity, autoApproveWebhook } = req.body;
+    const { provider, pixKey, pixKeyType, merchantName, merchantCity, autoApproveWebhook } = req.body || {};
+    const cleanPixKey = String(pixKey || '').trim();
+    const cleanMerchantName = String(merchantName || '').trim();
+    const cleanMerchantCity = String(merchantCity || '').trim();
+    if (!cleanPixKey || cleanPixKey.length > 150) return res.status(400).json({ error: 'Informe uma chave Pix válida.' });
+    if (!['cpf', 'cnpj', 'email', 'phone', 'random'].includes(pixKeyType)) return res.status(400).json({ error: 'Tipo de chave Pix inválido.' });
+    if (cleanMerchantName.length < 2 || cleanMerchantName.length > 25) return res.status(400).json({ error: 'Nome do recebedor deve ter de 2 a 25 caracteres.' });
+    if (cleanMerchantCity.length < 2 || cleanMerchantCity.length > 15) return res.status(400).json({ error: 'Cidade do recebedor deve ter de 2 a 15 caracteres.' });
+    if (autoApproveWebhook === true && !process.env.PIX_WEBHOOK_TOKEN) return res.status(503).json({ error: 'Configure PIX_WEBHOOK_TOKEN antes de habilitar confirmação automática.' });
 
-    tenant.pixConfig = {
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ error: 'PostgreSQL obrigatório para salvar a configuração Pix em produção.' });
+    const updatedPixConfig = {
       ...(tenant.pixConfig || {}),
-      provider: provider || 'openpix',
-      pixKey: pixKey ? String(pixKey).trim() : tenant.phone,
-      pixKeyType: pixKeyType || 'phone',
-      merchantName: merchantName ? String(merchantName).trim().slice(0, 25) : tenant.name.slice(0, 25),
-      merchantCity: merchantCity ? String(merchantCity).trim().slice(0, 15).toUpperCase() : 'SAO PAULO',
-      autoApproveWebhook: autoApproveWebhook ?? true,
+      provider: provider || 'direct_bank',
+      pixKey: cleanPixKey,
+      pixKeyType,
+      merchantName: cleanMerchantName,
+      merchantCity: cleanMerchantCity.toUpperCase(),
+      autoApproveWebhook: autoApproveWebhook === true,
       updatedAt: new Date().toISOString(),
     };
+    if (pgPool) {
+      try {
+        const result = await pgPool.query('UPDATE tenants SET pix_config=$1::jsonb, updated_at=NOW() WHERE slug=$2;', [JSON.stringify(updatedPixConfig), tenant.slug]);
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Restaurante não encontrado no banco de dados.' });
+      } catch (error: any) {
+        console.error('[Pix Config] PostgreSQL update failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível persistir a configuração Pix.' });
+      }
+    }
+    tenant.pixConfig = updatedPixConfig;
 
     res.json({
       success: true,
@@ -1388,131 +1631,197 @@ async function startServer() {
   // Update order status in KDS and trigger WhatsApp Notification (Protected by JWT Guard)
   app.patch('/api/v1/orders/:id/status', authenticateToken, async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const { status } = req.body;
-    const order = memoryOrders.find((o) => o.id === req.params.id);
-    if (!order) {
-      return res.status(404).json({ error: 'Pedido não encontrado.' });
-    }
+    const { status } = req.body || {};
+    const validStatuses = ['received', 'confirmed', 'preparing', 'ready', 'delivered', 'cancelled'];
+    if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Status de pedido inválido.' });
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ error: 'PostgreSQL obrigatório para atualizar pedidos em produção.' });
 
-    // RBAC: Super Admin or tenant staff of the order
-    if (user.role !== 'SUPER_ADMIN' && user.tenant_slug !== '*' && user.tenant_slug !== order.tenantSlug) {
+    let order: any = memoryOrders.find((item) => item.id === req.params.id);
+    if (!order && pgPool) {
+      try {
+        const result = await pgPool.query('SELECT * FROM orders WHERE id = $1 LIMIT 1;', [req.params.id]);
+        const row = result.rows[0];
+        if (row) {
+          order = {
+            id: String(row.id), orderNumber: Number(row.order_number), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+            customerName: String(row.customer_name), customerPhone: String(row.customer_phone), type: String(row.order_type),
+            deliveryAddress: row.delivery_address || undefined, items: Array.isArray(row.items) ? row.items : [],
+            subtotalCents: Number(row.subtotal_cents), deliveryFeeCents: Number(row.delivery_fee_cents), totalCents: Number(row.total_cents),
+            status: String(row.status), paymentStatus: String(row.payment_status || 'pending'), paymentMethod: String(row.payment_method || 'Pix'),
+            whatsAppLogs: Array.isArray(row.whatsapp_logs) ? row.whatsapp_logs : [], createdAt: row.created_at, updatedAt: row.updated_at,
+          };
+          memoryOrders.push(order);
+        }
+      } catch (error: any) {
+        console.error('[Order Status] PostgreSQL lookup failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível carregar o pedido.' });
+      }
+    }
+    if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
+
+    if (user.role !== 'SUPER_ADMIN' && user.tenant_slug !== '*' && user.tenant_slug !== order.tenantSlug && user.tenant_id !== order.tenantId) {
       return res.status(403).json({ error: 'Acesso negado: você não tem permissão para alterar pedidos deste restaurante.' });
     }
+    const tenant = memoryTenants.find((item) => item.slug === order.tenantSlug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante do pedido não encontrado.' });
 
-    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
-    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const transitions: Record<string, string[]> = {
+      received: ['confirmed', 'cancelled'],
+      confirmed: ['preparing', 'cancelled'],
+      preparing: ['ready', 'cancelled'],
+      ready: ['delivered', 'cancelled'],
+      delivered: [],
+      cancelled: [],
+    };
+    if (status === order.status) return res.json({ message: 'O pedido já está neste status.', data: order, notification: { dispatched: false } });
+    if (!transitions[order.status]?.includes(status)) return res.status(409).json({ error: 'Transição de status não permitida.' });
 
+    const previousStatus = order.status;
+    const currentTime = new Date().toISOString();
     order.status = status;
     order.updatedAt = currentTime;
-
-    // Build notification message text
-    const notificationText = buildStatusNotificationText(order, tenant, status);
-
-    // Append to order's internal WhatsApp audit trail
     if (!order.whatsAppLogs) order.whatsAppLogs = [];
-    const logItem = {
+    const notificationText = buildStatusNotificationText(order, tenant, status);
+    const logItem: any = {
       timestamp: currentTime,
       event: `order.status_${status}`,
-      detail: `Status alterado para "${status}". Mensagem WhatsApp despachada via Evolution API (${tenant.evolutionInstanceId || 'aladay'}).`,
+      detail: 'Notificação aguardando confirmação de envio pela Evolution API.',
       messageText: notificationText,
-      statusSent: status,
+      statusSent: 'pending',
     };
     order.whatsAppLogs.unshift(logItem);
 
-    // Record Outbox event
-    memoryOutboxEvents.push({
-      id: `evt_${Date.now()}`,
+    const outboxEvent: any = {
+      id: `evt_${crypto.randomBytes(16).toString('hex')}`,
       tenantId: order.tenantId,
       aggregateType: 'order',
       aggregateId: order.id,
-      eventType: `order.status_changed`,
+      eventType: 'order.status_changed',
       payload: { orderId: order.id, status, notificationText },
-      status: 'completed',
-      processedAt: new Date().toISOString(),
-    });
+      status: 'pending',
+      processedAt: null,
+    };
 
-    // Record to Webhook Logs inspector
+    if (pgPool) {
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          'UPDATE orders SET status = $1, updated_at = NOW(), whatsapp_logs = $2::jsonb WHERE id = $3 AND tenant_slug = $4;',
+          [status, JSON.stringify(order.whatsAppLogs), order.id, tenant.slug]
+        );
+        await client.query(
+          'INSERT INTO outbox_events (id, tenant_id, aggregate_type, aggregate_id, event_type, payload, status, processed_at) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NULL);',
+          [outboxEvent.id, outboxEvent.tenantId, outboxEvent.aggregateType, outboxEvent.aggregateId, outboxEvent.eventType, JSON.stringify(outboxEvent.payload), outboxEvent.status]
+        );
+        await client.query('COMMIT');
+      } catch (error: any) {
+        try { await client.query('ROLLBACK'); } catch { /* transaction already closed */ }
+        order.status = previousStatus;
+        order.whatsAppLogs.shift();
+        console.error('[Order Status] PostgreSQL transaction failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível persistir a atualização do pedido.' });
+      } finally {
+        client.release();
+      }
+    }
+
+    const instanceName = tenant.evolutionInstanceId || 'aladay';
+    const tenantEvolutionUrl = String((tenant as any).evolutionApiUrl || '');
+    const evolutionApiUrl = tenantEvolutionUrl && isSafeExternalHttpsUrl(tenantEvolutionUrl) ? tenantEvolutionUrl : (process.env.EVOLUTION_API_URL || '');
+    const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
+    let notificationDispatched = false;
+    if (evolutionApiUrl && evolutionApiKey && order.customerPhone) {
+      try {
+        const sendResponse = await fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${encodeURIComponent(instanceName)}`, {
+          method: 'POST',
+          headers: { apikey: evolutionApiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ number: order.customerPhone, text: notificationText, options: { delay: 1200, presence: 'composing', linkPreview: true } }),
+        });
+        notificationDispatched = sendResponse.ok;
+      } catch (error: any) {
+        console.warn('[Evolution API Notification] Send failed:', error?.message);
+      }
+    }
+
+    logItem.statusSent = notificationDispatched ? 'sent' : 'pending';
+    logItem.detail = notificationDispatched ? 'Mensagem aceita pela Evolution API.' : 'Mensagem pendente: Evolution API não configurada ou envio não confirmado.';
+    outboxEvent.status = notificationDispatched ? 'completed' : 'pending';
+    outboxEvent.processedAt = notificationDispatched ? new Date().toISOString() : null;
+    memoryOutboxEvents.push(outboxEvent);
+
     const webhookLogEntry = {
       id: `log_dispatch_${Date.now()}`,
       timestamp: currentTime,
       source: 'evolution',
       eventType: 'SEND_MESSAGE',
-      instance: tenant.evolutionInstanceId || 'aladay',
+      instance: instanceName,
       senderPhone: order.customerPhone,
       messageText: notificationText,
       direction: 'outbound',
-      status: 'success',
-      payloadSummary: `Status "${status}" despachado para WhatsApp de ${order.customerName} (${order.customerPhone})`,
-      fullPayload: {
-        number: order.customerPhone,
-        text: notificationText,
-        options: { delay: 1000, presence: 'composing', linkPreview: true },
-        orderId: order.id,
-        orderStatus: status,
-      },
+      status: notificationDispatched ? 'success' : 'pending',
+      payloadSummary: notificationDispatched ? `Mensagem aceita pela Evolution API para o pedido #${order.orderNumber}.` : `Envio pendente para o pedido #${order.orderNumber}.`,
+      fullPayload: { number: order.customerPhone, orderId: order.id, orderStatus: status },
     };
     memoryWebhookLogs.unshift(webhookLogEntry);
     if (memoryWebhookLogs.length > 60) memoryWebhookLogs.pop();
 
-    // Fire actual HTTP request to Evolution API if server is reachable (non-blocking)
-    const evolutionApiUrl = (tenant as any).evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
-    const evolutionApiKey = (tenant as any).evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405';
-    const instanceName = tenant.evolutionInstanceId || 'aladay';
-
-    try {
-      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${instanceName}`, {
-        method: 'POST',
-        headers: {
-          apikey: evolutionApiKey,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          number: order.customerPhone,
-          text: notificationText,
-          options: {
-            delay: 1200,
-            presence: 'composing',
-            linkPreview: true,
-          },
-        }),
-      }).catch((err) => {
-        console.log(`[Evolution API Notification] Disparo assíncrono finalizado para ${order.customerPhone}:`, err.message);
-      });
-    } catch {
-      // Graceful fallback in simulator mode
+    if (pgPool) {
+      try {
+        await pgPool.query(
+          'UPDATE orders SET whatsapp_logs = $1::jsonb WHERE id = $2 AND tenant_slug = $3;',
+          [JSON.stringify(order.whatsAppLogs), order.id, tenant.slug]
+        );
+        if (notificationDispatched) await pgPool.query('UPDATE outbox_events SET status = $1, processed_at = NOW() WHERE id = $2;', ['completed', outboxEvent.id]);
+      } catch (error: any) {
+        console.warn('[Outbox] Could not update notification delivery state:', error?.message);
+      }
     }
 
     res.json({
-      message: `Status do pedido #${order.orderNumber} atualizado para "${status}". Notificação WhatsApp despachada!`,
+      message: notificationDispatched ? `Status do pedido #${order.orderNumber} atualizado e mensagem aceita pela Evolution API.` : `Status do pedido #${order.orderNumber} atualizado; notificação permanece pendente.`,
       data: order,
-      notification: {
-        dispatched: true,
-        instance: instanceName,
-        customerPhone: order.customerPhone,
-        customerName: order.customerName,
-        messageText: notificationText,
-        timestamp: currentTime,
-      },
+      notification: { dispatched: notificationDispatched, instance: instanceName, customerPhone: order.customerPhone, customerName: order.customerName, messageText: notificationText, timestamp: currentTime },
     });
   });
 
   // Get specific order details
-  app.get('/api/v1/orders/:id', (req: Request, res: Response) => {
+  app.get('/api/v1/orders/:id', authenticateToken, (req: Request, res: Response) => {
     const order = memoryOrders.find((o) => o.id === req.params.id);
-    if (!order) {
-      return res.status(404).json({ error: 'Pedido não encontrado.' });
-    }
-    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
-    res.json({ data: order, tenant });
+    if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
+    const user = (req as any).user;
+    if (user.role !== 'SUPER_ADMIN' && user.tenant_slug !== order.tenantSlug) return res.status(403).json({ error: 'Acesso negado a este pedido.' });
+    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante do pedido não encontrado.' });
+    res.json({ data: order, tenant: toPublicTenant(tenant) });
   });
 
   // Public Order Tracking Endpoint (Real-time customer view)
-  app.get('/api/v1/orders/:id/tracking', (req: Request, res: Response) => {
-    const order = memoryOrders.find((o) => o.id === req.params.id);
-    if (!order) {
-      return res.status(404).json({ error: 'Pedido não encontrado para rastreamento.' });
+  app.get('/api/v1/orders/:id/tracking', async (req: Request, res: Response) => {
+    let order: any = memoryOrders.find((item) => item.id === req.params.id);
+    if (!order && pgPool) {
+      try {
+        const result = await pgPool.query('SELECT * FROM orders WHERE id = $1 LIMIT 1;', [req.params.id]);
+        const row = result.rows[0];
+        if (row) {
+          order = {
+            id: String(row.id), orderNumber: Number(row.order_number), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+            customerName: String(row.customer_name), customerPhone: String(row.customer_phone), type: String(row.order_type),
+            deliveryAddress: row.delivery_address || undefined, items: Array.isArray(row.items) ? row.items : [],
+            subtotalCents: Number(row.subtotal_cents), deliveryFeeCents: Number(row.delivery_fee_cents), totalCents: Number(row.total_cents),
+            status: String(row.status), paymentStatus: String(row.payment_status || 'pending'), paymentMethod: String(row.payment_method || 'Pix'),
+            createdAt: row.created_at, updatedAt: row.updated_at,
+          };
+          memoryOrders.push(order);
+        }
+      } catch (error: any) {
+        console.error('[Order Tracking] PostgreSQL query failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível consultar o pedido agora.' });
+      }
     }
-    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
+    if (!order) return res.status(process.env.NODE_ENV === 'production' && !pgPool ? 503 : 404).json({ error: 'Pedido não encontrado para rastreamento.' });
+    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante do pedido não encontrado.' });
 
     const timelineSteps = [
       {
@@ -1554,14 +1863,29 @@ async function startServer() {
 
     res.json({
       data: {
-        order,
+        order: {
+          id: order.id,
+          orderNumber: order.orderNumber,
+          customerName: String(order.customerName || '').split(' ')[0],
+          type: order.type,
+          items: (order.items || []).map((item: any) => ({
+            productName: item.productName,
+            quantity: item.quantity,
+            selectedOptions: item.selectedOptions || [],
+            totalCents: item.totalCents,
+          })),
+          subtotalCents: order.subtotalCents,
+          deliveryFeeCents: order.deliveryFeeCents,
+          totalCents: order.totalCents,
+          status: order.status,
+          paymentStatus: order.paymentStatus,
+          paymentMethod: order.paymentMethod,
+          createdAt: order.createdAt,
+        },
         tenant: {
           name: tenant.name,
           slug: tenant.slug,
-          phone: tenant.phone,
-          address: tenant.address,
           primaryColor: tenant.primaryColor,
-          evolutionInstanceId: tenant.evolutionInstanceId || 'aladay',
         },
         timelineSteps,
         lastUpdated: order.updatedAt || order.createdAt,
@@ -1570,16 +1894,19 @@ async function startServer() {
   });
 
   // Manual Test Notification Dispatcher (Trigger WhatsApp notification for any status)
-  app.post('/api/v1/orders/:id/test-notification', async (req: Request, res: Response) => {
-    const { status, customPhone } = req.body;
+  app.post('/api/v1/orders/:id/test-notification', authenticateToken, async (req: Request, res: Response) => {
+    const { status, customPhone } = req.body || {};
+    const user = (req as any).user;
     const order = memoryOrders.find((o) => o.id === req.params.id);
-    if (!order) {
-      return res.status(404).json({ error: 'Pedido não encontrado.' });
-    }
+    if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
+    if (user.role !== 'SUPER_ADMIN' && user.tenant_slug !== order.tenantSlug) return res.status(403).json({ error: 'Acesso negado a este pedido.' });
 
-    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
-    const targetPhone = customPhone || order.customerPhone || '559181214188';
-    const targetStatus = status || order.status || 'confirmed';
+    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante do pedido não encontrado.' });
+    const targetPhone = user.role === 'SUPER_ADMIN' && customPhone ? String(customPhone).replace(/\D/g, '') : order.customerPhone;
+    if (!targetPhone || targetPhone.length < 10 || targetPhone.length > 15) return res.status(400).json({ error: 'Telefone de destino inválido.' });
+    const allowedStatuses = ['received', 'confirmed', 'preparing', 'ready', 'delivered', 'cancelled'];
+    const targetStatus = allowedStatuses.includes(status) ? status : order.status;
     const notificationText = buildStatusNotificationText(order, tenant, targetStatus);
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -1629,7 +1956,7 @@ async function startServer() {
   ];
 
   // GET notification templates for a tenant
-  app.get('/api/v1/tenants/:slug/notification-templates', (req: Request, res: Response) => {
+  app.get('/api/v1/tenants/:slug/notification-templates', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
@@ -1650,7 +1977,7 @@ async function startServer() {
   });
 
   // PUT notification templates for a tenant
-  app.put('/api/v1/tenants/:slug/notification-templates', (req: Request, res: Response) => {
+  app.put('/api/v1/tenants/:slug/notification-templates', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
@@ -1670,12 +1997,16 @@ async function startServer() {
   });
 
   // POST test-send custom notification template
-  app.post('/api/v1/notifications/test-send', async (req: Request, res: Response) => {
-    const { tenantSlug, templateKey, customText, customPhone, orderId } = req.body;
-    const tenant = memoryTenants.find((t) => t.slug === tenantSlug) || memoryTenants[0];
-    const order = memoryOrders.find((o) => o.id === orderId) || memoryOrders[0];
+  app.post('/api/v1/notifications/test-send', authenticateToken, async (req: Request, res: Response) => {
+    const { tenantSlug, templateKey, customText, customPhone, orderId } = req.body || {};
+    const user = (req as any).user;
+    const tenant = memoryTenants.find((t) => t.slug === String(tenantSlug || ''));
+    const order = memoryOrders.find((o) => o.id === String(orderId || ''));
+    if (!tenant || !order || order.tenantSlug !== tenant.slug) return res.status(404).json({ error: 'Restaurante ou pedido não encontrado.' });
+    if (user.role !== 'SUPER_ADMIN' && user.tenant_slug !== tenant.slug) return res.status(403).json({ error: 'Acesso negado a este restaurante.' });
 
-    const targetPhone = (customPhone || order?.customerPhone || '559181214188').replace(/\D/g, '');
+    const targetPhone = (user.role === 'SUPER_ADMIN' && customPhone ? String(customPhone) : String(order.customerPhone || '')).replace(/\D/g, '');
+    if (targetPhone.length < 10 || targetPhone.length > 15) return res.status(400).json({ error: 'Telefone de destino inválido.' });
     const vars = getOrderTemplateVars(order, tenant);
     const textToSend = customText
       ? interpolateTemplate(customText, vars)
@@ -1684,8 +2015,9 @@ async function startServer() {
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     // Evolution API credentials from tenant or default Easypanel
-    const evolutionApiUrl = (tenant as any).evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
-    const evolutionApiKey = (tenant as any).evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405';
+    const tenantEvolutionUrl = String((tenant as any).evolutionApiUrl || '');
+    const evolutionApiUrl = tenantEvolutionUrl && isSafeExternalHttpsUrl(tenantEvolutionUrl) ? tenantEvolutionUrl : (process.env.EVOLUTION_API_URL || '');
+    const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
     const instanceName = tenant.evolutionInstanceId || 'aladay';
 
     // Record Webhook Log
@@ -1709,7 +2041,7 @@ async function startServer() {
 
     let evolutionResult: any = { status: 'logged_locally' };
     try {
-      const response = await fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${instanceName}`, {
+      const response = await fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${encodeURIComponent(instanceName)}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1747,7 +2079,7 @@ async function startServer() {
   });
 
   // Update tenant general settings
-  app.put('/api/v1/tenants/:slug/settings', (req: Request, res: Response) => {
+  app.put('/api/v1/tenants/:slug/settings', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
@@ -1763,103 +2095,248 @@ async function startServer() {
     if (typeof minOrderCents === 'number') tenant.minOrderCents = minOrderCents;
     if (Array.isArray(deliveryZones)) tenant.deliveryZones = deliveryZones;
 
-    res.json({ message: 'Configurações atualizadas com sucesso!', data: tenant });
+    res.json({ message: 'Configurações atualizadas com sucesso!', data: toPublicTenant(tenant) });
   });
 
   // GET Products for Tenant (Multi-tenant scoped)
-  app.get('/api/v1/tenants/:slug/products', (req: Request, res: Response) => {
-    const tenantProducts = memoryProducts.filter((p) => p.tenantSlug === req.params.slug);
-    res.json({ data: tenantProducts });
+  app.get('/api/v1/tenants/:slug/products', async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    if (pgPool) {
+      try {
+        const result = await pgPool.query(
+          `SELECT id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups
+           FROM products WHERE tenant_slug = $1 ORDER BY updated_at DESC;`,
+          [tenant.slug]
+        );
+        const tenantProducts = result.rows.map((row: any) => ({
+          id: String(row.id),
+          tenantId: String(row.tenant_id),
+          tenantSlug: String(row.tenant_slug),
+          categoryId: String(row.category_id),
+          name: String(row.name),
+          description: String(row.description || ''),
+          priceCents: Number(row.price_cents),
+          imageUrl: row.image_url || undefined,
+          isAvailable: row.is_available !== false,
+          isFeatured: row.is_featured === true,
+          optionGroups: Array.isArray(row.option_groups) ? row.option_groups : (typeof row.option_groups === 'string' ? JSON.parse(row.option_groups) : []),
+        }));
+        for (let index = memoryProducts.length - 1; index >= 0; index--) {
+          if (memoryProducts[index].tenantSlug === tenant.slug) memoryProducts.splice(index, 1);
+        }
+        memoryProducts.push(...tenantProducts);
+        return res.json({ data: tenantProducts });
+      } catch (error: any) {
+        console.error('[Catalog Read] PostgreSQL query failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível carregar o cardápio persistido.' });
+      }
+    }
+    if (process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'Banco de dados obrigatório para carregar cardápio em produção.' });
+    const tenantProducts = memoryProducts.filter((product) => product.tenantSlug === tenant.slug);
+    return res.json({ data: tenantProducts });
   });
 
   // CREATE Product for Tenant
-  app.post('/api/v1/tenants/:slug/products', (req: Request, res: Response) => {
-    const { name, categoryId, description, priceCents, imageUrl, optionGroups } = req.body;
-    if (!name || priceCents === undefined) {
-      return res.status(400).json({ error: 'Nome e Preço são obrigatórios.' });
+  app.post('/api/v1/tenants/:slug/products', requireTenantAccess('slug'), async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    const { name, categoryId, description, priceCents, imageUrl, optionGroups } = req.body || {};
+    const cleanName = String(name || '').trim();
+    const cleanPrice = Number(priceCents);
+    if (cleanName.length < 2 || cleanName.length > 150 || !Number.isSafeInteger(cleanPrice) || cleanPrice < 0) {
+      return res.status(400).json({ error: 'Informe nome e preço válidos para o produto.' });
     }
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ error: 'PostgreSQL obrigatório para cadastrar produtos em produção.' });
 
     const newProd = {
-      id: `prod_${Date.now()}`,
-      tenantSlug: req.params.slug,
-      name: String(name).trim(),
-      categoryId: categoryId || 'cat_geral',
-      description: description ? String(description).trim() : '',
-      priceCents: Number(priceCents) || 0,
-      imageUrl: imageUrl || undefined,
+      id: `prod_${crypto.randomBytes(12).toString('hex')}`,
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      name: cleanName,
+      categoryId: String(categoryId || 'cat_geral').slice(0, 80),
+      description: String(description || '').trim().slice(0, 2000),
+      priceCents: cleanPrice,
+      imageUrl: imageUrl ? String(imageUrl).slice(0, 2000) : undefined,
       isAvailable: true,
-      optionGroups: optionGroups || [],
+      isFeatured: false,
+      optionGroups: Array.isArray(optionGroups) ? optionGroups : [],
     };
-
+    if (pgPool) {
+      try {
+        await pgPool.query(
+          `INSERT INTO products (id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, FALSE, $9::jsonb);`,
+          [newProd.id, newProd.tenantId, newProd.tenantSlug, newProd.categoryId, newProd.name, newProd.description, newProd.priceCents, newProd.imageUrl || null, JSON.stringify(newProd.optionGroups)]
+        );
+      } catch (error: any) {
+        console.error('[Product Create] PostgreSQL insert failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível persistir o produto.' });
+      }
+    }
     memoryProducts.unshift(newProd);
     res.status(201).json({ message: 'Produto adicionado com sucesso ao cardápio!', data: newProd });
   });
 
   // UPDATE Product for Tenant
-  app.put('/api/v1/tenants/:slug/products/:id', (req: Request, res: Response) => {
-    const prod = memoryProducts.find((p) => p.tenantSlug === req.params.slug && p.id === req.params.id);
-    if (!prod) {
-      return res.status(404).json({ error: 'Produto não encontrado para este restaurante.' });
+  app.put('/api/v1/tenants/:slug/products/:id', requireTenantAccess('slug'), async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ error: 'PostgreSQL obrigatório para atualizar produtos em produção.' });
+
+    let prod: any = memoryProducts.find((item) => item.tenantSlug === tenant.slug && item.id === req.params.id);
+    if (!prod && pgPool) {
+      const result = await pgPool.query('SELECT * FROM products WHERE id = $1 AND tenant_slug = $2 LIMIT 1;', [req.params.id, tenant.slug]);
+      const row = result.rows[0];
+      if (row) {
+        prod = {
+          id: String(row.id), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+          categoryId: String(row.category_id), name: String(row.name), description: String(row.description || ''),
+          priceCents: Number(row.price_cents), imageUrl: row.image_url || undefined,
+          isAvailable: row.is_available !== false, isFeatured: row.is_featured === true,
+          optionGroups: Array.isArray(row.option_groups) ? row.option_groups : [],
+        };
+        memoryProducts.push(prod);
+      }
     }
+    if (!prod) return res.status(404).json({ error: 'Produto não encontrado para este restaurante.' });
 
-    const { name, categoryId, description, priceCents, imageUrl, isAvailable, optionGroups } = req.body;
-    if (name) prod.name = String(name).trim();
-    if (categoryId) prod.categoryId = categoryId;
-    if (description !== undefined) prod.description = String(description).trim();
-    if (priceCents !== undefined) prod.priceCents = Number(priceCents);
-    if (imageUrl !== undefined) prod.imageUrl = imageUrl;
-    if (typeof isAvailable === 'boolean') prod.isAvailable = isAvailable;
-    if (optionGroups) prod.optionGroups = optionGroups;
-
+    const { name, categoryId, description, priceCents, imageUrl, isAvailable, optionGroups } = req.body || {};
+    const nextPrice = priceCents === undefined ? prod.priceCents : Number(priceCents);
+    if (!Number.isSafeInteger(nextPrice) || nextPrice < 0) return res.status(400).json({ error: 'Preço inválido.' });
+    if (name !== undefined && (String(name).trim().length < 2 || String(name).trim().length > 150)) return res.status(400).json({ error: 'Nome de produto inválido.' });
+    const updated = {
+      ...prod,
+      name: name !== undefined ? String(name).trim() : prod.name,
+      categoryId: categoryId !== undefined ? String(categoryId).slice(0, 80) : prod.categoryId,
+      description: description !== undefined ? String(description).trim().slice(0, 2000) : prod.description,
+      priceCents: nextPrice,
+      imageUrl: imageUrl !== undefined ? (imageUrl ? String(imageUrl).slice(0, 2000) : undefined) : prod.imageUrl,
+      isAvailable: typeof isAvailable === 'boolean' ? isAvailable : prod.isAvailable,
+      optionGroups: Array.isArray(optionGroups) ? optionGroups : prod.optionGroups,
+    };
+    if (pgPool) {
+      try {
+        const updateResult = await pgPool.query(
+          `UPDATE products SET category_id=$1, name=$2, description=$3, price_cents=$4, image_url=$5, is_available=$6, option_groups=$7::jsonb, updated_at=NOW()
+           WHERE id=$8 AND tenant_slug=$9;`,
+          [updated.categoryId, updated.name, updated.description, updated.priceCents, updated.imageUrl || null, updated.isAvailable, JSON.stringify(updated.optionGroups), updated.id, tenant.slug]
+        );
+        if (updateResult.rowCount === 0) return res.status(404).json({ error: 'Produto não encontrado no banco de dados deste restaurante.' });
+      } catch (error: any) {
+        console.error('[Product Update] PostgreSQL update failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível persistir a atualização do produto.' });
+      }
+    }
+    Object.assign(prod, updated);
     res.json({ message: 'Produto atualizado no cardápio!', data: prod });
   });
 
   // TOGGLE AVAILABILITY (Pausa rápida de produto)
-  app.patch('/api/v1/tenants/:slug/products/:id/toggle-availability', (req: Request, res: Response) => {
-    const prod = memoryProducts.find((p) => p.tenantSlug === req.params.slug && p.id === req.params.id);
-    if (!prod) {
-      return res.status(404).json({ error: 'Produto não encontrado.' });
+  app.patch('/api/v1/tenants/:slug/products/:id/toggle-availability', requireTenantAccess('slug'), async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    let prod: any = memoryProducts.find((item) => item.tenantSlug === tenant.slug && item.id === req.params.id);
+    if (!prod && pgPool) {
+      const result = await pgPool.query('SELECT * FROM products WHERE id = $1 AND tenant_slug = $2 LIMIT 1;', [req.params.id, tenant.slug]);
+      const row = result.rows[0];
+      if (row) {
+        prod = { id: String(row.id), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug), categoryId: String(row.category_id), name: String(row.name), description: String(row.description || ''), priceCents: Number(row.price_cents), imageUrl: row.image_url || undefined, isAvailable: row.is_available !== false, isFeatured: row.is_featured === true, optionGroups: Array.isArray(row.option_groups) ? row.option_groups : [] };
+        memoryProducts.push(prod);
+      }
     }
-
-    prod.isAvailable = !prod.isAvailable;
-    res.json({
-      message: prod.isAvailable ? 'Produto reativado no cardápio!' : 'Produto pausado (esgotado temporariamente)!',
-      data: prod,
-    });
+    if (!prod) return res.status(404).json({ error: 'Produto não encontrado.' });
+    const nextAvailability = !prod.isAvailable;
+    if (pgPool) {
+      try {
+        const updateResult = await pgPool.query('UPDATE products SET is_available=$1, updated_at=NOW() WHERE id=$2 AND tenant_slug=$3;', [nextAvailability, prod.id, tenant.slug]);
+        if (updateResult.rowCount === 0) return res.status(404).json({ error: 'Produto não encontrado no banco de dados deste restaurante.' });
+      } catch (error: any) {
+        return res.status(503).json({ error: 'Não foi possível persistir a disponibilidade do produto.' });
+      }
+    }
+    prod.isAvailable = nextAvailability;
+    res.json({ message: prod.isAvailable ? 'Produto reativado no cardápio!' : 'Produto pausado (esgotado temporariamente)!', data: prod });
   });
 
   // DELETE Product
-  app.delete('/api/v1/tenants/:slug/products/:id', (req: Request, res: Response) => {
-    const idx = memoryProducts.findIndex((p) => p.tenantSlug === req.params.slug && p.id === req.params.id);
-    if (idx === -1) {
-      return res.status(404).json({ error: 'Produto não encontrado.' });
+  app.delete('/api/v1/tenants/:slug/products/:id', requireTenantAccess('slug'), async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    const idx = memoryProducts.findIndex((item) => item.tenantSlug === tenant.slug && item.id === req.params.id);
+    let deleted: any = idx >= 0 ? memoryProducts[idx] : undefined;
+    if (pgPool) {
+      try {
+        const deleteResult = await pgPool.query('DELETE FROM products WHERE id=$1 AND tenant_slug=$2 RETURNING id, name;', [req.params.id, tenant.slug]);
+        if (deleteResult.rowCount === 0 && idx === -1) return res.status(404).json({ error: 'Produto não encontrado.' });
+        if (!deleted && deleteResult.rows[0]) deleted = { id: deleteResult.rows[0].id, name: deleteResult.rows[0].name };
+      } catch (error: any) {
+        return res.status(503).json({ error: 'Não foi possível remover o produto do banco de dados.' });
+      }
+    } else if (process.env.NODE_ENV === 'production') {
+      return res.status(503).json({ error: 'PostgreSQL obrigatório para remover produtos em produção.' });
     }
-    const [deleted] = memoryProducts.splice(idx, 1);
+    if (idx >= 0) memoryProducts.splice(idx, 1);
+    if (!deleted) return res.status(404).json({ error: 'Produto não encontrado.' });
     res.json({ message: 'Produto removido do cardápio.', data: deleted });
   });
 
   // GET & POST Categories for Tenant
-  app.get('/api/v1/tenants/:slug/categories', (req: Request, res: Response) => {
-    const cats = memoryCategories.filter((c) => c.tenantSlug === req.params.slug);
-    res.json({ data: cats });
+  app.get('/api/v1/tenants/:slug/categories', async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    if (pgPool) {
+      try {
+        const result = await pgPool.query('SELECT id, tenant_id, tenant_slug, name, display_order FROM categories WHERE tenant_slug = $1 ORDER BY display_order ASC;', [tenant.slug]);
+        const cats = result.rows.map((row: any) => ({
+          id: String(row.id), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+          name: String(row.name), order: Number(row.display_order) || 1,
+        }));
+        for (let index = memoryCategories.length - 1; index >= 0; index--) {
+          if ((memoryCategories[index] as any).tenantSlug === tenant.slug) memoryCategories.splice(index, 1);
+        }
+        memoryCategories.push(...cats as any);
+        return res.json({ data: cats });
+      } catch (error: any) {
+        console.error('[Categories Read] PostgreSQL query failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível carregar as categorias persistidas.' });
+      }
+    }
+    if (process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'PostgreSQL obrigatório para consultar categorias em produção.' });
+    return res.json({ data: memoryCategories.filter((category: any) => category.tenantSlug === tenant.slug) });
   });
 
-  app.post('/api/v1/tenants/:slug/categories', (req: Request, res: Response) => {
-    const { name } = req.body;
-    if (!name) return res.status(400).json({ error: 'Nome da categoria é obrigatório.' });
+  app.post('/api/v1/tenants/:slug/categories', requireTenantAccess('slug'), async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    const name = String(req.body?.name || '').trim();
+    if (name.length < 2 || name.length > 120) return res.status(400).json({ error: 'Nome da categoria deve ter de 2 a 120 caracteres.' });
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ error: 'PostgreSQL obrigatório para criar categorias em produção.' });
 
     const newCat = {
-      id: `cat_${Date.now()}`,
-      tenantSlug: req.params.slug,
-      name: String(name).trim(),
-      order: memoryCategories.filter((c) => c.tenantSlug === req.params.slug).length + 1,
+      id: `cat_${crypto.randomBytes(12).toString('hex')}`,
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      name,
+      order: memoryCategories.filter((category: any) => category.tenantSlug === tenant.slug).length + 1,
     };
-    memoryCategories.push(newCat);
+    if (pgPool) {
+      try {
+        await pgPool.query(
+          'INSERT INTO categories (id, tenant_id, tenant_slug, name, display_order) VALUES ($1, $2, $3, $4, $5);',
+          [newCat.id, newCat.tenantId, newCat.tenantSlug, newCat.name, newCat.order]
+        );
+      } catch (error: any) {
+        console.error('[Category Create] PostgreSQL insert failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível persistir a categoria.' });
+      }
+    }
+    memoryCategories.push(newCat as any);
     res.status(201).json({ message: 'Categoria criada!', data: newCat });
   });
 
   // Webhook Logs Query Endpoint
-  app.get('/api/v1/webhooks/logs', (req: Request, res: Response) => {
+  app.get('/api/v1/webhooks/logs', requireSuperAdmin, (req: Request, res: Response) => {
     const { instance, limit } = req.query;
     let logs = [...memoryWebhookLogs];
     if (instance) {
@@ -1871,7 +2348,20 @@ async function startServer() {
 
   // Evolution API Webhook endpoint (Real inbound from Easypanel)
   app.post('/api/v1/webhooks/evolution', (req: Request, res: Response) => {
-    const { event, instance, data } = req.body;
+    const webhookSecret = String(process.env.EVOLUTION_WEBHOOK_TOKEN || '');
+    const suppliedSecret = String(req.headers['x-evolution-token'] || req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
+    const expectedBuffer = Buffer.from(webhookSecret);
+    const suppliedBuffer = Buffer.from(suppliedSecret);
+    if (!webhookSecret || !suppliedSecret || expectedBuffer.length !== suppliedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, suppliedBuffer)) {
+      return res.status(401).json({ success: false, error: 'Webhook Evolution não autenticado.' });
+    }
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(`evolution_webhook_${clientIp}`, 600, 60 * 1000)) return res.status(429).json({ success: false, error: 'Limite de eventos Evolution excedido.' });
+    const { event, instance, data } = req.body || {};
+    const safeWebhookPayload = { ...(req.body || {}) };
+    for (const secretField of ['apikey', 'apiKey', 'token', 'authorization']) delete (safeWebhookPayload as any)[secretField];
+    const allowedTenant = memoryTenants.find((tenant) => tenant.evolutionInstanceId === String(instance || '') || tenant.slug === String(instance || ''));
+    if (!allowedTenant) return res.status(404).json({ success: false, error: 'Instância Evolution não reconhecida.' });
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     console.log(`[Evolution API Webhook] Recebido evento: ${event} para instância ${instance}`);
 
@@ -1892,7 +2382,7 @@ async function startServer() {
       direction: 'inbound',
       status: (fromMe || isGroup) ? 'filtered' : 'success',
       payloadSummary: fromMe ? 'Mensagem enviada por mim (ignorada pelo bot)' : isGroup ? 'Mensagem em grupo (ignorada pelo bot)' : `Mensagem válida recebida de ${customerPhone}`,
-      fullPayload: req.body,
+      fullPayload: safeWebhookPayload,
     };
 
     memoryWebhookLogs.unshift(newLog);
@@ -1908,10 +2398,13 @@ async function startServer() {
   });
 
   // Bot Simulation & n8n Inbound Process Endpoint
-  app.post('/api/v1/bot/simulate-message', (req: Request, res: Response) => {
-    const { tenantSlug, customerPhone, messageText } = req.body;
+  app.post('/api/v1/bot/simulate-message', requireSuperAdmin, (req: Request, res: Response) => {
+    if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'Endpoint de simulação desativado em produção.' });
+    const { tenantSlug, customerPhone, messageText } = req.body || {};
     const tenant = memoryTenants.find((t) => t.slug === tenantSlug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    const cleanPhone = String(customerPhone || '').replace(/\D/g, '');
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) return res.status(400).json({ error: 'Informe um telefone de teste válido.' });
 
     const cleanText = String(messageText || '').trim().toLowerCase();
     const isHumanRequest = cleanText === '2' || cleanText.includes('atendente') || cleanText.includes('humano');
@@ -1938,7 +2431,7 @@ async function startServer() {
       source: 'evolution',
       eventType: 'MESSAGES_UPSERT',
       instance: tenant.evolutionInstanceId,
-      senderPhone: customerPhone || '5511999998888',
+      senderPhone: cleanPhone,
       messageText,
       direction: 'inbound',
       status: 'success',
@@ -1954,7 +2447,7 @@ async function startServer() {
       source: 'n8n',
       eventType: 'DISPATCH_REPLY',
       instance: tenant.evolutionInstanceId,
-      senderPhone: customerPhone || '5511999998888',
+      senderPhone: cleanPhone,
       messageText: replyMessage,
       direction: 'outbound',
       status: 'success',
@@ -1966,7 +2459,7 @@ async function startServer() {
 
     res.json({
       success: true,
-      sender: customerPhone || '5511999998888',
+      sender: cleanPhone,
       receivedText: messageText,
       replyMessage,
       actionType,
@@ -1977,9 +2470,13 @@ async function startServer() {
   });
 
   // Direct Test Dispatch Endpoint (for simulating live curl from UI)
-  app.post('/api/v1/webhooks/test-dispatch', (req: Request, res: Response) => {
+  app.post('/api/v1/webhooks/test-dispatch', requireSuperAdmin, (req: Request, res: Response) => {
+    if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'Endpoint de simulação desativado em produção.' });
     const { instance, senderPhone, messageText, tenantSlug } = req.body;
-    const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.evolutionInstanceId === instance) || memoryTenants[0];
+    const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.evolutionInstanceId === instance);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado para simulação.' });
+    const cleanSenderPhone = String(senderPhone || '').replace(/\D/g, '');
+    if (cleanSenderPhone.length < 10 || cleanSenderPhone.length > 15) return res.status(400).json({ error: 'Informe um telefone de teste válido.' });
 
     const cleanText = String(messageText || 'Oi, quero o cardapio').trim().toLowerCase();
     const isHuman = cleanText === '2' || cleanText.includes('atendente') || cleanText.includes('humano');
@@ -1998,7 +2495,7 @@ async function startServer() {
       source: 'n8n',
       eventType: 'WEBHOOK_MANUAL_TEST',
       instance: tenant.evolutionInstanceId,
-      senderPhone: senderPhone || '5511988887777',
+      senderPhone: cleanSenderPhone,
       messageText: cleanText,
       direction: 'inbound',
       status: 'success',
@@ -2012,7 +2509,7 @@ async function startServer() {
           event: 'messages.upsert',
           instance: tenant.evolutionInstanceId,
           data: {
-            key: { remoteJid: `${senderPhone || '5511988887777'}@s.whatsapp.net`, fromMe: false },
+            key: { remoteJid: `${cleanSenderPhone}@s.whatsapp.net`, fromMe: false },
             message: { conversation: messageText || 'Oi, quero o cardapio' },
           },
         },
@@ -2049,13 +2546,24 @@ async function startServer() {
     permissions: string[];
   }
 
+  function hashPassword(password: string): string {
+    const salt = crypto.randomBytes(16).toString('hex');
+    return `scrypt$${salt}$${crypto.scryptSync(password, salt, 64).toString('hex')}`;
+  }
+  function verifyPassword(password: string, storedHash: string): boolean {
+    if (!password || !storedHash || !storedHash.startsWith('scrypt$')) return false;
+    const [, salt, expectedHex] = storedHash.split('$');
+    if (!salt || !expectedHex) return false;
+    try { const actual = crypto.scryptSync(password, salt, 64), expected = Buffer.from(expectedHex, 'hex'); return actual.length === expected.length && crypto.timingSafeEqual(actual, expected); } catch { return false; }
+  }
+  const configuredAdminPassword = process.env.ADMIN_PASSWORD || '';
   const memoryUsers: InMemAuthUser[] = [
     {
       id: 'usr_super_01',
       name: 'Administrador Aladay',
-      email: process.env.ADMIN_EMAIL || 'admin@aladay.com.br',
-      passwordHash: process.env.ADMIN_PASSWORD || 'aladay2026',
-      phone: '',
+      email: (process.env.ADMIN_EMAIL || (process.env.NODE_ENV === 'production' ? '' : 'admin@aladay.local')).trim().toLowerCase(),
+      passwordHash: configuredAdminPassword ? hashPassword(configuredAdminPassword) : '',
+      phone: String(process.env.ADMIN_PHONE || '').replace(/\D/g, ''),
       role: 'SUPER_ADMIN',
       tenantId: '*',
       tenantSlug: '*',
@@ -2070,7 +2578,7 @@ async function startServer() {
     },
   ];
 
-  const memoryOtpCodes: Map<string, { code: string; email: string; expiresAt: number }> = new Map();
+  const memoryOtpCodes: Map<string, { codeHash: string; email: string; expiresAt: number }> = new Map();
 
   const memoryAuthAuditLogs: Array<{
     id: string;
@@ -2120,7 +2628,7 @@ async function startServer() {
 
   // POST /api/v1/auth/login (E-mail & Senha com Rate Limiting e Proteção Timing-Safe)
   app.post('/api/v1/auth/login', (req: Request, res: Response) => {
-    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
     if (!checkRateLimit(`login_${clientIp}`, 5, 5 * 60 * 1000)) {
       return res.status(429).json({
         success: false,
@@ -2133,14 +2641,7 @@ async function startServer() {
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-    let passwordMatches = false;
-    if (user && password) {
-      const passBuf = Buffer.from(String(password));
-      const hashBuf = Buffer.from(String(user.passwordHash));
-      if (passBuf.length === hashBuf.length && crypto.timingSafeEqual(passBuf, hashBuf)) {
-        passwordMatches = true;
-      }
-    }
+    const passwordMatches = Boolean(user && verifyPassword(String(password || ''), user.passwordHash));
 
     if (!user || !passwordMatches) {
       memoryAuthAuditLogs.unshift({
@@ -2198,7 +2699,7 @@ async function startServer() {
 
   // POST /api/v1/auth/register-tenant-owner (Registra o lojista assinante após ativação do plano e criação do restaurante)
   app.post('/api/v1/auth/register-tenant-owner', (req: Request, res: Response) => {
-    const { name, email, password, phone, tenantId, tenantSlug, tenantName } = req.body;
+    const { name, email, password, phone, tenantId, tenantSlug, tenantName, registrationToken } = req.body || {};
     const cleanEmail = String(email || '').trim().toLowerCase();
     if (!cleanEmail || !password || !tenantSlug) {
       return res.status(400).json({
@@ -2207,23 +2708,30 @@ async function startServer() {
       });
     }
 
+    if (String(password).length < 12) return res.status(400).json({ success: false, error: 'A senha deve conter pelo menos 12 caracteres.' });
+    const cleanPhone = String(phone || '').replace(/\D/g, '');
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) return res.status(400).json({ success: false, error: 'Informe um telefone válido com DDD.' });
+    const targetTenant = memoryTenants.find((t) => t.slug === String(tenantSlug));
+    if (!targetTenant || (tenantId && targetTenant.id !== String(tenantId))) return res.status(404).json({ success: false, error: 'Restaurante não encontrado para concluir o cadastro.' });
+    const registrationTokenRecord = memoryTenantRegistrationTokens.get(String(tenantSlug));
+    const expectedRegistrationToken = Buffer.from(registrationTokenRecord && registrationTokenRecord.expiresAt > Date.now() ? registrationTokenRecord.token : '');
+    const suppliedRegistrationToken = Buffer.from(String(registrationToken || ''));
+    if (!expectedRegistrationToken.length || expectedRegistrationToken.length !== suppliedRegistrationToken.length || !crypto.timingSafeEqual(expectedRegistrationToken, suppliedRegistrationToken)) {
+      return res.status(401).json({ success: false, error: 'Token de cadastro inválido ou expirado. Reinicie a vinculação da assinatura.' });
+    }
+    if (memoryUsers.some((existingUser) => existingUser.tenantSlug === String(tenantSlug) && existingUser.role === 'TENANT_OWNER')) return res.status(409).json({ success: false, error: 'Este restaurante já possui um usuário proprietário cadastrado.' });
+    const subscription = memoryAsaasSubscriptions[String(tenantSlug)];
+    const trialStillActive = subscription?.status === 'TRIAL' && Boolean(subscription.trialEndsAt) && new Date(String(subscription.trialEndsAt)).getTime() > Date.now();
+    if (!trialStillActive && subscription?.status !== 'ACTIVE') return res.status(403).json({ success: false, error: 'É necessário ter um teste ativo ou uma assinatura confirmada no servidor para criar o acesso do restaurante.' });
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     let user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-
-    if (user && user.role !== 'SUPER_ADMIN') {
-      user.name = String(name || user.name).trim();
-      user.passwordHash = String(password);
-      user.phone = String(phone || user.phone).replace(/\D/g, '');
-      user.tenantId = String(tenantId || user.tenantId);
-      user.tenantSlug = String(tenantSlug);
-      user.tenantName = String(tenantName || user.tenantName);
-    } else if (!user) {
-      user = {
+    if (user) return res.status(409).json({ success: false, error: 'Este e-mail já possui uma conta. Faça login ou recupere o acesso.' });
+    user = {
         id: `usr_owner_${Date.now()}`,
         name: String(name || 'Proprietário').trim(),
         email: cleanEmail,
-        passwordHash: String(password),
-        phone: String(phone || '').replace(/\D/g, ''),
+        passwordHash: hashPassword(String(password)),
+        phone: cleanPhone,
         role: 'TENANT_OWNER',
         tenantId: String(tenantId || `tenant_${Date.now()}`),
         tenantSlug: String(tenantSlug),
@@ -2232,9 +2740,9 @@ async function startServer() {
           'tenant:full_access',
           'kds:manage_orders',
         ],
-      };
-      memoryUsers.push(user);
-    }
+    };
+    memoryUsers.push(user);
+    memoryTenantRegistrationTokens.delete(String(tenantSlug));
 
     const { token, claims } = signJwtToken(user);
 
@@ -2284,18 +2792,8 @@ async function startServer() {
       });
     }
 
-    const targetUser = memoryUsers.find((u) => u.id === claims.sub) || {
-      id: claims.sub,
-      name: claims.name || 'Usuário',
-      email: claims.email || 'user@aladay.com.br',
-      passwordHash: '',
-      phone: '',
-      role: claims.role || 'TENANT_OWNER',
-      tenantId: claims.tenant_id || '',
-      tenantSlug: claims.tenant_slug || '',
-      tenantName: claims.tenant_slug || 'Restaurante',
-      permissions: claims.permissions || ['tenant:full_access'],
-    };
+    const targetUser = memoryUsers.find((u) => u.id === claims.sub);
+    if (!targetUser) return res.status(401).json({ success: false, error: 'Conta não encontrada. Faça login novamente.' });
 
     const { token: freshToken, claims: freshClaims } = signJwtToken(targetUser);
 
@@ -2319,7 +2817,7 @@ async function startServer() {
 
   // POST /api/v1/auth/whatsapp-otp/request (Dispara código 6 dígitos real via Evolution API aladay)
   app.post('/api/v1/auth/whatsapp-otp/request', async (req: Request, res: Response) => {
-    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
     if (!checkRateLimit(`otp_${clientIp}`, 3, 10 * 60 * 1000)) {
       return res.status(429).json({
         success: false,
@@ -2327,18 +2825,21 @@ async function startServer() {
       });
     }
 
-    const { email, phone } = req.body;
-    const cleanEmail = String(email || 'admin@aladay.com.br').trim().toLowerCase();
+    const { email, phone } = req.body || {};
+    const normalizedEmailForLimit = String(email || '').trim().toLowerCase();
+    if (!checkRateLimit(`otp_email_${normalizedEmailForLimit}`, 3, 10 * 60 * 1000)) return res.status(429).json({ success: false, error: 'Limite de códigos para esta conta excedido. Aguarde 10 minutos.' });
+    const cleanEmail = String(email || '').trim().toLowerCase();
     const cleanPhone = String(phone || '').replace(/\D/g, '');
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail) || memoryUsers[0];
-    const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+    if (!user || !cleanPhone || !user.phone || cleanPhone !== user.phone.replace(/\D/g, '')) return res.status(404).json({ success: false, error: 'Não foi possível validar a conta e o telefone informado.' });
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
 
     memoryOtpCodes.set(cleanEmail, {
-      code: otpCode,
+      codeHash: crypto.createHash('sha256').update(otpCode).digest('hex'),
       email: user.email,
-      expiresAt: Date.now() + 10 * 60 * 1000,
+      expiresAt: Date.now() + 5 * 60 * 1000,
     });
 
     const otpWhatsappText =
@@ -2348,15 +2849,16 @@ async function startServer() {
       `👉 *${otpCode}*\n\n` +
       `🛡️ *Perfil RBAC:* ${user.role}\n` +
       `🌐 *Domínio:* https://aladay.com.br\n` +
-      `_Válido por 10 minutos. Nunca compartilhe este código._`;
+      `_Válido por 5 minutos. Nunca compartilhe este código._`;
 
-    const evolutionApiUrl = 'https://agencia-evolution-api.2eoc7n.easypanel.host';
-    const evolutionApiKey = '21C3D49F3F00-48FA-BFA2-2CD290850405';
-    const instanceName = 'aladay';
+    const evolutionApiUrl = (process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
+    const evolutionApiKey = process.env.EVOLUTION_API_KEY || '';
+    const instanceName = process.env.EVOLUTION_DEFAULT_INSTANCE || 'aladay';
 
     let whatsappDelivered = false;
     try {
-      const evoResp = await fetch(`${evolutionApiUrl}/message/sendText/${instanceName}`, {
+      if (!evolutionApiUrl || !evolutionApiKey) throw new Error('Evolution API não configurada no servidor.');
+      const evoResp = await fetch(`${evolutionApiUrl}/message/sendText/${encodeURIComponent(instanceName)}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2393,11 +2895,11 @@ async function startServer() {
       eventType: 'AUTH_WHATSAPP_OTP_SENT',
       instance: instanceName,
       senderPhone: cleanPhone,
-      messageText: otpWhatsappText,
+      messageText: 'Código de autenticação enviado via WhatsApp.',
       direction: 'outbound',
       status: 'success',
       payloadSummary: `Código OTP 2FA enviado via WhatsApp para ${user.email}`,
-      fullPayload: { email: user.email, role: user.role, phone: cleanPhone, whatsappDelivered },
+      fullPayload: { email: user.email, role: user.role, phone: cleanPhone, whatsappDelivered, otpRedacted: true },
     });
 
     res.json({
@@ -2406,35 +2908,39 @@ async function startServer() {
       targetPhone: cleanPhone,
       email: user.email,
       role: user.role,
-      demoOtpHint: otpCode,
-      message: whatsappDelivered
-        ? `Código OTP enviado com sucesso para o WhatsApp +${cleanPhone} via instância aladay!`
-        : `Código OTP gerado para ${user.email}.`,
+      message: whatsappDelivered ? 'Código de verificação enviado para o WhatsApp cadastrado.' : 'Não foi possível enviar o código. Tente novamente mais tarde.',
     });
   });
 
   // POST /api/v1/auth/whatsapp-otp/verify (Valida o OTP de 6 dígitos e emite o JWT)
   app.post('/api/v1/auth/whatsapp-otp/verify', (req: Request, res: Response) => {
-    const { email, code } = req.body;
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(`otp_verify_${clientIp}`, 5, 10 * 60 * 1000)) return res.status(429).json({ success: false, error: 'Muitas tentativas de validação. Aguarde 10 minutos.' });
+    const { email, code } = req.body || {};
+    const normalizedEmailForLimit = String(email || '').trim().toLowerCase();
+    if (!checkRateLimit(`otp_verify_email_${normalizedEmailForLimit}`, 5, 10 * 60 * 1000)) return res.status(429).json({ success: false, error: 'Muitas tentativas para esta conta. Aguarde 10 minutos.' });
     const cleanEmail = String(email || '').trim().toLowerCase();
     const cleanCode = String(code || '').trim();
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     const stored = memoryOtpCodes.get(cleanEmail);
-    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail) || memoryUsers[0];
-
-    if (!stored || stored.code !== cleanCode) {
+    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+    const suppliedOtpHash = crypto.createHash('sha256').update(cleanCode).digest();
+    const expectedOtpHash = stored ? Buffer.from(stored.codeHash, 'hex') : Buffer.alloc(0);
+    const otpMatches = Boolean(stored && expectedOtpHash.length === suppliedOtpHash.length && crypto.timingSafeEqual(expectedOtpHash, suppliedOtpHash));
+    if (!user || !stored || stored.expiresAt <= Date.now() || !/^\d{6}$/.test(cleanCode) || !otpMatches) {
+      if (stored && stored.expiresAt <= Date.now()) memoryOtpCodes.delete(cleanEmail);
       memoryAuthAuditLogs.unshift({
         id: `audit_otp_fail_${Date.now()}`,
         timestamp: currentTime,
-        userEmail: user.email,
-        userName: user.name,
-        role: user.role,
-        tenantSlug: user.tenantSlug,
+        userEmail: user?.email || cleanEmail || 'desconhecido',
+        userName: user?.name || 'Tentativa inválida',
+        role: user?.role || 'TENANT_OWNER',
+        tenantSlug: user?.tenantSlug || '-',
         method: 'whatsapp_otp',
         ip: 'Cloudflare Proxy',
         status: 'DENIED',
-        detail: `Código OTP inválido informado (${cleanCode}).`,
+        detail: 'Tentativa de validação com código OTP inválido ou expirado.',
       });
       return res.status(401).json({
         success: false,
@@ -2479,7 +2985,7 @@ async function startServer() {
   });
 
   // GET /api/v1/auth/audit-logs
-  app.get('/api/v1/auth/audit-logs', (_req: Request, res: Response) => {
+  app.get('/api/v1/auth/audit-logs', requireSuperAdmin, (_req: Request, res: Response) => {
     res.json({
       logs: memoryAuthAuditLogs,
       users: memoryUsers.map((u) => ({
@@ -2518,14 +3024,15 @@ async function startServer() {
       instanceName: 'aladay',
       state: 'close',
       qrCount: 0,
-      serverUrl: process.env.EVOLUTION_API_URL || 'https://agencia-evolution-api.2eoc7n.easypanel.host',
+      serverUrl: process.env.EVOLUTION_API_URL || '',
     },
   };
 
   const getTenantEvolutionConfig = (instanceName: string) => {
-    const tenant = memoryTenants.find((t) => t.evolutionInstanceId === instanceName || t.slug === instanceName) || memoryTenants[0];
-    const apiUrl = (tenant as any)?.evolutionApiUrl || process.env.EVOLUTION_API_URL || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
-    const apiKey = (tenant as any)?.evolutionApiKey || process.env.EVOLUTION_API_KEY || '21C3D49F3F00-48FA-BFA2-2CD290850405';
+    const tenant = memoryTenants.find((t) => t.evolutionInstanceId === instanceName || t.slug === instanceName);
+    const tenantUrl = String((tenant as any)?.evolutionApiUrl || '');
+    const apiUrl = tenantUrl && isSafeExternalHttpsUrl(tenantUrl) ? tenantUrl : (process.env.EVOLUTION_API_URL || '');
+    const apiKey = (tenant as any)?.evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
     return { tenant, apiUrl: apiUrl.replace(/\/$/, ''), apiKey };
   };
 
@@ -2579,7 +3086,7 @@ async function startServer() {
   };
 
   // GET /api/v1/evolution/instances
-  app.get('/api/v1/evolution/instances', (_req: Request, res: Response) => {
+  app.get('/api/v1/evolution/instances', requireSuperAdmin, (_req: Request, res: Response) => {
     res.json({
       success: true,
       instances: Object.values(memoryEvolutionInstances),
@@ -2587,9 +3094,11 @@ async function startServer() {
   });
 
   // GET /api/v1/evolution/instance/:instanceName/status
-  app.get('/api/v1/evolution/instance/:instanceName/status', async (req: Request, res: Response) => {
+  app.get('/api/v1/evolution/instance/:instanceName/status', requireSuperAdmin, async (req: Request, res: Response) => {
     const { instanceName } = req.params;
     const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+    if (!tenant) return res.status(404).json({ error: 'Instância não vinculada a um restaurante.' });
+    if (!apiUrl || !apiKey) return res.status(503).json({ error: 'Evolution API não configurada para esta instância.' });
     let inst = memoryEvolutionInstances[instanceName];
     if (!inst) {
       inst = {
@@ -2651,6 +3160,8 @@ async function startServer() {
   const handleConnectInstance = async (req: Request, res: Response) => {
     const { instanceName } = req.params;
     const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+    if (!tenant) return res.status(404).json({ error: 'Instância não vinculada a um restaurante.' });
+    if (!apiUrl || !apiKey) return res.status(503).json({ error: 'Evolution API não configurada para esta instância.' });
 
     let remoteFetched = false;
     let remoteResult: any = null;
@@ -2713,13 +3224,15 @@ async function startServer() {
     });
   };
 
-  app.get('/api/v1/evolution/instance/:instanceName/connect', handleConnectInstance);
-  app.post('/api/v1/evolution/instance/:instanceName/connect', handleConnectInstance);
+  app.get('/api/v1/evolution/instance/:instanceName/connect', requireSuperAdmin, handleConnectInstance);
+  app.post('/api/v1/evolution/instance/:instanceName/connect', requireSuperAdmin, handleConnectInstance);
 
   // POST /api/v1/evolution/instance/:instanceName/disconnect (Logout)
-  app.post('/api/v1/evolution/instance/:instanceName/disconnect', async (req: Request, res: Response) => {
+  app.post('/api/v1/evolution/instance/:instanceName/disconnect', requireSuperAdmin, async (req: Request, res: Response) => {
     const { instanceName } = req.params;
     const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+    if (!tenant) return res.status(404).json({ error: 'Instância não vinculada a um restaurante.' });
+    if (!apiUrl || !apiKey) return res.status(503).json({ error: 'Evolution API não configurada para esta instância.' });
 
     try {
       await fetch(`${apiUrl}/instance/logout/${instanceName}`, {
@@ -2766,10 +3279,12 @@ async function startServer() {
 
   // POST /api/v1/evolution/instance/:instanceName/simulate-scan
   // Simulates that the user pointed their phone camera and scanned the QR Code
-  app.post('/api/v1/evolution/instance/:instanceName/simulate-scan', (req: Request, res: Response) => {
+  app.post('/api/v1/evolution/instance/:instanceName/simulate-scan', requireSuperAdmin, (req: Request, res: Response) => {
+    if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'Simulação de pareamento desativada em produção.' });
     const { instanceName } = req.params;
     const { phone, profileName } = req.body;
     const { tenant } = getTenantEvolutionConfig(instanceName);
+    if (!tenant) return res.status(404).json({ error: 'Instância não vinculada a um restaurante.' });
 
     const pairedPhone = (phone || tenant?.phone || '').replace(/\D/g, '');
     const pairedProfile = profileName || tenant?.name || 'Restaurante Oficial';
@@ -2825,13 +3340,15 @@ async function startServer() {
   });
 
   // POST /api/v1/evolution/instance/create
-  app.post('/api/v1/evolution/instance/create', async (req: Request, res: Response) => {
+  app.post('/api/v1/evolution/instance/create', requireSuperAdmin, async (req: Request, res: Response) => {
     const { instanceName, number } = req.body;
     if (!instanceName) {
       return res.status(400).json({ error: 'Nome da instância é obrigatório.' });
     }
 
-    const { apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+    const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado para esta instância.' });
+    if (!apiUrl || !apiKey) return res.status(503).json({ error: 'Evolution API não configurada para esta instância.' });
 
     try {
       await fetch(`${apiUrl}/instance/create`, {
@@ -2868,13 +3385,17 @@ async function startServer() {
   });
 
   // PUT /api/v1/tenants/:slug/evolution-config
-  app.put('/api/v1/tenants/:slug/evolution-config', (req: Request, res: Response) => {
+  app.put('/api/v1/tenants/:slug/evolution-config', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
 
-    const { evolutionApiUrl, evolutionApiKey, evolutionInstanceId, n8nWebhookUrl } = req.body;
-    if (evolutionApiUrl) (tenant as any).evolutionApiUrl = String(evolutionApiUrl).trim();
-    if (evolutionApiKey) (tenant as any).evolutionApiKey = String(evolutionApiKey).trim();
+    const { evolutionApiUrl, evolutionApiKey, evolutionInstanceId, n8nWebhookUrl } = req.body || {};
+    if (!isSafeExternalHttpsUrl(String(evolutionApiUrl || ''))) return res.status(400).json({ error: 'Informe uma URL HTTPS pública válida para a Evolution API.' });
+    if (!evolutionApiKey || String(evolutionApiKey).trim().length < 16 || String(evolutionApiKey).length > 512) return res.status(400).json({ error: 'Informe uma chave Evolution válida.' });
+    if (evolutionInstanceId && !/^[a-zA-Z0-9_-]{1,60}$/.test(String(evolutionInstanceId))) return res.status(400).json({ error: 'Identificador de instância inválido.' });
+    if (n8nWebhookUrl && !isSafeExternalHttpsUrl(String(n8nWebhookUrl))) return res.status(400).json({ error: 'Informe uma URL HTTPS pública válida para o webhook n8n.' });
+    (tenant as any).evolutionApiUrl = String(evolutionApiUrl).trim();
+    (tenant as any).evolutionApiKey = String(evolutionApiKey).trim();
     if (evolutionInstanceId) tenant.evolutionInstanceId = String(evolutionInstanceId).trim();
     if (n8nWebhookUrl) (tenant as any).n8nWebhookUrl = String(n8nWebhookUrl).trim();
 
@@ -2884,7 +3405,7 @@ async function startServer() {
       tenant: {
         slug: tenant.slug,
         evolutionInstanceId: tenant.evolutionInstanceId,
-        evolutionApiUrl: (tenant as any).evolutionApiUrl,
+        evolutionApiUrlConfigured: Boolean((tenant as any).evolutionApiUrl),
         evolutionApiKeyConfigured: Boolean((tenant as any).evolutionApiKey),
       },
     });
@@ -3039,29 +3560,7 @@ async function startServer() {
     return { success: false, error: errorMsg };
   }
 
-  const defaultPixPayload = '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br5204000053039865406129.905802BR5915ALADAY SAAS6009SAO PAULO62070503***6304E2C9';
-
-  const memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {
-    aladay: {
-      id: 'sub_asaas_aladay_01',
-      tenantSlug: 'aladay',
-      customer: {
-        id: 'cus_aladay_01',
-        name: 'Meu Restaurante',
-        email: '',
-        cpfCnpj: '',
-        phone: '',
-      },
-      planName: 'Plano Pro Aladay - R$ 129,90/mês',
-      value: 129.9,
-      cycle: 'MONTHLY',
-      status: 'PENDING',
-      billingType: 'PIX',
-      nextDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      createdAt: new Date().toISOString().split('T')[0],
-      invoices: [],
-    },
-  };
+  memoryAsaasSubscriptions = {};
 
   // Helper to ensure QR code base64 is generated for Pix
   async function ensurePixQrCode(invoice: InMemAsaasInvoice) {
@@ -3085,71 +3584,61 @@ async function startServer() {
   }
 
   // GET /api/v1/asaas/config
-  app.get('/api/v1/asaas/config', (req: Request, res: Response) => {
+  app.get('/api/v1/asaas/config', requireSuperAdmin, (req: Request, res: Response) => {
     res.json({
       success: true,
       config: {
         environment: asaasGatewayConfig.environment,
         apiUrl: asaasGatewayConfig.environment === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/v3',
         webhookUrl: asaasGatewayConfig.webhookUrl,
-        apiKeyMasked: asaasGatewayConfig.apiKey ? `${asaasGatewayConfig.apiKey.substring(0, 10)}...${asaasGatewayConfig.apiKey.slice(-6)}` : '',
-        webhookTokenMasked: asaasGatewayConfig.webhookToken ? `tok_***${asaasGatewayConfig.webhookToken.slice(-4)}` : '',
         configured: Boolean(asaasGatewayConfig.apiKey),
       },
     });
   });
 
-  // GET /api/v1/asaas/subscription/:slug
+  const toPublicSubscription = (subscription: InMemAsaasSubscription) => ({
+    id: subscription.id,
+    tenantSlug: subscription.tenantSlug,
+    planName: subscription.planName,
+    value: subscription.value,
+    cycle: subscription.cycle,
+    status: subscription.status,
+    billingType: subscription.billingType,
+    nextDueDate: subscription.nextDueDate,
+    createdAt: subscription.createdAt,
+    lastPaymentDate: subscription.lastPaymentDate,
+    isTrial: subscription.isTrial,
+    trialStartedAt: subscription.trialStartedAt,
+    trialEndsAt: subscription.trialEndsAt,
+    trialDaysTotal: subscription.trialDaysTotal,
+    invoices: (subscription.invoices || []).map((invoice) => ({
+      id: invoice.id,
+      referenceMonth: invoice.referenceMonth,
+      value: invoice.value,
+      status: invoice.status,
+      dueDate: invoice.dueDate,
+      billingType: invoice.billingType,
+      invoiceUrl: invoice.invoiceUrl,
+      bankSlipUrl: invoice.bankSlipUrl,
+      pixCopiaECola: invoice.pixCopiaECola,
+      pixQrCodeBase64: invoice.pixQrCodeBase64,
+      description: invoice.description,
+    })),
+  });
+
+  // GET /api/v1/asaas/subscription/:slug — public billing summary; no customer PII.
   app.get('/api/v1/asaas/subscription/:slug', async (req: Request, res: Response) => {
     const { slug } = req.params;
-    let subscription = memoryAsaasSubscriptions[slug];
-
-    if (!subscription) {
-      const tenant = memoryTenants.find((t) => t.slug === slug);
-      subscription = {
-        id: `sub_asaas_${slug.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
-        tenantSlug: slug,
-        customer: {
-          id: `cus_${Date.now()}`,
-          name: tenant ? tenant.name : 'Restaurante Parceiro',
-          email: 'contato@restaurante.com.br',
-          cpfCnpj: '00.000.000/0001-00',
-          phone: tenant ? tenant.phone : '5511999999999',
-        },
-        planName: 'Plano Pro Aladay - R$ 129,90/mês',
-        value: 129.9,
-        cycle: 'MONTHLY',
-        status: 'PENDING',
-        billingType: 'PIX',
-        nextDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        createdAt: new Date().toISOString().split('T')[0],
-        invoices: [
-          {
-            id: `pay_asaas_${Date.now()}`,
-            subscriptionId: `sub_asaas_${slug}_01`,
-            referenceMonth: 'Mês Atual',
-            value: 129.9,
-            status: 'PENDING',
-            dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-            billingType: 'PIX',
-            invoiceUrl: `https://www.asaas.com/i/pay_${Date.now()}`,
-            description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90 / mês',
-            pixCopiaECola: defaultPixPayload,
-          },
-        ],
-      };
-      memoryAsaasSubscriptions[slug] = subscription;
-    }
-
-    // Ensure pending invoice has QR Code
-    const pending = subscription.invoices.find((i) => i.status === 'PENDING');
-    if (pending) {
-      await ensurePixQrCode(pending);
+    if (!memoryTenants.some((tenant) => tenant.slug === slug)) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    const subscription = memoryAsaasSubscriptions[slug] || null;
+    if (subscription) {
+      const pending = subscription.invoices.find((i) => i.status === 'PENDING');
+      if (pending) await ensurePixQrCode(pending);
     }
 
     res.json({
       success: true,
-      subscription,
+      subscription: subscription ? toPublicSubscription(subscription) : null,
       gateway: {
         environment: asaasGatewayConfig.environment,
         apiUrl: asaasGatewayConfig.environment === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/v3',
@@ -3177,19 +3666,32 @@ async function startServer() {
       creditCardCcv,
     } = req.body;
 
-    const safeBillingType = ['PIX', 'CREDIT_CARD', 'BOLETO'].includes(billingType) ? billingType : 'PIX';
     const tenant = memoryTenants.find((t) => t.slug === slug);
-    const resolvedName = customerName || tenant?.name || 'Assinante Aladay';
-    const resolvedEmail = customerEmail || 'financeiro@restaurante.com.br';
-    const resolvedCpfCnpj = customerCpfCnpj || '00.000.000/0001-00';
-    const resolvedPhone = customerPhone || tenant?.phone || '11987654321';
+    const isTemporaryOnboardingSlug = /^assinante_(?:\d{11}|\d{14}|novo)$/.test(slug);
+    if (!tenant && !isTemporaryOnboardingSlug) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    if (billingType !== 'PIX') return res.status(400).json({ error: 'No momento, somente Pix está habilitado para assinatura. Boleto e cartão permanecem desativados até validação específica.' });
+    if (process.env.NODE_ENV === 'production' && !asaasGatewayConfig.apiKey) return res.status(503).json({ error: 'Gateway Asaas não configurado. A cobrança não pode ser criada em produção.' });
 
+    const resolvedName = String(customerName || '').trim();
+    const resolvedEmail = String(customerEmail || '').trim().toLowerCase();
+    const resolvedCpfCnpj = String(customerCpfCnpj || '').replace(/\D/g, '');
+    const resolvedPhone = String(customerPhone || '').replace(/\D/g, '');
+    if (resolvedName.length < 2 || resolvedName.length > 120) return res.status(400).json({ error: 'Informe o nome completo do responsável.' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resolvedEmail)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
+    if (![11, 14].includes(resolvedCpfCnpj.length)) return res.status(400).json({ error: 'Informe um CPF ou CNPJ válido.' });
+    if (resolvedPhone.length < 10 || resolvedPhone.length > 15) return res.status(400).json({ error: 'Informe um telefone válido com DDD.' });
+
+    const safeBillingType = billingType;
+    const existingSubscriptionForSlug = memoryAsaasSubscriptions[slug];
+    if (existingSubscriptionForSlug && (existingSubscriptionForSlug.status === 'ACTIVE' || existingSubscriptionForSlug.status === 'PENDING' || (existingSubscriptionForSlug.status === 'TRIAL' && new Date(existingSubscriptionForSlug.trialEndsAt || 0).getTime() > Date.now()))) {
+      return res.status(409).json({ error: 'Este restaurante já possui uma assinatura ativa, pendente ou um teste em andamento.' });
+    }
     let asaasCustomerId = '';
     let realAsaasSubscriptionId = '';
-    let realInvoiceId = `pay_asaas_${Date.now()}`;
-    let realPixPayload = defaultPixPayload;
+    let realInvoiceId = '';
+    let realPixPayload = '';
     let realPixBase64: string | undefined = undefined;
-    let realInvoiceUrl = `https://www.asaas.com/i/${realInvoiceId}`;
+    let realInvoiceUrl = '';
     let isRealGatewayCharged = false;
 
     // IF ASAAS API KEY IS CONFIGURED -> EXECUTE REAL CALLS TO ASAAS v3
@@ -3271,41 +3773,9 @@ async function startServer() {
         if (firstPayment?.id) {
           realInvoiceId = firstPayment.id;
           if (firstPayment.invoiceUrl) realInvoiceUrl = firstPayment.invoiceUrl;
-        }
-      }
+          isRealGatewayCharged = ['RECEIVED', 'CONFIRMED'].includes(firstPayment.status);
 
-      // 3. Handle PIX with real Asaas QR code generation
-      else if (safeBillingType === 'PIX') {
-        const subRes = await callAsaasApi('/subscriptions', {
-          method: 'POST',
-          body: {
-            customer: asaasCustomerId,
-            billingType: 'PIX',
-            value: 129.9,
-            nextDueDate,
-            cycle: 'MONTHLY',
-            description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90/mês',
-          },
-        });
-
-        if (!subRes.ok || !subRes.data?.id) {
-          const asaasErrors = subRes.data?.errors?.map((e: any) => e.description).join('; ') || subRes.error || 'Erro ao gerar assinatura Pix no Asaas.';
-          return res.status(400).json({
-            error: `Falha ao criar assinatura Pix no Asaas: ${asaasErrors}`,
-          });
-        }
-
-        realAsaasSubscriptionId = subRes.data.id;
-
-        // Fetch first payment of subscription
-        const paymentsRes = await callAsaasApi(`/subscriptions/${realAsaasSubscriptionId}/payments`);
-        const firstPayment = paymentsRes.data?.data?.[0];
-        if (firstPayment?.id) {
-          realInvoiceId = firstPayment.id;
-          if (firstPayment.invoiceUrl) realInvoiceUrl = firstPayment.invoiceUrl;
-
-          // Request real Pix QR Code from Asaas
-          const qrRes = await callAsaasApi(`/payments/${firstPayment.id}/pixQrCode`);
+          const qrRes = await callAsaasApi(`/payments/${encodeURIComponent(firstPayment.id)}/pixQrCode`);
           if (qrRes.ok && qrRes.data) {
             if (qrRes.data.payload) realPixPayload = qrRes.data.payload;
             if (qrRes.data.encodedImage) realPixBase64 = `data:image/png;base64,${qrRes.data.encodedImage}`;
@@ -3314,6 +3784,11 @@ async function startServer() {
       }
     } else {
       console.log(`[Asaas] Aviso: Gateway sem chave de API configurada (Modo de Demonstração / Testes).`);
+    }
+
+    if (asaasGatewayConfig.apiKey && (!realAsaasSubscriptionId || !realInvoiceId || !realPixPayload)) {
+      if (realAsaasSubscriptionId) await callAsaasApi(`/subscriptions/${encodeURIComponent(realAsaasSubscriptionId)}`, { method: 'DELETE' });
+      return res.status(502).json({ error: 'O Asaas não retornou uma cobrança Pix válida. A assinatura não foi ativada; verifique o painel Asaas antes de tentar novamente.' });
     }
 
     // Build or update in-memory record
@@ -3408,79 +3883,112 @@ async function startServer() {
       });
     }
 
+    const onboardingBindingToken = crypto.randomBytes(32).toString('hex');
+    memoryOnboardingBindingTokens.set(slug, { token: onboardingBindingToken, expiresAt: Date.now() + 30 * 60 * 1000 });
     res.json({
       success: true,
       message: isRealGatewayCharged
-        ? 'Assinatura criada e debitada com sucesso no Asaas!'
-        : 'Assinatura Asaas configurada! Realize o pagamento para prosseguir.',
-      subscription,
+        ? 'Assinatura criada e pagamento confirmado pelo Asaas.'
+        : 'Cobrança Pix criada. Conclua o pagamento para prosseguir.',
+      subscription: { ...toPublicSubscription(subscription), onboardingBindingToken },
       isRealGateway: Boolean(asaasGatewayConfig.apiKey),
       isDemoMode: !asaasGatewayConfig.apiKey,
     });
   });
 
-  // POST /api/v1/asaas/subscription/:slug/start-trial
-  // Activates a 15-day Free Trial period with first R$ 129,90 invoice scheduled for +15 days
-  app.post('/api/v1/asaas/subscription/:slug/start-trial', async (req: Request, res: Response) => {
+  // Bind the verified temporary signup subscription to the restaurant created after checkout.
+  app.post('/api/v1/asaas/subscription/:slug/bind', (req: Request, res: Response) => {
     const { slug } = req.params;
+    const sourceSlug = String(req.body?.sourceSlug || '');
+    const isTemporaryOnboardingSlug = /^assinante_(?:\d{11}|\d{14}|novo)$/.test(sourceSlug);
+    if (!isTemporaryOnboardingSlug) return res.status(400).json({ success: false, error: 'Referência temporária de cadastro inválida.' });
+
+    const tenant = memoryTenants.find((t) => t.slug === slug);
+    if (!tenant) return res.status(404).json({ success: false, error: 'Restaurante não encontrado.' });
+    if (memoryAsaasSubscriptions[slug]) return res.status(409).json({ success: false, error: 'Este restaurante já possui uma assinatura vinculada.' });
+
+    const sourceSubscription = memoryAsaasSubscriptions[sourceSlug];
+    if (!sourceSubscription) return res.status(404).json({ success: false, error: 'Assinatura temporária não encontrada. Refaça a etapa de contratação.' });
+    const bindingTokenRecord = memoryOnboardingBindingTokens.get(sourceSlug);
+    const expectedBindingToken = Buffer.from(bindingTokenRecord && bindingTokenRecord.expiresAt > Date.now() ? bindingTokenRecord.token : '');
+    const suppliedBindingToken = Buffer.from(String(req.body?.bindingToken || ''));
+    if (!expectedBindingToken.length || expectedBindingToken.length !== suppliedBindingToken.length || !crypto.timingSafeEqual(expectedBindingToken, suppliedBindingToken)) {
+      return res.status(401).json({ success: false, error: 'Token de vinculação inválido ou expirado. Refaça a etapa de contratação.' });
+    }
+    const activeTrial = sourceSubscription.status === 'TRIAL' && Boolean(sourceSubscription.trialEndsAt) && new Date(String(sourceSubscription.trialEndsAt)).getTime() > Date.now();
+    if (!activeTrial && sourceSubscription.status !== 'ACTIVE') return res.status(409).json({ success: false, error: 'A assinatura ainda não foi confirmada. Conclua o pagamento antes de criar o restaurante.' });
+
+    const boundSubscription = JSON.parse(JSON.stringify(sourceSubscription)) as InMemAsaasSubscription;
+    boundSubscription.tenantSlug = slug;
+    memoryAsaasSubscriptions[slug] = boundSubscription;
+    delete memoryAsaasSubscriptions[sourceSlug];
+    memoryOnboardingBindingTokens.delete(sourceSlug);
+    const ownerRegistrationToken = crypto.randomBytes(32).toString('hex');
+    memoryTenantRegistrationTokens.set(slug, { token: ownerRegistrationToken, expiresAt: Date.now() + 15 * 60 * 1000 });
+
+    tenant.subscriptionStatus = activeTrial ? 'trial' : 'active';
+    tenant.trialEndsAt = activeTrial ? boundSubscription.trialEndsAt : undefined;
+    tenant.phone = boundSubscription.customer.phone;
+
+    memoryWebhookLogs.unshift({
+      id: `log_subscription_bind_${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString('pt-BR'),
+      source: 'asaas',
+      eventType: 'SUBSCRIPTION_BOUND_TO_TENANT',
+      instance: 'Aladay Onboarding',
+      senderPhone: boundSubscription.customer.phone,
+      messageText: `Assinatura vinculada ao restaurante ${tenant.name}.`,
+      direction: 'inbound',
+      status: 'success',
+      payloadSummary: `Assinatura ${boundSubscription.id} vinculada ao tenant ${slug}.`,
+      fullPayload: { tenantSlug: slug, sourceSlug, subscriptionId: boundSubscription.id, status: boundSubscription.status },
+    });
+
+    res.status(200).json({ success: true, message: 'Assinatura vinculada ao restaurante.', subscription: { ...toPublicSubscription(boundSubscription), ownerRegistrationToken } });
+  });
+
+  // POST /api/v1/asaas/subscription/:slug/start-trial
+  // Activates a 15-day trial only. No Asaas customer, payment or fake Pix payload is created.
+  app.post('/api/v1/asaas/subscription/:slug/start-trial', (req: Request, res: Response) => {
+    const { slug } = req.params;
+    const tenant = memoryTenants.find((t) => t.slug === slug);
+    const isTemporaryOnboardingSlug = /^assinante_(?:\d{11}|\d{14}|novo)$/.test(slug);
+    if (!tenant && !isTemporaryOnboardingSlug) return res.status(404).json({ success: false, error: 'Restaurante não encontrado.' });
+
     const {
       customerName,
       customerEmail,
       customerCpfCnpj,
       customerPhone,
       billingType = 'PIX',
-    } = req.body;
+    } = req.body || {};
+
+    const resolvedName = String(customerName || '').trim();
+    const resolvedEmail = String(customerEmail || '').trim().toLowerCase();
+    const resolvedCpfCnpj = String(customerCpfCnpj || '').replace(/\D/g, '');
+    const resolvedPhone = String(customerPhone || '').replace(/\D/g, '');
+    if (resolvedName.length < 2 || resolvedName.length > 120) return res.status(400).json({ success: false, error: 'Informe o nome completo do responsável.' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resolvedEmail)) return res.status(400).json({ success: false, error: 'Informe um e-mail válido.' });
+    if (![11, 14].includes(resolvedCpfCnpj.length)) return res.status(400).json({ success: false, error: 'Informe um CPF ou CNPJ válido.' });
+    if (resolvedPhone.length < 10 || resolvedPhone.length > 15) return res.status(400).json({ success: false, error: 'Informe um telefone válido com DDD.' });
+
+    const existingSubscription = memoryAsaasSubscriptions[slug];
+    if ((tenant && (tenant.subscriptionStatus === 'trial' || tenant.trialEndsAt)) || existingSubscription) {
+      return res.status(409).json({ success: false, error: 'Este restaurante já possui uma assinatura ou período de teste registrado.' });
+    }
 
     const safeBillingType = ['PIX', 'CREDIT_CARD', 'BOLETO'].includes(billingType) ? billingType : 'PIX';
-    const tenant = memoryTenants.find((t) => t.slug === slug);
-    const resolvedName = String(customerName || tenant?.name || 'Restaurante em Teste').trim();
-    const resolvedEmail = String(customerEmail || 'contato@restaurante.com.br').trim();
-    const resolvedCpfCnpj = String(customerCpfCnpj || '00.000.000/0001-00').trim();
-    const resolvedPhone = String(customerPhone || tenant?.phone || '11987654321').replace(/\D/g, '');
-
     const now = new Date();
     const trialEndsDate = new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000);
     const trialStartedIso = now.toISOString();
     const trialEndsIso = trialEndsDate.toISOString();
     const nextDueDateStr = trialEndsIso.split('T')[0];
 
-    let asaasCustomerId = `cus_trial_${Date.now().toString(36)}`;
-    if (asaasGatewayConfig.apiKey) {
-      const custRes = await getOrCreateAsaasCustomer({
-        name: resolvedName,
-        email: resolvedEmail,
-        cpfCnpj: resolvedCpfCnpj,
-        phone: resolvedPhone,
-      });
-      if (custRes.success && custRes.customerId) {
-        asaasCustomerId = custRes.customerId;
-      }
-    }
-
-    const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-    const refMonth = `${monthNames[trialEndsDate.getMonth()]} / ${trialEndsDate.getFullYear()}`;
-    const invoiceId = `pay_trial_${Date.now()}`;
-
-    const futureInvoice: InMemAsaasInvoice = {
-      id: invoiceId,
-      subscriptionId: `sub_trial_${slug.replace(/[^a-zA-Z0-9]/g, '_')}`,
-      referenceMonth: refMonth,
-      value: 129.9,
-      status: 'PENDING',
-      dueDate: nextDueDateStr,
-      billingType: safeBillingType,
-      invoiceUrl: `https://www.asaas.com/i/${invoiceId}`,
-      description: '1ª Mensalidade Pós-Teste Grátis (15 dias) - Plano Aladay Pro R$ 129,90/mês',
-      pixCopiaECola: defaultPixPayload,
-    };
-
-    await ensurePixQrCode(futureInvoice);
-
     const subscription: InMemAsaasSubscription = {
-      id: `sub_trial_${slug.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
+      id: `sub_trial_${slug.replace(/[^a-zA-Z0-9]/g, '_')}_${crypto.randomBytes(8).toString('hex')}`,
       tenantSlug: slug,
       customer: {
-        id: asaasCustomerId,
+        id: `trial_customer_${crypto.randomBytes(8).toString('hex')}`,
         name: resolvedName,
         email: resolvedEmail,
         cpfCnpj: resolvedCpfCnpj,
@@ -3493,7 +4001,7 @@ async function startServer() {
       billingType: safeBillingType,
       nextDueDate: nextDueDateStr,
       createdAt: now.toISOString().split('T')[0],
-      invoices: [futureInvoice],
+      invoices: [],
       isTrial: true,
       trialStartedAt: trialStartedIso,
       trialEndsAt: trialEndsIso,
@@ -3501,10 +4009,10 @@ async function startServer() {
     };
 
     memoryAsaasSubscriptions[slug] = subscription;
-
     if (tenant) {
       tenant.subscriptionStatus = 'trial';
       tenant.trialEndsAt = trialEndsIso;
+      tenant.phone = resolvedPhone;
     }
 
     memoryWebhookLogs.unshift({
@@ -3517,7 +4025,7 @@ async function startServer() {
       messageText: `Período de Teste Grátis de 15 dias ativado para ${resolvedName} (expira em ${trialEndsDate.toLocaleDateString('pt-BR')})`,
       direction: 'inbound',
       status: 'success',
-      payloadSummary: `Teste Grátis 15 dias ativado (#${subscription.id}) - 1ª cobrança agendada para ${nextDueDateStr}`,
+      payloadSummary: `Teste grátis de 15 dias ativado para ${slug}; cobrança não criada automaticamente.`,
       fullPayload: {
         event: 'TRIAL_15_DAYS_ACTIVATED',
         tenantSlug: slug,
@@ -3527,10 +4035,12 @@ async function startServer() {
       },
     });
 
+    const onboardingBindingToken = crypto.randomBytes(32).toString('hex');
+    memoryOnboardingBindingTokens.set(slug, { token: onboardingBindingToken, expiresAt: Date.now() + 30 * 60 * 1000 });
     res.status(201).json({
       success: true,
-      message: 'Período de teste grátis de 15 dias ativado com sucesso!',
-      subscription,
+      message: 'Período de teste grátis de 15 dias ativado. Nenhuma cobrança foi criada.',
+      subscription: { ...toPublicSubscription(subscription), onboardingBindingToken },
     });
   });
 
@@ -3586,7 +4096,7 @@ async function startServer() {
         paid: true,
         status: 'RECEIVED',
         message: 'Assinatura já confirmada!',
-        subscription,
+        subscription: toPublicSubscription(subscription),
       });
     }
 
@@ -3608,7 +4118,7 @@ async function startServer() {
             paid: true,
             status: 'RECEIVED',
             message: 'Pagamento de R$ 129,90 confirmado pelo Asaas!',
-            subscription,
+            subscription: toPublicSubscription(subscription),
           });
         }
 
@@ -3616,7 +4126,7 @@ async function startServer() {
           paid: false,
           status: asaasStatus,
           message: 'Aguardando compensação do pagamento pelo Asaas...',
-          subscription,
+          subscription: toPublicSubscription(subscription),
         });
       }
     }
@@ -3628,7 +4138,7 @@ async function startServer() {
       message: !asaasGatewayConfig.apiKey
         ? 'Modo de demonstração ativo: nenhuma chave ASAAS_API_KEY configurada.'
         : 'Aguardando pagamento.',
-      subscription,
+      subscription: toPublicSubscription(subscription),
     });
   });
 
@@ -3643,17 +4153,19 @@ async function startServer() {
 
     const pendingInvoice = subscription.invoices.find((i) => i.status === 'PENDING') || subscription.invoices[0];
 
-    // If real Asaas is configured, STRICTLY VERIFY WITH ASAAS API! Do NOT allow bypassing!
-    if (asaasGatewayConfig.apiKey && pendingInvoice?.id?.startsWith('pay_')) {
-      const checkRes = await callAsaasApi(`/payments/${pendingInvoice.id}`);
-      if (checkRes.ok && checkRes.data) {
-        const asaasStatus = checkRes.data.status;
-        if (asaasStatus !== 'RECEIVED' && asaasStatus !== 'CONFIRMED') {
-          return res.status(400).json({
-            error: `O Asaas ainda não identificou o pagamento de R$ 129,90 (status atual no Asaas: ${asaasStatus}). Efetue o Pix no app do seu banco e aguarde a confirmação.`,
-          });
-        }
-      }
+    // Never allow a client request to mark a payment as received without server-side confirmation.
+    if (!asaasGatewayConfig.apiKey || !pendingInvoice?.id?.startsWith('pay_')) {
+      return res.status(process.env.NODE_ENV === 'production' ? 503 : 409).json({
+        error: 'Confirmação manual indisponível. Configure o Asaas e aguarde a confirmação oficial do pagamento.',
+      });
+    }
+    const checkRes = await callAsaasApi(`/payments/${encodeURIComponent(pendingInvoice.id)}`);
+    if (!checkRes.ok || !checkRes.data) return res.status(502).json({ error: 'Não foi possível validar o pagamento diretamente no Asaas. Tente novamente.' });
+    const asaasStatus = checkRes.data.status;
+    if (Number(checkRes.data.value) !== Number(pendingInvoice.value) || !['RECEIVED', 'CONFIRMED'].includes(asaasStatus)) {
+      return res.status(400).json({
+        error: `O Asaas ainda não confirmou o pagamento integral de R$ ${Number(pendingInvoice.value).toFixed(2).replace('.', ',')} (status: ${asaasStatus || 'desconhecido'}).`,
+      });
     }
 
     subscription.status = 'ACTIVE';
@@ -3672,18 +4184,21 @@ async function startServer() {
       success: true,
       message: 'Pagamento da assinatura de R$ 129,90 confirmado com sucesso! Criação do restaurante e cardápio liberada.',
       isDemoMode: !asaasGatewayConfig.apiKey,
-      subscription,
+      subscription: toPublicSubscription(subscription),
     });
   });
 
   // POST /api/v1/asaas/subscription/:slug/cancel
-  app.post('/api/v1/asaas/subscription/:slug/cancel', async (req: Request, res: Response) => {
+  app.post('/api/v1/asaas/subscription/:slug/cancel', requireTenantAccess('slug'), async (req: Request, res: Response) => {
     const { slug } = req.params;
     const subscription = memoryAsaasSubscriptions[slug];
     if (!subscription) return res.status(404).json({ error: 'Assinatura não encontrada.' });
 
-    if (asaasGatewayConfig.apiKey && subscription.id.startsWith('sub_')) {
-      await callAsaasApi(`/subscriptions/${subscription.id}`, { method: 'DELETE' });
+    if (asaasGatewayConfig.apiKey && subscription.id.startsWith('sub_') && !subscription.id.startsWith('sub_trial_')) {
+      const cancelResult = await callAsaasApi(`/subscriptions/${encodeURIComponent(subscription.id)}`, { method: 'DELETE' });
+      if (!cancelResult.ok) return res.status(502).json({ error: 'O Asaas não confirmou o cancelamento. A assinatura permanece inalterada.' });
+    } else if (process.env.NODE_ENV === 'production' && !subscription.id.startsWith('sub_trial_')) {
+      return res.status(503).json({ error: 'Gateway Asaas indisponível; não foi possível cancelar a assinatura com segurança.' });
     }
 
     subscription.status = 'CANCELLED';
@@ -3708,29 +4223,24 @@ async function startServer() {
     res.json({
       success: true,
       message: 'Assinatura cancelada no gateway Asaas.',
-      subscription,
+      subscription: toPublicSubscription(subscription),
     });
   });
 
   // POST /api/v1/asaas/subscription/:slug/reactivate
-  app.post('/api/v1/asaas/subscription/:slug/reactivate', (req: Request, res: Response) => {
+  app.post('/api/v1/asaas/subscription/:slug/reactivate', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const { slug } = req.params;
     const subscription = memoryAsaasSubscriptions[slug];
     if (!subscription) return res.status(404).json({ error: 'Assinatura não encontrada.' });
 
-    subscription.status = 'ACTIVE';
-    const tenant = memoryTenants.find((t) => t.slug === slug);
-    if (tenant) tenant.subscriptionStatus = 'active';
-
-    res.json({
-      success: true,
-      message: 'Assinatura reativada com sucesso no Asaas!',
-      subscription,
+    return res.status(409).json({
+      success: false,
+      error: 'A reativação direta foi desativada. Para evitar liberar acesso sem pagamento confirmado, crie uma nova cobrança Pix e aguarde a confirmação oficial do Asaas.',
     });
   });
 
   // POST /api/v1/asaas/config (Atualizar Credenciais Asaas)
-  app.post('/api/v1/asaas/config', (req: Request, res: Response) => {
+  app.post('/api/v1/asaas/config', requireSuperAdmin, (req: Request, res: Response) => {
     const { environment, apiKey, webhookToken } = req.body;
     if (environment && (environment === 'sandbox' || environment === 'production')) {
       asaasGatewayConfig.environment = environment;
@@ -3764,8 +4274,9 @@ async function startServer() {
     // SECURITY: Validate Asaas Access Token Header
     const receivedToken = (req.headers['asaas-access-token'] as string) || '';
     const configuredToken = process.env.ASAAS_WEBHOOK_TOKEN || asaasGatewayConfig.webhookToken;
-    if (configuredToken && receivedToken !== configuredToken) {
-      console.warn(`[Segurança Asaas] Tentativa de webhook rejeitada por token inválido ou ausente.`);
+    const expectedTokenBuffer = Buffer.from(String(configuredToken || ''));
+    const receivedTokenBuffer = Buffer.from(String(receivedToken || ''));
+    if (!configuredToken || !receivedToken || expectedTokenBuffer.length !== receivedTokenBuffer.length || !crypto.timingSafeEqual(expectedTokenBuffer, receivedTokenBuffer)) {
       return res.status(401).json({ error: 'Acesso não autorizado: token de webhook Asaas inválido.' });
     }
 
@@ -3777,16 +4288,16 @@ async function startServer() {
       return res.status(400).json({ error: 'Payload de webhook inválido: evento ausente.' });
     }
 
-    // Find corresponding subscription
+    const supportedEvents = ['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED', 'PAYMENT_OVERDUE', 'SUBSCRIPTION_DELETED'];
+    if (!supportedEvents.includes(event)) return res.status(200).json({ received: true, processed: false, reason: 'Evento ignorado.' });
+
     let targetSub: InMemAsaasSubscription | undefined;
-    if (payment?.subscription) {
-      targetSub = Object.values(memoryAsaasSubscriptions).find((s) => s.id === payment.subscription);
-    }
-    if (!targetSub && payment?.id) {
-      targetSub = Object.values(memoryAsaasSubscriptions).find((s) => s.invoices.some((i) => i.id === payment.id));
-    }
-    if (!targetSub) {
-      targetSub = memoryAsaasSubscriptions['aladay'];
+    const subscriptionId = req.body?.subscription?.id || payment?.subscription;
+    if (subscriptionId) targetSub = Object.values(memoryAsaasSubscriptions).find((s) => s.id === subscriptionId);
+    if (!targetSub && payment?.id) targetSub = Object.values(memoryAsaasSubscriptions).find((s) => s.invoices.some((i) => i.id === payment.id));
+    if (!targetSub) return res.status(404).json({ error: 'Assinatura não encontrada para o evento recebido.' });
+    if ((event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED') && (!payment?.id || Number(payment?.value) !== Number(targetSub.value))) {
+      return res.status(409).json({ error: 'Pagamento sem identificador ou com valor divergente da assinatura.' });
     }
 
     if (targetSub) {
@@ -3846,18 +4357,8 @@ async function startServer() {
 
   // POST /api/v1/asaas/simulate-webhook (PROTECTED IN PRODUCTION)
   // Allows testing from the frontend UI without waiting for an external network event
-  app.post('/api/v1/asaas/simulate-webhook', async (req: Request, res: Response) => {
-    // In production, block simulation unless authenticated as SUPER_ADMIN
-    if (process.env.NODE_ENV === 'production') {
-      const authHeader = req.headers['authorization'];
-      const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-      const claims = token ? verifyJwtToken(token) : null;
-      if (!claims || claims.role !== 'SUPER_ADMIN') {
-        return res.status(403).json({
-          error: 'Simulação de webhook desativada em ambiente de produção para segurança dos dados.',
-        });
-      }
-    }
+  app.post('/api/v1/asaas/simulate-webhook', requireSuperAdmin, async (req: Request, res: Response) => {
+    if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'Simulação de webhook é proibida em produção.' });
 
     const { eventType = 'PAYMENT_RECEIVED', tenantSlug = 'aladay' } = req.body;
     const sub = memoryAsaasSubscriptions[tenantSlug] || memoryAsaasSubscriptions['aladay'];
@@ -3879,6 +4380,7 @@ async function startServer() {
     };
 
     req.body = mockPayload;
+    req.headers['asaas-access-token'] = String(process.env.ASAAS_WEBHOOK_TOKEN || asaasGatewayConfig.webhookToken || '');
     await handleAsaasWebhook(req, res);
   });
 

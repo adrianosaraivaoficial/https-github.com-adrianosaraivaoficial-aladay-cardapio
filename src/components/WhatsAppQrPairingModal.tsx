@@ -50,10 +50,10 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
 
   // VPS Evolution API Config State
   const [vpsUrl, setVpsUrl] = useState(
-    tenant.evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host'
+    tenant.evolutionApiUrl || ''
   );
   const [vpsApiKey, setVpsApiKey] = useState(
-    tenant.evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405'
+    tenant.evolutionApiKey || ''
   );
   const [instanceName, setInstanceName] = useState(
     tenant.evolutionInstanceId || 'aladay'
@@ -662,7 +662,7 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
                   required
                   value={vpsUrl}
                   onChange={(e) => setVpsUrl(e.target.value)}
-                  placeholder="https://agencia-evolution-api.2eoc7n.easypanel.host"
+                  placeholder="https://sua-evolution-api"
                   className="mt-1 w-full p-2.5 bg-white border border-neutral-300 rounded-lg font-mono text-neutral-900"
                 />
               </div>
@@ -676,7 +676,7 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
                   required
                   value={vpsApiKey}
                   onChange={(e) => setVpsApiKey(e.target.value)}
-                  placeholder="21C3D49F3F00-48FA-BFA2-2CD290850405"
+                  placeholder="Cole a chave configurada no servidor"
                   className="mt-1 w-full p-2.5 bg-white border border-neutral-300 rounded-lg font-mono text-neutral-900"
                 />
               </div>
