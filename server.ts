@@ -633,7 +633,7 @@ async function startServer() {
   });
 
   // Bulk Import / Sync Catalog (Categories & Products) from Spreadsheet per Tenant
-  app.post('/api/v1/tenants/:slug/catalog/import', requireTenantAccess('slug'), (req: Request, res: Response) => {
+  app.post('/api/v1/tenants/:slug/catalog/import', requireTenantAccess('slug'), async (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
@@ -687,61 +687,66 @@ async function startServer() {
       });
     }
 
-    // Persist categories and products to PostgreSQL if connected on EasyPanel VPS
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ error: 'PostgreSQL obrigatório para importar cardápio em produção.' });
     if (pgPool) {
-      (async () => {
-        try {
-          if (mode === 'replace') {
-            await pgPool.query('DELETE FROM products WHERE tenant_slug = $1;', [tenant.slug]);
-            await pgPool.query('DELETE FROM categories WHERE tenant_slug = $1;', [tenant.slug]);
-          }
-          if (Array.isArray(categories)) {
-            for (const cat of categories) {
-              if (!cat || !cat.id) continue;
-              await pgPool.query(
-                `INSERT INTO categories (id, tenant_id, tenant_slug, name, display_order)
-                 VALUES ($1, $2, $3, $4, $5)
-                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, display_order = EXCLUDED.display_order;`,
-                [String(cat.id), tenant.id, tenant.slug, String(cat.name || 'Categoria'), Number(cat.order) || 1]
-              );
-            }
-          }
-          if (Array.isArray(products)) {
-            for (const prod of products) {
-              if (!prod || !prod.id) continue;
-              await pgPool.query(
-                `INSERT INTO products (id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())
-                 ON CONFLICT (id) DO UPDATE SET
-                   category_id = EXCLUDED.category_id,
-                   name = EXCLUDED.name,
-                   description = EXCLUDED.description,
-                   price_cents = EXCLUDED.price_cents,
-                   image_url = EXCLUDED.image_url,
-                   is_available = EXCLUDED.is_available,
-                   is_featured = EXCLUDED.is_featured,
-                   option_groups = EXCLUDED.option_groups,
-                   updated_at = NOW();`,
-                [
-                  String(prod.id),
-                  tenant.id,
-                  tenant.slug,
-                  String(prod.categoryId || 'cat_1'),
-                  String(prod.name || 'Produto').slice(0, 150),
-                  String(prod.description || ''),
-                  Math.max(0, parseInt(prod.priceCents, 10) || 0),
-                  prod.imageUrl || null,
-                  prod.isAvailable ?? true,
-                  prod.isFeatured ?? false,
-                  JSON.stringify(prod.optionGroups || []),
-                ]
-              );
-            }
-          }
-        } catch (err) {
-          console.warn('[PostgreSQL Sync Catalog] Erro ao persistir cardápio:', err);
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        if (mode === 'replace') {
+          await client.query('DELETE FROM products WHERE tenant_slug = $1;', [tenant.slug]);
+          await client.query('DELETE FROM categories WHERE tenant_slug = $1;', [tenant.slug]);
         }
-      })();
+        if (Array.isArray(categories)) {
+          for (const cat of categories) {
+            if (!cat || !cat.id || !String(cat.name || '').trim()) continue;
+            await client.query(
+              `INSERT INTO categories (id, tenant_id, tenant_slug, name, display_order)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, tenant_slug = EXCLUDED.tenant_slug, name = EXCLUDED.name, display_order = EXCLUDED.display_order;`,
+              [String(cat.id).slice(0, 80), tenant.id, tenant.slug, String(cat.name).trim().slice(0, 120), Number(cat.order) || 1]
+            );
+          }
+        }
+        if (Array.isArray(products)) {
+          for (const prod of products) {
+            if (!prod || !prod.id || !String(prod.name || '').trim()) continue;
+            const priceCents = Number(prod.priceCents);
+            if (!Number.isSafeInteger(priceCents) || priceCents < 0) throw new Error('Preço de produto inválido no catálogo.');
+            await client.query(
+              `INSERT INTO products (id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())
+               ON CONFLICT (id) DO UPDATE SET
+                 tenant_id = EXCLUDED.tenant_id,
+                 tenant_slug = EXCLUDED.tenant_slug,
+                 category_id = EXCLUDED.category_id,
+                 name = EXCLUDED.name,
+                 description = EXCLUDED.description,
+                 price_cents = EXCLUDED.price_cents,
+                 image_url = EXCLUDED.image_url,
+                 is_available = EXCLUDED.is_available,
+                 is_featured = EXCLUDED.is_featured,
+                 option_groups = EXCLUDED.option_groups,
+                 updated_at = NOW();`,
+              [
+                String(prod.id).slice(0, 80), tenant.id, tenant.slug,
+                String(prod.categoryId || 'cat_geral').slice(0, 80),
+                String(prod.name).trim().slice(0, 150),
+                String(prod.description || '').slice(0, 2000),
+                priceCents, prod.imageUrl ? String(prod.imageUrl).slice(0, 2000) : null,
+                prod.isAvailable !== false, prod.isFeatured === true,
+                JSON.stringify(Array.isArray(prod.optionGroups) ? prod.optionGroups : []),
+              ]
+            );
+          }
+        }
+        await client.query('COMMIT');
+      } catch (error: any) {
+        try { await client.query('ROLLBACK'); } catch { /* transaction already closed */ }
+        console.error('[PostgreSQL Sync Catalog] Transaction failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível persistir o cardápio. Nenhuma confirmação foi emitida.' });
+      } finally {
+        client.release();
+      }
     }
 
     res.json({
