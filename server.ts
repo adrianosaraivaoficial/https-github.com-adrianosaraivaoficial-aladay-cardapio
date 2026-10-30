@@ -480,8 +480,9 @@ async function startServer() {
     const { name, slug, phone, primaryColor, address } = req.body;
     const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
     if (!checkRateLimit(`tenant_create_${clientIp}`, 5, 60 * 60 * 1000)) return res.status(429).json({ error: 'Limite de cadastros excedido. Tente novamente mais tarde.' });
-    if (!name || !slug || !phone || String(name).trim().length < 2 || String(phone).replace(/\D/g, '').length < 10) return res.status(400).json({ error: 'Informe nome, identificador e telefone válidos.' });
-    const cleanSlug = String(slug).toLowerCase().trim().replace(/[^a-z0-9-]/g, '-');
+    if (!name || !slug || !phone || String(name).trim().length < 2 || String(name).trim().length > 120 || String(phone).replace(/\D/g, '').length < 10 || String(phone).replace(/\D/g, '').length > 15) return res.status(400).json({ error: 'Informe nome, identificador e telefone válidos.' });
+    const cleanSlug = String(slug).toLowerCase().trim().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    if (cleanSlug.length < 3 || cleanSlug.length > 60) return res.status(400).json({ error: 'O identificador deve conter de 3 a 60 caracteres válidos.' });
     const existing = memoryTenants.find((t) => t.slug === cleanSlug);
     if (existing) {
       return res.status(409).json({ error: `O slug "${cleanSlug}" já está em uso por outro restaurante.` });
@@ -498,7 +499,7 @@ async function startServer() {
       deliveryFeeCents: 700,
       minOrderCents: 2000,
       evolutionInstanceId: `instancia_${cleanSlug}`,
-      evolutionStatus: 'connected',
+      evolutionStatus: 'disconnected',
     };
 
     memoryTenants.push(newTenant);
@@ -1373,7 +1374,8 @@ async function startServer() {
   // Update order status in KDS and trigger WhatsApp Notification (Protected by JWT Guard)
   app.patch('/api/v1/orders/:id/status', authenticateToken, async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const { status } = req.body;
+    const { status } = req.body || {};
+    if (!['received', 'confirmed', 'preparing', 'ready', 'delivered', 'cancelled'].includes(status)) return res.status(400).json({ error: 'Status de pedido inválido.' });
     const order = memoryOrders.find((o) => o.id === req.params.id);
     if (!order) {
       return res.status(404).json({ error: 'Pedido não encontrado.' });
@@ -1384,7 +1386,8 @@ async function startServer() {
       return res.status(403).json({ error: 'Acesso negado: você não tem permissão para alterar pedidos deste restaurante.' });
     }
 
-    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
+    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante do pedido não encontrado.' });
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     order.status = status;
