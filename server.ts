@@ -2019,7 +2019,7 @@ async function startServer() {
       name: 'Administrador Aladay',
       email: (process.env.ADMIN_EMAIL || 'admin@aladay.com.br').trim().toLowerCase(),
       passwordHash: configuredAdminPassword ? hashPassword(configuredAdminPassword) : '',
-      phone: '',
+      phone: String(process.env.ADMIN_PHONE || '').replace(/\D/g, ''),
       role: 'SUPER_ADMIN',
       tenantId: '*',
       tenantSlug: '*',
@@ -2165,26 +2165,19 @@ async function startServer() {
     }
 
     if (String(password).length < 12) return res.status(400).json({ success: false, error: 'A senha deve conter pelo menos 12 caracteres.' });
+    const cleanPhone = String(phone || '').replace(/\D/g, '');
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) return res.status(400).json({ success: false, error: 'Informe um telefone válido com DDD.' });
     const targetTenant = memoryTenants.find((t) => t.slug === String(tenantSlug));
     if (!targetTenant || (tenantId && targetTenant.id !== String(tenantId))) return res.status(404).json({ success: false, error: 'Restaurante não encontrado para concluir o cadastro.' });
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     let user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-    if (user?.role === 'SUPER_ADMIN') return res.status(409).json({ success: false, error: 'Este e-mail não pode ser usado para cadastro de lojista.' });
-    if (user && user.role !== 'SUPER_ADMIN') {
-      if (user.tenantSlug !== String(tenantSlug)) return res.status(409).json({ success: false, error: 'Este e-mail já está associado a outro restaurante.' });
-      user.name = String(name || user.name).trim();
-      user.passwordHash = hashPassword(String(password));
-      user.phone = String(phone || user.phone).replace(/\D/g, '');
-      user.tenantId = String(tenantId || user.tenantId);
-      user.tenantSlug = String(tenantSlug);
-      user.tenantName = String(tenantName || user.tenantName);
-    } else if (!user) {
-      user = {
+    if (user) return res.status(409).json({ success: false, error: 'Este e-mail já possui uma conta. Faça login ou recupere o acesso.' });
+    user = {
         id: `usr_owner_${Date.now()}`,
         name: String(name || 'Proprietário').trim(),
         email: cleanEmail,
         passwordHash: hashPassword(String(password)),
-        phone: String(phone || '').replace(/\D/g, ''),
+        phone: cleanPhone,
         role: 'TENANT_OWNER',
         tenantId: String(tenantId || `tenant_${Date.now()}`),
         tenantSlug: String(tenantSlug),
@@ -2193,9 +2186,8 @@ async function startServer() {
           'tenant:full_access',
           'kds:manage_orders',
         ],
-      };
-      memoryUsers.push(user);
-    }
+    };
+    memoryUsers.push(user);
 
     const { token, claims } = signJwtToken(user);
 
@@ -2346,11 +2338,11 @@ async function startServer() {
       eventType: 'AUTH_WHATSAPP_OTP_SENT',
       instance: instanceName,
       senderPhone: cleanPhone,
-      messageText: otpWhatsappText,
+      messageText: 'Código de autenticação enviado via WhatsApp.',
       direction: 'outbound',
       status: 'success',
       payloadSummary: `Código OTP 2FA enviado via WhatsApp para ${user.email}`,
-      fullPayload: { email: user.email, role: user.role, phone: cleanPhone, whatsappDelivered },
+      fullPayload: { email: user.email, role: user.role, phone: cleanPhone, whatsappDelivered, otpRedacted: true },
     });
 
     res.json({
@@ -2365,6 +2357,8 @@ async function startServer() {
 
   // POST /api/v1/auth/whatsapp-otp/verify (Valida o OTP de 6 dígitos e emite o JWT)
   app.post('/api/v1/auth/whatsapp-otp/verify', (req: Request, res: Response) => {
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(`otp_verify_${clientIp}`, 5, 10 * 60 * 1000)) return res.status(429).json({ success: false, error: 'Muitas tentativas de validação. Aguarde 10 minutos.' });
     const { email, code } = req.body;
     const cleanEmail = String(email || '').trim().toLowerCase();
     const cleanCode = String(code || '').trim();
@@ -2373,13 +2367,14 @@ async function startServer() {
     const stored = memoryOtpCodes.get(cleanEmail);
     const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
     if (!user || !stored || stored.expiresAt <= Date.now() || stored.code !== cleanCode) {
+      if (stored && stored.expiresAt <= Date.now()) memoryOtpCodes.delete(cleanEmail);
       memoryAuthAuditLogs.unshift({
         id: `audit_otp_fail_${Date.now()}`,
         timestamp: currentTime,
-        userEmail: user.email,
-        userName: user.name,
-        role: user.role,
-        tenantSlug: user.tenantSlug,
+        userEmail: user?.email || cleanEmail || 'desconhecido',
+        userName: user?.name || 'Tentativa inválida',
+        role: user?.role || 'TENANT_OWNER',
+        tenantSlug: user?.tenantSlug || '-',
         method: 'whatsapp_otp',
         ip: 'Cloudflare Proxy',
         status: 'DENIED',
