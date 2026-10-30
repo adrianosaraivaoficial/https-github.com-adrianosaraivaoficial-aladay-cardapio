@@ -2489,7 +2489,7 @@ async function startServer() {
       instanceName: 'aladay',
       state: 'close',
       qrCount: 0,
-      serverUrl: process.env.EVOLUTION_API_URL || 'https://agencia-evolution-api.2eoc7n.easypanel.host',
+      serverUrl: process.env.EVOLUTION_API_URL || '',
     },
   };
 
