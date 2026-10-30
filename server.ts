@@ -1181,105 +1181,175 @@ async function startServer() {
 
   // OFFICIAL WEBHOOK RECEIVER FOR RESTAURANT DIRECT PIX ORDERS
   app.post('/api/v1/webhooks/pix', async (req: Request, res: Response) => {
-    const { txid, endToEndId, amountCents, paidAt, payer } = req.body;
-    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const { txid, endToEndId, amountCents, paidAt } = req.body || {};
     const webhookSecret = process.env.PIX_WEBHOOK_TOKEN || '';
     const suppliedSecret = String(req.headers['x-webhook-token'] || req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
     if (!webhookSecret || !suppliedSecret) return res.status(401).json({ success: false, error: 'Webhook Pix não autenticado.' });
     const expected = Buffer.from(webhookSecret), supplied = Buffer.from(suppliedSecret);
     if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected, supplied)) return res.status(401).json({ success: false, error: 'Webhook Pix não autenticado.' });
     if (typeof txid !== 'string' || !txid.trim() || !Number.isSafeInteger(Number(amountCents)) || Number(amountCents) <= 0) return res.status(400).json({ success: false, error: 'Identificador e valor válido da cobrança são obrigatórios.' });
-    const charge = memoryPixTransactions.find((c) => c.txid === txid);
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ success: false, error: 'PostgreSQL obrigatório para confirmar pagamentos em produção.' });
+
+    let charge: any = memoryPixTransactions.find((item) => item.txid === txid);
+    if (!charge && pgPool) {
+      try {
+        const result = await pgPool.query('SELECT * FROM pix_transactions WHERE txid = $1 LIMIT 1;', [txid]);
+        const row = result.rows[0];
+        if (row) charge = {
+          txid: String(row.txid), orderId: String(row.order_id), tenantSlug: String(row.tenant_slug),
+          amountCents: Number(row.amount_cents), pixCopiaECola: String(row.pix_copia_e_cola), status: String(row.status),
+          expiresAt: row.expires_at, paidAt: row.paid_at, endToEndId: row.end_to_end_id,
+          psp: row.psp, customerName: row.customer_name, customerPhone: row.customer_phone,
+        };
+      } catch (error: any) {
+        return res.status(503).json({ success: false, error: 'Não foi possível consultar a cobrança Pix.' });
+      }
+    }
     if (!charge) return res.status(404).json({ success: false, error: 'Cobrança Pix não encontrada.' });
-    const order = memoryOrders.find((o) => o.id === charge.orderId);
-    if (!order || order.tenantSlug !== charge.tenantSlug || Number(amountCents) !== Number(charge.amountCents) || Number(amountCents) !== Number(order.totalCents)) return res.status(409).json({ success: false, error: 'Valor, restaurante ou pedido não corresponde à cobrança registrada.' });
+
+    let order: any = memoryOrders.find((item) => item.id === charge.orderId);
+    if (!order && pgPool) {
+      try {
+        const result = await pgPool.query('SELECT * FROM orders WHERE id = $1 AND tenant_slug = $2 LIMIT 1;', [charge.orderId, charge.tenantSlug]);
+        const row = result.rows[0];
+        if (row) order = {
+          id: String(row.id), orderNumber: Number(row.order_number), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+          customerName: String(row.customer_name), customerPhone: String(row.customer_phone), type: String(row.order_type),
+          items: Array.isArray(row.items) ? row.items : [], subtotalCents: Number(row.subtotal_cents),
+          deliveryFeeCents: Number(row.delivery_fee_cents), totalCents: Number(row.total_cents),
+          status: String(row.status), paymentStatus: String(row.payment_status || 'pending'),
+          paymentMethod: String(row.payment_method || 'Pix'), whatsAppLogs: Array.isArray(row.whatsapp_logs) ? row.whatsapp_logs : [],
+          createdAt: row.created_at, updatedAt: row.updated_at,
+        };
+      } catch (error: any) {
+        return res.status(503).json({ success: false, error: 'Não foi possível consultar o pedido associado à cobrança.' });
+      }
+    }
+    if (!order || order.tenantSlug !== charge.tenantSlug || Number(amountCents) !== Number(charge.amountCents) || Number(amountCents) !== Number(order.totalCents)) {
+      return res.status(409).json({ success: false, error: 'Valor, restaurante ou pedido não corresponde à cobrança registrada.' });
+    }
     if (charge.status === 'PAID') return res.status(200).json({ success: true, duplicate: true, message: 'Pagamento já processado.' });
     if (charge.status !== 'PENDING') return res.status(409).json({ success: false, error: 'Estado da cobrança não permite confirmação.' });
-    if (!charge.expiresAt || new Date(charge.expiresAt).getTime() <= Date.now()) { charge.status = 'EXPIRED'; return res.status(410).json({ success: false, error: 'Cobrança Pix expirada.' }); }
+    if (!charge.expiresAt || new Date(charge.expiresAt).getTime() <= Date.now()) {
+      if (pgPool) await pgPool.query("UPDATE pix_transactions SET status='EXPIRED' WHERE txid=$1 AND status='PENDING';", [txid]).catch(() => {});
+      charge.status = 'EXPIRED';
+      return res.status(410).json({ success: false, error: 'Cobrança Pix expirada.' });
+    }
     const actualEndToEndId = String(endToEndId || '').trim();
     if (!actualEndToEndId || actualEndToEndId.length > 80) return res.status(400).json({ success: false, error: 'EndToEndId ausente ou inválido na confirmação Pix.' });
     const paidDate = paidAt ? new Date(paidAt) : new Date();
     if (!Number.isFinite(paidDate.getTime()) || paidDate.getTime() > Date.now() + 5 * 60 * 1000) return res.status(400).json({ success: false, error: 'Data de pagamento inválida.' });
     const actualPaidTime = paidDate.toISOString();
-    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
+
+    const tenant = memoryTenants.find((item) => item.slug === order.tenantSlug);
     if (!tenant) return res.status(404).json({ success: false, error: 'Restaurante associado ao pedido não encontrado.' });
     if (!(tenant as any).pixConfig?.autoApproveWebhook) return res.status(403).json({ success: false, error: 'Confirmação automática Pix está desativada para este restaurante.' });
+
+    const currentTime = actualPaidTime;
+    const totalFormatted = `R$ ${(order.totalCents / 100).toFixed(2).replace('.', ',')}`;
+    const customerFirstName = (order.customerName || 'Cliente').split(' ')[0];
+    const trackingUrl = `${String(process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '')}/rastreio/${order.id}`;
+    const pixNotificationText = `⚡ *Pagamento Pix Confirmado!*\n\nOlá, *${customerFirstName}*! Confirmamos o recebimento do seu Pix de *${totalFormatted}* diretamente na conta do *${tenant.name}*! 💰✅\n\nSeu pedido *#${order.orderNumber}* foi liberado imediatamente e já está na cozinha sendo preparado! 👨‍🍳🔥\n\n👉 *Acompanhe em tempo real pelo link:*\n${trackingUrl}`;
+
+    if (!order.whatsAppLogs) order.whatsAppLogs = [];
+    const logItem: any = {
+      timestamp: currentTime, event: 'pix.payment_confirmed',
+      detail: 'Pagamento Pix confirmado; notificação aguardando envio pela Evolution API.',
+      messageText: pixNotificationText, statusSent: 'pending',
+    };
+    order.whatsAppLogs.unshift(logItem);
+    const outboxEvent = {
+      id: `evt_${crypto.randomBytes(16).toString('hex')}`, tenantId: order.tenantId,
+      aggregateType: 'order', aggregateId: order.id, eventType: 'pix.payment_confirmed',
+      payload: { orderId: order.id, txid, endToEndId: actualEndToEndId, notificationText: pixNotificationText },
+      status: 'pending', processedAt: null,
+    };
+
+    if (pgPool) {
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        const lockedCharge = await client.query('SELECT status, amount_cents, order_id, tenant_slug, expires_at FROM pix_transactions WHERE txid=$1 FOR UPDATE;', [txid]);
+        const locked = lockedCharge.rows[0];
+        if (!locked || locked.status !== 'PENDING' || Number(locked.amount_cents) !== Number(amountCents) || locked.order_id !== order.id || locked.tenant_slug !== tenant.slug || new Date(locked.expires_at).getTime() <= Date.now()) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ success: false, error: 'Cobrança mudou de estado ou não corresponde ao pagamento.' });
+        }
+        const reusedEndToEnd = await client.query('SELECT txid FROM pix_transactions WHERE end_to_end_id=$1 AND status='PAID' LIMIT 1;', [actualEndToEndId]);
+        if (reusedEndToEnd.rows[0]) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ success: false, error: 'EndToEndId já utilizado em outra cobrança.' });
+        }
+        await client.query(
+          "UPDATE pix_transactions SET status='PAID', paid_at=$1, end_to_end_id=$2 WHERE txid=$3;",
+          [actualPaidTime, actualEndToEndId, txid]
+        );
+        await client.query(
+          "UPDATE orders SET payment_status='paid_online', status='confirmed', updated_at=NOW(), whatsapp_logs=$1::jsonb WHERE id=$2 AND tenant_slug=$3;",
+          [JSON.stringify(order.whatsAppLogs), order.id, tenant.slug]
+        );
+        await client.query(
+          'INSERT INTO outbox_events (id, tenant_id, aggregate_type, aggregate_id, event_type, payload, status, processed_at) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,NULL);',
+          [outboxEvent.id, outboxEvent.tenantId, outboxEvent.aggregateType, outboxEvent.aggregateId, outboxEvent.eventType, JSON.stringify(outboxEvent.payload), outboxEvent.status]
+        );
+        await client.query('COMMIT');
+      } catch (error: any) {
+        try { await client.query('ROLLBACK'); } catch { /* transaction already closed */ }
+        order.whatsAppLogs.shift();
+        console.error('[Pix Webhook] PostgreSQL transaction failed:', error?.message);
+        return res.status(503).json({ success: false, error: 'Não foi possível registrar o pagamento com segurança.' });
+      } finally {
+        client.release();
+      }
+    }
+
     charge.status = 'PAID';
     charge.paidAt = actualPaidTime;
     charge.endToEndId = actualEndToEndId;
+    order.paymentStatus = 'paid_online';
+    order.status = 'confirmed';
+    order.updatedAt = currentTime;
+    memoryOutboxEvents.push(outboxEvent);
 
-    if (order) {
-      order.paymentStatus = 'paid_online';
-      order.status = 'confirmed';
-      order.updatedAt = currentTime;
-
-      const totalFormatted = `R$ ${(order.totalCents / 100).toFixed(2).replace('.', ',')}`;
-      const customerFirstName = (order.customerName || 'Cliente').split(' ')[0];
-      const trackingUrl = `https://aladay.com.br/rastreio/${order.id}`;
-
-      const pixNotificationText = `⚡ *Pagamento Pix Confirmado!*\n\nOlá, *${customerFirstName}*! Confirmamos o recebimento do seu Pix de *${totalFormatted}* diretamente na conta do *${tenant.name}*! 💰✅\n\nSeu pedido *#${order.orderNumber}* foi liberado imediatamente e já está na cozinha sendo preparado com todo capricho! 👨‍🍳🔥\n\n👉 *Acompanhe em tempo real pelo link:*\n${trackingUrl}`;
-
-      if (!order.whatsAppLogs) order.whatsAppLogs = [];
-      order.whatsAppLogs.unshift({
-        timestamp: currentTime,
-        event: 'pix.payment_confirmed',
-        detail: `Pix Direto confirmado na conta do restaurante. Pedido #${order.orderNumber} liberado para a cozinha!`,
-        messageText: pixNotificationText,
-        statusSent: 'confirmed',
-      });
-
-      const tenantEvolutionUrl = String((tenant as any).evolutionApiUrl || '');
+    const tenantEvolutionUrl = String((tenant as any).evolutionApiUrl || '');
     const evolutionApiUrl = tenantEvolutionUrl && isSafeExternalHttpsUrl(tenantEvolutionUrl) ? tenantEvolutionUrl : (process.env.EVOLUTION_API_URL || '');
-      const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
-      const instanceName = tenant.evolutionInstanceId || 'aladay';
-
-      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${encodeURIComponent(instanceName)}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: evolutionApiKey,
-        },
-        body: JSON.stringify({
-          number: order.customerPhone,
-          text: pixNotificationText,
-          options: { delay: 1000, presence: 'composing', linkPreview: true },
-        }),
-      }).catch((e) => console.log('Evolution send on Pix Webhook:', e.message));
+    const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
+    const instanceName = tenant.evolutionInstanceId || 'aladay';
+    let notificationDispatched = false;
+    if (evolutionApiUrl && evolutionApiKey) {
+      try {
+        const sendResponse = await fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${encodeURIComponent(instanceName)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: evolutionApiKey },
+          body: JSON.stringify({ number: order.customerPhone, text: pixNotificationText, options: { delay: 1000, presence: 'composing', linkPreview: true } }),
+        });
+        notificationDispatched = sendResponse.ok;
+      } catch (error: any) {
+        console.warn('[Evolution Pix Notification] Send failed:', error?.message);
+      }
     }
-
-    memoryWebhookLogs.unshift({
-      id: `log_pix_webhook_${Date.now()}`,
-      timestamp: currentTime,
-      source: 'pix_gateway',
-      eventType: 'PIX_RECEIVED',
-      instance: tenant.evolutionInstanceId || 'aladay',
-      senderPhone: order.customerPhone,
-      messageText: `💰 Pix Direto Loja confirmado. txid: ${charge?.txid || txid}. Pedido #${order?.orderNumber || ''} liberado!`,
-      direction: 'inbound',
-      status: 'success',
-      payloadSummary: `Pix de R$ ${(Number(order.totalCents) / 100).toFixed(2)} liquidado direto na conta do restaurante`,
-      fullPayload: {
-        event: 'pix.received',
-        txid: charge?.txid || txid,
-        endToEndId: actualEndToEndId,
-        amountCents: order.totalCents,
-        orderId: order?.id,
-        orderNumber: order?.orderNumber,
-        paidAt: actualPaidTime,
-        status: 'PAID',
-      },
-    });
+    logItem.statusSent = notificationDispatched ? 'sent' : 'pending';
+    logItem.detail = notificationDispatched ? 'Mensagem aceita pela Evolution API.' : 'Notificação pendente de envio.';
+    outboxEvent.status = notificationDispatched ? 'completed' : 'pending';
+    outboxEvent.processedAt = notificationDispatched ? new Date().toISOString() : null;
+    const webhookLog = {
+      id: `log_pix_webhook_${Date.now()}`, timestamp: currentTime, source: 'pix_gateway',
+      eventType: 'PIX_RECEIVED', instance: instanceName, senderPhone: order.customerPhone,
+      messageText: `Pagamento Pix confirmado para o pedido #${order.orderNumber}.`,
+      direction: 'inbound', status: notificationDispatched ? 'success' : 'pending',
+      payloadSummary: `Pix de R$ ${(Number(order.totalCents) / 100).toFixed(2)} confirmado.`,
+      fullPayload: { txid, endToEndId: actualEndToEndId, amountCents: order.totalCents, orderId: order.id, paidAt: actualPaidTime, status: 'PAID' },
+    };
+    memoryWebhookLogs.unshift(webhookLog);
+    if (pgPool && notificationDispatched) {
+      await pgPool.query('UPDATE outbox_events SET status=$1, processed_at=NOW() WHERE id=$2;', ['completed', outboxEvent.id]).catch(() => {});
+      await pgPool.query('UPDATE orders SET whatsapp_logs=$1::jsonb WHERE id=$2 AND tenant_slug=$3;', [JSON.stringify(order.whatsAppLogs), order.id, tenant.slug]).catch(() => {});
+    }
 
     res.json({
       success: true,
-      message: 'Notificação de Pix Direto processada com sucesso. Pedido liberado para a cozinha!',
-      data: {
-        txid: charge?.txid || txid,
-        endToEndId: actualEndToEndId,
-        orderId: order?.id,
-        paymentStatus: 'paid_online',
-        orderStatus: order?.status || 'confirmed',
-      },
+      message: notificationDispatched ? 'Pagamento confirmado; notificação aceita pela Evolution API.' : 'Pagamento confirmado; notificação permanece pendente.',
+      data: { txid, endToEndId: actualEndToEndId, orderId: order.id, paymentStatus: 'paid_online', orderStatus: order.status, notificationDispatched },
     });
   });
 
