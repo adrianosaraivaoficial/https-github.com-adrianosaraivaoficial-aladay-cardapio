@@ -3399,7 +3399,8 @@ async function startServer() {
   app.post('/api/v1/asaas/subscription/:slug/start-trial', (req: Request, res: Response) => {
     const { slug } = req.params;
     const tenant = memoryTenants.find((t) => t.slug === slug);
-    if (!tenant) return res.status(404).json({ success: false, error: 'Restaurante não encontrado.' });
+    const isTemporaryOnboardingSlug = /^assinante_(?:\\d{11}|\\d{14}|novo)$/.test(slug);
+    if (!tenant && !isTemporaryOnboardingSlug) return res.status(404).json({ success: false, error: 'Restaurante não encontrado.' });
 
     const {
       customerName,
@@ -3419,7 +3420,7 @@ async function startServer() {
     if (resolvedPhone.length < 10 || resolvedPhone.length > 15) return res.status(400).json({ success: false, error: 'Informe um telefone válido com DDD.' });
 
     const existingSubscription = memoryAsaasSubscriptions[slug];
-    if (tenant.subscriptionStatus === 'trial' || tenant.trialEndsAt || existingSubscription) {
+    if ((tenant && (tenant.subscriptionStatus === 'trial' || tenant.trialEndsAt)) || existingSubscription) {
       return res.status(409).json({ success: false, error: 'Este restaurante já possui uma assinatura ou período de teste registrado.' });
     }
 
@@ -3455,9 +3456,11 @@ async function startServer() {
     };
 
     memoryAsaasSubscriptions[slug] = subscription;
-    tenant.subscriptionStatus = 'trial';
-    tenant.trialEndsAt = trialEndsIso;
-    tenant.phone = resolvedPhone;
+    if (tenant) {
+      tenant.subscriptionStatus = 'trial';
+      tenant.trialEndsAt = trialEndsIso;
+      tenant.phone = resolvedPhone;
+    }
 
     memoryWebhookLogs.unshift({
       id: `log_trial_${Date.now()}`,
