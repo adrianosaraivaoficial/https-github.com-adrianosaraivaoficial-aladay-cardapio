@@ -1861,6 +1861,7 @@ async function startServer() {
 
   // Bot Simulation & n8n Inbound Process Endpoint
   app.post('/api/v1/bot/simulate-message', requireSuperAdmin, (req: Request, res: Response) => {
+    if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'Endpoint de simulação desativado em produção.' });
     const { tenantSlug, customerPhone, messageText } = req.body;
     const tenant = memoryTenants.find((t) => t.slug === tenantSlug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
@@ -1930,6 +1931,7 @@ async function startServer() {
 
   // Direct Test Dispatch Endpoint (for simulating live curl from UI)
   app.post('/api/v1/webhooks/test-dispatch', requireSuperAdmin, (req: Request, res: Response) => {
+    if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'Endpoint de simulação desativado em produção.' });
     const { instance, senderPhone, messageText, tenantSlug } = req.body;
     const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.evolutionInstanceId === instance);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado para simulação.' });
@@ -2734,6 +2736,7 @@ async function startServer() {
   // POST /api/v1/evolution/instance/:instanceName/simulate-scan
   // Simulates that the user pointed their phone camera and scanned the QR Code
   app.post('/api/v1/evolution/instance/:instanceName/simulate-scan', requireSuperAdmin, (req: Request, res: Response) => {
+    if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'Simulação de pareamento desativada em produção.' });
     const { instanceName } = req.params;
     const { phone, profileName } = req.body;
     const { tenant } = getTenantEvolutionConfig(instanceName);
@@ -3806,17 +3809,7 @@ async function startServer() {
   // POST /api/v1/asaas/simulate-webhook (PROTECTED IN PRODUCTION)
   // Allows testing from the frontend UI without waiting for an external network event
   app.post('/api/v1/asaas/simulate-webhook', requireSuperAdmin, async (req: Request, res: Response) => {
-    // In production, block simulation unless authenticated as SUPER_ADMIN
-    if (process.env.NODE_ENV === 'production') {
-      const authHeader = req.headers['authorization'];
-      const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-      const claims = token ? verifyJwtToken(token) : null;
-      if (!claims || claims.role !== 'SUPER_ADMIN') {
-        return res.status(403).json({
-          error: 'Simulação de webhook desativada em ambiente de produção para segurança dos dados.',
-        });
-      }
-    }
+    if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'Simulação de webhook é proibida em produção.' });
 
     const { eventType = 'PAYMENT_RECEIVED', tenantSlug = 'aladay' } = req.body;
     const sub = memoryAsaasSubscriptions[tenantSlug] || memoryAsaasSubscriptions['aladay'];
