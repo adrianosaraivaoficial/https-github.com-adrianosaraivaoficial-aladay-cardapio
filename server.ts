@@ -2493,9 +2493,28 @@ async function startServer() {
     },
   };
 
+  const isSafeExternalHttpsUrl = (value: string): boolean => {
+    try {
+      const parsed = new URL(String(value || '').trim());
+      if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return false;
+      const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+      if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return false;
+      const octets = host.split('.').map(Number);
+      if (octets.length === 4 && octets.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
+        const [a, b] = octets;
+        if (a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19))) return false;
+      }
+      if (host.includes(':') && (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80') || host.startsWith('::ffff:127.') || host.startsWith('::ffff:10.'))) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const getTenantEvolutionConfig = (instanceName: string) => {
     const tenant = memoryTenants.find((t) => t.evolutionInstanceId === instanceName || t.slug === instanceName);
-    const apiUrl = (tenant as any)?.evolutionApiUrl || process.env.EVOLUTION_API_URL || '';
+    const tenantUrl = String((tenant as any)?.evolutionApiUrl || '');
+    const apiUrl = tenantUrl && isSafeExternalHttpsUrl(tenantUrl) ? tenantUrl : (process.env.EVOLUTION_API_URL || '');
     const apiKey = (tenant as any)?.evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
     return { tenant, apiUrl: apiUrl.replace(/\/$/, ''), apiKey };
   };
@@ -2853,9 +2872,13 @@ async function startServer() {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
 
-    const { evolutionApiUrl, evolutionApiKey, evolutionInstanceId, n8nWebhookUrl } = req.body;
-    if (evolutionApiUrl) (tenant as any).evolutionApiUrl = String(evolutionApiUrl).trim();
-    if (evolutionApiKey) (tenant as any).evolutionApiKey = String(evolutionApiKey).trim();
+    const { evolutionApiUrl, evolutionApiKey, evolutionInstanceId, n8nWebhookUrl } = req.body || {};
+    if (!isSafeExternalHttpsUrl(String(evolutionApiUrl || ''))) return res.status(400).json({ error: 'Informe uma URL HTTPS pública válida para a Evolution API.' });
+    if (!evolutionApiKey || String(evolutionApiKey).trim().length < 16 || String(evolutionApiKey).length > 512) return res.status(400).json({ error: 'Informe uma chave Evolution válida.' });
+    if (evolutionInstanceId && !/^[a-zA-Z0-9_-]{1,60}$/.test(String(evolutionInstanceId))) return res.status(400).json({ error: 'Identificador de instância inválido.' });
+    if (n8nWebhookUrl && !isSafeExternalHttpsUrl(String(n8nWebhookUrl))) return res.status(400).json({ error: 'Informe uma URL HTTPS pública válida para o webhook n8n.' });
+    (tenant as any).evolutionApiUrl = String(evolutionApiUrl).trim();
+    (tenant as any).evolutionApiKey = String(evolutionApiKey).trim();
     if (evolutionInstanceId) tenant.evolutionInstanceId = String(evolutionInstanceId).trim();
     if (n8nWebhookUrl) (tenant as any).n8nWebhookUrl = String(n8nWebhookUrl).trim();
 
