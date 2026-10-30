@@ -1515,14 +1515,29 @@ async function startServer() {
 
     res.json({
       data: {
-        order,
+        order: {
+          id: order.id,
+          orderNumber: order.orderNumber,
+          customerName: String(order.customerName || '').split(' ')[0],
+          type: order.type,
+          items: (order.items || []).map((item: any) => ({
+            productName: item.productName,
+            quantity: item.quantity,
+            selectedOptions: item.selectedOptions || [],
+            totalCents: item.totalCents,
+          })),
+          subtotalCents: order.subtotalCents,
+          deliveryFeeCents: order.deliveryFeeCents,
+          totalCents: order.totalCents,
+          status: order.status,
+          paymentStatus: order.paymentStatus,
+          paymentMethod: order.paymentMethod,
+          createdAt: order.createdAt,
+        },
         tenant: {
           name: tenant.name,
           slug: tenant.slug,
-          phone: tenant.phone,
-          address: tenant.address,
           primaryColor: tenant.primaryColor,
-          evolutionInstanceId: tenant.evolutionInstanceId || 'aladay',
         },
         timelineSteps,
         lastUpdated: order.updatedAt || order.createdAt,
@@ -3668,8 +3683,9 @@ async function startServer() {
     // SECURITY: Validate Asaas Access Token Header
     const receivedToken = (req.headers['asaas-access-token'] as string) || '';
     const configuredToken = process.env.ASAAS_WEBHOOK_TOKEN || asaasGatewayConfig.webhookToken;
-    if (configuredToken && receivedToken !== configuredToken) {
-      console.warn(`[Segurança Asaas] Tentativa de webhook rejeitada por token inválido ou ausente.`);
+    const expectedTokenBuffer = Buffer.from(String(configuredToken || ''));
+    const receivedTokenBuffer = Buffer.from(String(receivedToken || ''));
+    if (!configuredToken || !receivedToken || expectedTokenBuffer.length !== receivedTokenBuffer.length || !crypto.timingSafeEqual(expectedTokenBuffer, receivedTokenBuffer)) {
       return res.status(401).json({ error: 'Acesso não autorizado: token de webhook Asaas inválido.' });
     }
 
@@ -3681,16 +3697,16 @@ async function startServer() {
       return res.status(400).json({ error: 'Payload de webhook inválido: evento ausente.' });
     }
 
-    // Find corresponding subscription
+    const supportedEvents = ['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED', 'PAYMENT_OVERDUE', 'SUBSCRIPTION_DELETED'];
+    if (!supportedEvents.includes(event)) return res.status(200).json({ received: true, processed: false, reason: 'Evento ignorado.' });
+
     let targetSub: InMemAsaasSubscription | undefined;
-    if (payment?.subscription) {
-      targetSub = Object.values(memoryAsaasSubscriptions).find((s) => s.id === payment.subscription);
-    }
-    if (!targetSub && payment?.id) {
-      targetSub = Object.values(memoryAsaasSubscriptions).find((s) => s.invoices.some((i) => i.id === payment.id));
-    }
-    if (!targetSub) {
-      targetSub = memoryAsaasSubscriptions['aladay'];
+    const subscriptionId = req.body?.subscription?.id || payment?.subscription;
+    if (subscriptionId) targetSub = Object.values(memoryAsaasSubscriptions).find((s) => s.id === subscriptionId);
+    if (!targetSub && payment?.id) targetSub = Object.values(memoryAsaasSubscriptions).find((s) => s.invoices.some((i) => i.id === payment.id));
+    if (!targetSub) return res.status(404).json({ error: 'Assinatura não encontrada para o evento recebido.' });
+    if ((event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED') && (!payment?.id || Number(payment?.value) !== Number(targetSub.value))) {
+      return res.status(409).json({ error: 'Pagamento sem identificador ou com valor divergente da assinatura.' });
     }
 
     if (targetSub) {
