@@ -44,7 +44,7 @@ Configure these only in the deployment environment (EasyPanel), never in Git:
 
 - Users, products, categories, orders, OTP state, trial/subscription records and rate limits still rely in part on process memory. Restarting the service or running multiple replicas can lose or split state.
 - The current database initialization does not fully hydrate/persist every domain entity. Product catalog persistence and order/payment atomicity need a separate implementation.
-- The one-time onboarding binding token is held in process memory and is lost on restart. Signup must be restarted if the server restarts between payment/trial activation and restaurant creation. The onboarding process also needs durable token storage and end-to-end ownership tests.
+- The one-time onboarding binding token and one-time owner-registration token are held in process memory and are lost on restart. Signup must be restarted if the server restarts between payment/trial activation and restaurant creation. The onboarding process still needs durable token storage and end-to-end ownership tests.
 - Tenant isolation has not been exhaustively audited across every API route and every SQL query. PostgreSQL row-level security, tenant-scoped foreign keys and comprehensive RBAC tests are still outstanding.
 - Webhook authentication uses shared secrets; provider-native signatures and replay/idempotency validation must be implemented and tested where supported.
 - No production deploy or database migration was performed by this PR.
