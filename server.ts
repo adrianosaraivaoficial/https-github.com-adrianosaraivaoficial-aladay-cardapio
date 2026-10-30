@@ -1009,15 +1009,13 @@ async function startServer() {
     const paidDate = paidAt ? new Date(paidAt) : new Date();
     if (!Number.isFinite(paidDate.getTime()) || paidDate.getTime() > Date.now() + 5 * 60 * 1000) return res.status(400).json({ success: false, error: 'Data de pagamento inválida.' });
     const actualPaidTime = paidDate.toISOString();
-    if (charge) {
-      charge.status = 'PAID';
-      charge.paidAt = actualPaidTime;
-      charge.endToEndId = actualEndToEndId;
-    }
+    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
+    if (!tenant) return res.status(404).json({ success: false, error: 'Restaurante associado ao pedido não encontrado.' });
+    charge.status = 'PAID';
+    charge.paidAt = actualPaidTime;
+    charge.endToEndId = actualEndToEndId;
 
-    let tenant = memoryTenants[0];
     if (order) {
-      tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
       order.paymentStatus = 'paid_online';
       order.status = 'confirmed';
       order.updatedAt = currentTime;
@@ -1504,7 +1502,8 @@ async function startServer() {
     if (!order) {
       return res.status(404).json({ error: 'Pedido não encontrado para rastreamento.' });
     }
-    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
+    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante do pedido não encontrado.' });
 
     const timelineSteps = [
       {
@@ -2002,7 +2001,8 @@ async function startServer() {
   // Direct Test Dispatch Endpoint (for simulating live curl from UI)
   app.post('/api/v1/webhooks/test-dispatch', requireSuperAdmin, (req: Request, res: Response) => {
     const { instance, senderPhone, messageText, tenantSlug } = req.body;
-    const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.evolutionInstanceId === instance) || memoryTenants[0];
+    const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.evolutionInstanceId === instance);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado para simulação.' });
 
     const cleanText = String(messageText || 'Oi, quero o cardapio').trim().toLowerCase();
     const isHuman = cleanText === '2' || cleanText.includes('atendente') || cleanText.includes('humano');
@@ -2554,7 +2554,7 @@ async function startServer() {
   };
 
   const getTenantEvolutionConfig = (instanceName: string) => {
-    const tenant = memoryTenants.find((t) => t.evolutionInstanceId === instanceName || t.slug === instanceName) || memoryTenants[0];
+    const tenant = memoryTenants.find((t) => t.evolutionInstanceId === instanceName || t.slug === instanceName);
     const apiUrl = (tenant as any)?.evolutionApiUrl || process.env.EVOLUTION_API_URL || '';
     const apiKey = (tenant as any)?.evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
     return { tenant, apiUrl: apiUrl.replace(/\/$/, ''), apiKey };
