@@ -3168,7 +3168,8 @@ async function startServer() {
     } = req.body;
 
     const tenant = memoryTenants.find((t) => t.slug === slug);
-    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    const isTemporaryOnboardingSlug = /^assinante_(?:\d{11}|\d{14}|novo)$/.test(slug);
+    if (!tenant && !isTemporaryOnboardingSlug) return res.status(404).json({ error: 'Restaurante não encontrado.' });
     if (billingType !== 'PIX') return res.status(400).json({ error: 'No momento, somente Pix está habilitado para assinatura. Boleto e cartão permanecem desativados até validação específica.' });
     if (process.env.NODE_ENV === 'production' && !asaasGatewayConfig.apiKey) return res.status(503).json({ error: 'Gateway Asaas não configurado. A cobrança não pode ser criada em produção.' });
 
