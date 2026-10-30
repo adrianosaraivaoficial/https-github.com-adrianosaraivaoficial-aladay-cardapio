@@ -1149,131 +1149,52 @@ async function startServer() {
   app.post('/api/v1/webhooks/asaas', handleAsaasSubscriptionWebhook);
   app.post('/api/v1/webhooks/asaas-subscriptions', handleAsaasSubscriptionWebhook);
 
-  // SIMULATE BANK PAYMENT FOR TESTING (PROTECTED IN PRODUCTION)
+  // SIMULATE BANK PAYMENT FOR TESTING — development only.
   app.post('/api/v1/pix/simulate-payment', requireSuperAdmin, async (req: Request, res: Response) => {
-    // In production, block simulation unless authenticated as SUPER_ADMIN
-    if (process.env.NODE_ENV === 'production') {
-      const authHeader = req.headers['authorization'];
-      const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-      const claims = token ? verifyJwtToken(token) : null;
-      if (!claims || claims.role !== 'SUPER_ADMIN') {
-        return res.status(403).json({
-          error: 'Simulação de pagamento desativada em ambiente de produção para segurança dos dados.',
-        });
-      }
-    }
+    if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'Simulação de pagamento é proibida em produção.' });
 
-    const { txid, orderId } = req.body;
-    let targetTxid = txid;
+    const { txid, orderId } = req.body || {};
+    const charge = memoryPixTransactions.find((item) => item.txid === String(txid || '') || (orderId && item.orderId === String(orderId)));
+    if (!charge) return res.status(404).json({ error: 'Cobrança Pix pendente não encontrada.' });
+    if (charge.status !== 'PENDING') return res.status(409).json({ error: 'A cobrança não está pendente.' });
+    if (!charge.expiresAt || new Date(charge.expiresAt).getTime() <= Date.now()) return res.status(410).json({ error: 'A cobrança Pix expirou.' });
 
-    if (!targetTxid && orderId) {
-      const existing = memoryPixTransactions.find((c) => c.orderId === orderId);
-      if (existing) targetTxid = existing.txid;
-    }
+    const order = memoryOrders.find((item) => item.id === charge.orderId);
+    if (!order || order.tenantSlug !== charge.tenantSlug || Number(order.totalCents) !== Number(charge.amountCents)) return res.status(409).json({ error: 'Pedido não corresponde à cobrança Pix.' });
+    const tenant = memoryTenants.find((item) => item.slug === order.tenantSlug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante do pedido não encontrado.' });
 
-    const payload = {
-      event: 'PIX_RECEIVED',
-      txid: targetTxid || `PIX_${Date.now()}`,
-      endToEndId: `E${Date.now()}SIMULATED999`,
-      amountCents: 8580,
-      paidAt: new Date().toISOString(),
-      payer: { name: 'Adriano Saraiva', phone: '559181214188' },
-    };
+    const paidAt = new Date().toISOString();
+    const endToEndId = `E${crypto.randomBytes(16).toString('hex').toUpperCase()}`;
+    charge.status = 'PAID';
+    charge.paidAt = paidAt;
+    charge.endToEndId = endToEndId;
+    order.paymentStatus = 'paid_online';
+    order.status = 'confirmed';
+    order.updatedAt = paidAt;
 
-    const charge = memoryPixTransactions.find((c) => c.txid === payload.txid) || memoryPixTransactions[0];
-    const order = memoryOrders.find((o) => o.id === orderId) || (charge ? memoryOrders.find((o) => o.id === charge.orderId) : memoryOrders[0]);
-
-    if (charge) {
-      charge.status = 'PAID';
-      charge.paidAt = payload.paidAt;
-      charge.endToEndId = payload.endToEndId;
-    }
-
-    if (order) {
-      const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
-      const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      order.paymentStatus = 'paid_online';
-      order.status = 'confirmed';
-      order.updatedAt = currentTime;
-
-      const totalFormatted = `R$ ${(order.totalCents / 100).toFixed(2).replace('.', ',')}`;
-      const customerFirstName = (order.customerName || 'Cliente').split(' ')[0];
-      const trackingUrl = `https://agencia-n8n.2eoc7n.easypanel.host/pedido/${order.id}`;
-
-      const pixNotificationText = `⚡ *Pagamento Pix Confirmado!*\n\nOlá, *${customerFirstName}*! Confirmamos o recebimento do seu Pix de *${totalFormatted}* com sucesso! 💰✅\n\nSeu pedido *#${order.orderNumber}* foi liberado imediatamente e já está na cozinha sendo preparado com todo capricho no *${tenant.name}*! 👨‍🍳🔥\n\n👉 *Acompanhe em tempo real pelo link:*\n${trackingUrl}`;
-
-      if (!order.whatsAppLogs) order.whatsAppLogs = [];
-      order.whatsAppLogs.unshift({
-        timestamp: currentTime,
-        event: 'pix.payment_confirmed',
-        detail: `Pix confirmado via Webhook. Pedido #${order.orderNumber} liberado para a cozinha!`,
-        messageText: pixNotificationText,
-        statusSent: 'confirmed',
-      });
-
-      const evolutionApiUrl = (tenant as any).evolutionApiUrl || process.env.EVOLUTION_API_URL || '';
-      const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
-      const instanceName = tenant.evolutionInstanceId || 'aladay';
-
-      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${encodeURIComponent(instanceName)}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: evolutionApiKey,
-        },
-        body: JSON.stringify({
-          number: order.customerPhone,
-          text: pixNotificationText,
-          options: { delay: 1000, presence: 'composing', linkPreview: true },
-        }),
-      }).catch((e) => console.log('Evolution send on Pix Simulate:', e.message));
-
-      memoryWebhookLogs.unshift({
-        id: `log_pix_sim_${Date.now()}`,
-        timestamp: currentTime,
-        source: 'pix_gateway',
-        eventType: 'PIX_RECEIVED',
-        instance: instanceName,
-        senderPhone: order.customerPhone,
-        messageText: `💰 Simulação de Pix aprovada para Pedido #${order.orderNumber} (${order.customerName}).`,
-        direction: 'inbound',
-        status: 'success',
-        payloadSummary: `Pix de ${totalFormatted} aprovado via simulador de banco`,
-        fullPayload: {
-          event: 'pix.simulated',
-          txid: payload.txid,
-          orderId: order.id,
-          orderNumber: order.orderNumber,
-          amountCents: order.totalCents,
-          paidAt: payload.paidAt,
-        },
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'Simulação de pagamento Pix executada! Pedido liberado para a cozinha.',
-      data: {
-        txid: payload.txid,
-        order,
-      },
+    memoryWebhookLogs.unshift({
+      id: `log_pix_sim_${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString('pt-BR'),
+      source: 'pix_gateway',
+      eventType: 'PIX_SIMULATED',
+      instance: tenant.evolutionInstanceId || 'aladay',
+      senderPhone: order.customerPhone,
+      messageText: `Simulação de Pix para o pedido #${order.orderNumber}.`,
+      direction: 'inbound',
+      status: 'success',
+      payloadSummary: `Simulação local de pagamento de ${charge.amountCents} centavos.`,
+      fullPayload: { txid: charge.txid, orderId: order.id, amountCents: charge.amountCents, paidAt },
     });
+
+    res.json({ success: true, message: 'Simulação local concluída. Nenhum banco ou provedor foi notificado.', data: { txid: charge.txid, orderId: order.id, status: charge.status, paidAt } });
   });
 
   // GET Tenant Pix Config
   app.get('/api/v1/tenants/:slug/pix-config', (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
-    res.json({
-      data: tenant.pixConfig || {
-        provider: 'openpix',
-        pixKey: tenant.phone || '5511987654321',
-        pixKeyType: 'phone',
-        merchantName: tenant.name,
-        merchantCity: 'SAO PAULO',
-        autoApproveWebhook: false,
-      },
-    });
+    res.json({ data: tenant.pixConfig || null, configured: Boolean(tenant.pixConfig?.pixKey) });
   });
 
   // PUT Tenant Pix Config (Protected by Tenant JWT Guard)
@@ -1281,16 +1202,24 @@ async function startServer() {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
 
-    const { provider, pixKey, pixKeyType, merchantName, merchantCity, autoApproveWebhook } = req.body;
+    const { provider, pixKey, pixKeyType, merchantName, merchantCity, autoApproveWebhook } = req.body || {};
+    const cleanPixKey = String(pixKey || '').trim();
+    const cleanMerchantName = String(merchantName || '').trim();
+    const cleanMerchantCity = String(merchantCity || '').trim();
+    if (!cleanPixKey || cleanPixKey.length > 150) return res.status(400).json({ error: 'Informe uma chave Pix válida.' });
+    if (!['cpf', 'cnpj', 'email', 'phone', 'random'].includes(pixKeyType)) return res.status(400).json({ error: 'Tipo de chave Pix inválido.' });
+    if (cleanMerchantName.length < 2 || cleanMerchantName.length > 25) return res.status(400).json({ error: 'Nome do recebedor deve ter de 2 a 25 caracteres.' });
+    if (cleanMerchantCity.length < 2 || cleanMerchantCity.length > 15) return res.status(400).json({ error: 'Cidade do recebedor deve ter de 2 a 15 caracteres.' });
+    if (autoApproveWebhook === true && !process.env.PIX_WEBHOOK_TOKEN) return res.status(503).json({ error: 'Configure PIX_WEBHOOK_TOKEN antes de habilitar confirmação automática.' });
 
     tenant.pixConfig = {
       ...(tenant.pixConfig || {}),
-      provider: provider || 'openpix',
-      pixKey: pixKey ? String(pixKey).trim() : tenant.phone,
-      pixKeyType: pixKeyType || 'phone',
-      merchantName: merchantName ? String(merchantName).trim().slice(0, 25) : tenant.name.slice(0, 25),
-      merchantCity: merchantCity ? String(merchantCity).trim().slice(0, 15).toUpperCase() : 'SAO PAULO',
-      autoApproveWebhook: autoApproveWebhook ?? false,
+      provider: provider || 'direct_bank',
+      pixKey: cleanPixKey,
+      pixKeyType,
+      merchantName: cleanMerchantName,
+      merchantCity: cleanMerchantCity.toUpperCase(),
+      autoApproveWebhook: autoApproveWebhook === true,
       updatedAt: new Date().toISOString(),
     };
 
