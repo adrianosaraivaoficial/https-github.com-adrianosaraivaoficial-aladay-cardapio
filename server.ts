@@ -356,6 +356,7 @@ async function startServer() {
   app.set('trust proxy', 1);
   let memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {};
   const memoryOnboardingBindingTokens = new Map<string, string>();
+  const memoryTenantRegistrationTokens = new Map<string, string>();
   const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '1mb' }));
@@ -2238,6 +2239,12 @@ async function startServer() {
     if (cleanPhone.length < 10 || cleanPhone.length > 15) return res.status(400).json({ success: false, error: 'Informe um telefone válido com DDD.' });
     const targetTenant = memoryTenants.find((t) => t.slug === String(tenantSlug));
     if (!targetTenant || (tenantId && targetTenant.id !== String(tenantId))) return res.status(404).json({ success: false, error: 'Restaurante não encontrado para concluir o cadastro.' });
+    const expectedRegistrationToken = Buffer.from(memoryTenantRegistrationTokens.get(String(tenantSlug)) || '');
+    const suppliedRegistrationToken = Buffer.from(String(registrationToken || ''));
+    if (!expectedRegistrationToken.length || expectedRegistrationToken.length !== suppliedRegistrationToken.length || !crypto.timingSafeEqual(expectedRegistrationToken, suppliedRegistrationToken)) {
+      return res.status(401).json({ success: false, error: 'Token de cadastro inválido ou expirado. Reinicie a vinculação da assinatura.' });
+    }
+    if (memoryUsers.some((existingUser) => existingUser.tenantSlug === String(tenantSlug) && existingUser.role === 'TENANT_OWNER')) return res.status(409).json({ success: false, error: 'Este restaurante já possui um usuário proprietário cadastrado.' });
     const subscription = memoryAsaasSubscriptions[String(tenantSlug)];
     const trialStillActive = subscription?.status === 'TRIAL' && Boolean(subscription.trialEndsAt) && new Date(String(subscription.trialEndsAt)).getTime() > Date.now();
     if (!trialStillActive && subscription?.status !== 'ACTIVE') return res.status(403).json({ success: false, error: 'É necessário ter um teste ativo ou uma assinatura confirmada no servidor para criar o acesso do restaurante.' });
@@ -2260,6 +2267,7 @@ async function startServer() {
         ],
     };
     memoryUsers.push(user);
+    memoryTenantRegistrationTokens.delete(String(tenantSlug));
 
     const { token, claims } = signJwtToken(user);
 
@@ -3424,6 +3432,8 @@ async function startServer() {
     memoryAsaasSubscriptions[slug] = boundSubscription;
     delete memoryAsaasSubscriptions[sourceSlug];
     memoryOnboardingBindingTokens.delete(sourceSlug);
+    const ownerRegistrationToken = crypto.randomBytes(32).toString('hex');
+    memoryTenantRegistrationTokens.set(slug, ownerRegistrationToken);
 
     tenant.subscriptionStatus = activeTrial ? 'trial' : 'active';
     tenant.trialEndsAt = activeTrial ? boundSubscription.trialEndsAt : undefined;
@@ -3443,7 +3453,7 @@ async function startServer() {
       fullPayload: { tenantSlug: slug, sourceSlug, subscriptionId: boundSubscription.id, status: boundSubscription.status },
     });
 
-    res.status(200).json({ success: true, message: 'Assinatura vinculada ao restaurante.', subscription: toPublicSubscription(boundSubscription) });
+    res.status(200).json({ success: true, message: 'Assinatura vinculada ao restaurante.', subscription: { ...toPublicSubscription(boundSubscription), ownerRegistrationToken } });
   });
 
   // POST /api/v1/asaas/subscription/:slug/start-trial
