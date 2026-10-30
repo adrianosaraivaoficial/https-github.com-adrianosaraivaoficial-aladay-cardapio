@@ -3399,7 +3399,7 @@ async function startServer() {
   app.post('/api/v1/asaas/subscription/:slug/bind', (req: Request, res: Response) => {
     const { slug } = req.params;
     const sourceSlug = String(req.body?.sourceSlug || '');
-    const isTemporaryOnboardingSlug = /^assinante_(?:\\d{11}|\\d{14}|novo)$/.test(sourceSlug);
+    const isTemporaryOnboardingSlug = /^assinante_(?:\d{11}|\d{14}|novo)$/.test(sourceSlug);
     if (!isTemporaryOnboardingSlug) return res.status(400).json({ success: false, error: 'Referência temporária de cadastro inválida.' });
 
     const tenant = memoryTenants.find((t) => t.slug === slug);
