@@ -5,19 +5,29 @@ services:
       dockerfile: Dockerfile
     container_name: saas_cardapios_app
     restart: unless-stopped
-    ports:
-      - "3000:3000"
+    # In production, expose through the reverse proxy (EasyPanel/Traefik).
+    # If using standalone Docker Compose without a proxy, add an explicit
+    # loopback-only port mapping such as "127.0.0.1:3000:3000".
+    expose:
+      - "3000"
     environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - APP_URL=${APP_URL:-https://cardapio.seudominio.com.br}
-      - EVOLUTION_API_URL=${EVOLUTION_API_URL:-https://agencia-evolution-api.2eoc7n.easypanel.host}
-      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-21C3D49F3F00-48FA-BFA2-2CD290850405}
-      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-https://agencia-n8n.2eoc7n.easypanel.host/webhook-test/saas}
-      - ASAAS_ENVIRONMENT=${ASAAS_ENVIRONMENT:-sandbox}
-      - ASAAS_API_KEY=${ASAAS_API_KEY}
-      - ASAAS_WEBHOOK_TOKEN=${ASAAS_WEBHOOK_TOKEN:-tok_aladay_asaas_sec_2026}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      NODE_ENV: production
+      PORT: 3000
+      APP_URL: ${APP_URL:?Set APP_URL}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}
+      ADMIN_PHONE: ${ADMIN_PHONE:-}
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:?Set EVOLUTION_API_URL}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?Set EVOLUTION_API_KEY}
+      EVOLUTION_DEFAULT_INSTANCE: ${EVOLUTION_DEFAULT_INSTANCE:-aladay}
+      PIX_WEBHOOK_TOKEN: ${PIX_WEBHOOK_TOKEN:?Set PIX_WEBHOOK_TOKEN}
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
+      ASAAS_ENVIRONMENT: ${ASAAS_ENVIRONMENT:-sandbox}
+      ASAAS_API_KEY: ${ASAAS_API_KEY:-}
+      ASAAS_WEBHOOK_TOKEN: ${ASAAS_WEBHOOK_TOKEN:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/v1/health"]
       interval: 30s
