@@ -368,7 +368,7 @@ async function startServer() {
   // SECURITY & MULTI-TENANT AUTHENTICATION GUARDS (OWASP / LGPD COMPLIANCE)
   // ============================================================================
   const isProductionEnv = process.env.NODE_ENV === 'production';
-  const JWT_SECRET = process.env.JWT_SECRET || (isProduction ? '' : crypto.randomBytes(48).toString('hex'));
+  const JWT_SECRET = process.env.JWT_SECRET || (isProductionEnv ? '' : crypto.randomBytes(48).toString('hex'));
   if (isProductionEnv && Buffer.byteLength(JWT_SECRET, 'utf8') < 32) throw new Error('Configuração insegura: defina JWT_SECRET com pelo menos 32 bytes no ambiente de produção.');
   if (isProductionEnv && String(process.env.ADMIN_PASSWORD || '').length < 14) throw new Error('Configuração insegura: defina ADMIN_PASSWORD com pelo menos 14 caracteres.');
   if (isProductionEnv && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(process.env.ADMIN_EMAIL || ''))) throw new Error('Configuração obrigatória: defina um ADMIN_EMAIL válido.');
@@ -2236,10 +2236,10 @@ async function startServer() {
     const cleanPhone = String(phone || '').replace(/\D/g, '');
     if (cleanPhone.length < 10 || cleanPhone.length > 15) return res.status(400).json({ success: false, error: 'Informe um telefone válido com DDD.' });
     const targetTenant = memoryTenants.find((t) => t.slug === String(tenantSlug));
-    const subscription = memoryAsaasSubscriptions[String(tenantSlug)];
-    const trialStillActive = subscription?.status === 'TRIAL' && Boolean(subscription.trialEndsAt) && new Date(subscription.trialEndsAt).getTime() > Date.now();
-    if (!targetTenant || (!trialStillActive && subscription?.status !== 'ACTIVE')) return res.status(403).json({ success: false, error: 'É necessário ter um teste ativo ou uma assinatura confirmada no servidor para criar o acesso do restaurante.' });
     if (!targetTenant || (tenantId && targetTenant.id !== String(tenantId))) return res.status(404).json({ success: false, error: 'Restaurante não encontrado para concluir o cadastro.' });
+    const subscription = memoryAsaasSubscriptions[String(tenantSlug)];
+    const trialStillActive = subscription?.status === 'TRIAL' && Boolean(subscription.trialEndsAt) && new Date(String(subscription.trialEndsAt)).getTime() > Date.now();
+    if (!trialStillActive && subscription?.status !== 'ACTIVE') return res.status(403).json({ success: false, error: 'É necessário ter um teste ativo ou uma assinatura confirmada no servidor para criar o acesso do restaurante.' });
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     let user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
     if (user) return res.status(409).json({ success: false, error: 'Este e-mail já possui uma conta. Faça login ou recupere o acesso.' });
