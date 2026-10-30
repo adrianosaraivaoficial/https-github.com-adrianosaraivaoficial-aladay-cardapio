@@ -2621,6 +2621,8 @@ async function startServer() {
   app.get('/api/v1/evolution/instance/:instanceName/status', requireSuperAdmin, async (req: Request, res: Response) => {
     const { instanceName } = req.params;
     const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+    if (!tenant) return res.status(404).json({ error: 'Instância não vinculada a um restaurante.' });
+    if (!apiUrl || !apiKey) return res.status(503).json({ error: 'Evolution API não configurada para esta instância.' });
     let inst = memoryEvolutionInstances[instanceName];
     if (!inst) {
       inst = {
@@ -2682,6 +2684,8 @@ async function startServer() {
   const handleConnectInstance = async (req: Request, res: Response) => {
     const { instanceName } = req.params;
     const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+    if (!tenant) return res.status(404).json({ error: 'Instância não vinculada a um restaurante.' });
+    if (!apiUrl || !apiKey) return res.status(503).json({ error: 'Evolution API não configurada para esta instância.' });
 
     let remoteFetched = false;
     let remoteResult: any = null;
@@ -2751,6 +2755,8 @@ async function startServer() {
   app.post('/api/v1/evolution/instance/:instanceName/disconnect', requireSuperAdmin, async (req: Request, res: Response) => {
     const { instanceName } = req.params;
     const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+    if (!tenant) return res.status(404).json({ error: 'Instância não vinculada a um restaurante.' });
+    if (!apiUrl || !apiKey) return res.status(503).json({ error: 'Evolution API não configurada para esta instância.' });
 
     try {
       await fetch(`${apiUrl}/instance/logout/${instanceName}`, {
@@ -2801,6 +2807,7 @@ async function startServer() {
     const { instanceName } = req.params;
     const { phone, profileName } = req.body;
     const { tenant } = getTenantEvolutionConfig(instanceName);
+    if (!tenant) return res.status(404).json({ error: 'Instância não vinculada a um restaurante.' });
 
     const pairedPhone = (phone || tenant?.phone || '').replace(/\D/g, '');
     const pairedProfile = profileName || tenant?.name || 'Restaurante Oficial';
@@ -2862,7 +2869,9 @@ async function startServer() {
       return res.status(400).json({ error: 'Nome da instância é obrigatório.' });
     }
 
-    const { apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+    const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado para esta instância.' });
+    if (!apiUrl || !apiKey) return res.status(503).json({ error: 'Evolution API não configurada para esta instância.' });
 
     try {
       await fetch(`${apiUrl}/instance/create`, {
