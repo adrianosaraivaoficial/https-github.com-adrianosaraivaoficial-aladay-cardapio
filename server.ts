@@ -1968,67 +1968,140 @@ async function startServer() {
   });
 
   // CREATE Product for Tenant
-  app.post('/api/v1/tenants/:slug/products', requireTenantAccess('slug'), (req: Request, res: Response) => {
-    const { name, categoryId, description, priceCents, imageUrl, optionGroups } = req.body;
-    if (!name || priceCents === undefined) {
-      return res.status(400).json({ error: 'Nome e Preço são obrigatórios.' });
+  app.post('/api/v1/tenants/:slug/products', requireTenantAccess('slug'), async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    const { name, categoryId, description, priceCents, imageUrl, optionGroups } = req.body || {};
+    const cleanName = String(name || '').trim();
+    const cleanPrice = Number(priceCents);
+    if (cleanName.length < 2 || cleanName.length > 150 || !Number.isSafeInteger(cleanPrice) || cleanPrice < 0) {
+      return res.status(400).json({ error: 'Informe nome e preço válidos para o produto.' });
     }
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ error: 'PostgreSQL obrigatório para cadastrar produtos em produção.' });
 
     const newProd = {
-      id: `prod_${Date.now()}`,
-      tenantSlug: req.params.slug,
-      name: String(name).trim(),
-      categoryId: categoryId || 'cat_geral',
-      description: description ? String(description).trim() : '',
-      priceCents: Number(priceCents) || 0,
-      imageUrl: imageUrl || undefined,
+      id: `prod_${crypto.randomBytes(12).toString('hex')}`,
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      name: cleanName,
+      categoryId: String(categoryId || 'cat_geral').slice(0, 80),
+      description: String(description || '').trim().slice(0, 2000),
+      priceCents: cleanPrice,
+      imageUrl: imageUrl ? String(imageUrl).slice(0, 2000) : undefined,
       isAvailable: true,
-      optionGroups: optionGroups || [],
+      isFeatured: false,
+      optionGroups: Array.isArray(optionGroups) ? optionGroups : [],
     };
-
+    if (pgPool) {
+      try {
+        await pgPool.query(
+          `INSERT INTO products (id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, FALSE, $9::jsonb);`,
+          [newProd.id, newProd.tenantId, newProd.tenantSlug, newProd.categoryId, newProd.name, newProd.description, newProd.priceCents, newProd.imageUrl || null, JSON.stringify(newProd.optionGroups)]
+        );
+      } catch (error: any) {
+        console.error('[Product Create] PostgreSQL insert failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível persistir o produto.' });
+      }
+    }
     memoryProducts.unshift(newProd);
     res.status(201).json({ message: 'Produto adicionado com sucesso ao cardápio!', data: newProd });
   });
 
   // UPDATE Product for Tenant
-  app.put('/api/v1/tenants/:slug/products/:id', requireTenantAccess('slug'), (req: Request, res: Response) => {
-    const prod = memoryProducts.find((p) => p.tenantSlug === req.params.slug && p.id === req.params.id);
-    if (!prod) {
-      return res.status(404).json({ error: 'Produto não encontrado para este restaurante.' });
+  app.put('/api/v1/tenants/:slug/products/:id', requireTenantAccess('slug'), async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ error: 'PostgreSQL obrigatório para atualizar produtos em produção.' });
+
+    let prod: any = memoryProducts.find((item) => item.tenantSlug === tenant.slug && item.id === req.params.id);
+    if (!prod && pgPool) {
+      const result = await pgPool.query('SELECT * FROM products WHERE id = $1 AND tenant_slug = $2 LIMIT 1;', [req.params.id, tenant.slug]);
+      const row = result.rows[0];
+      if (row) {
+        prod = {
+          id: String(row.id), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+          categoryId: String(row.category_id), name: String(row.name), description: String(row.description || ''),
+          priceCents: Number(row.price_cents), imageUrl: row.image_url || undefined,
+          isAvailable: row.is_available !== false, isFeatured: row.is_featured === true,
+          optionGroups: Array.isArray(row.option_groups) ? row.option_groups : [],
+        };
+        memoryProducts.push(prod);
+      }
     }
+    if (!prod) return res.status(404).json({ error: 'Produto não encontrado para este restaurante.' });
 
-    const { name, categoryId, description, priceCents, imageUrl, isAvailable, optionGroups } = req.body;
-    if (name) prod.name = String(name).trim();
-    if (categoryId) prod.categoryId = categoryId;
-    if (description !== undefined) prod.description = String(description).trim();
-    if (priceCents !== undefined) prod.priceCents = Number(priceCents);
-    if (imageUrl !== undefined) prod.imageUrl = imageUrl;
-    if (typeof isAvailable === 'boolean') prod.isAvailable = isAvailable;
-    if (optionGroups) prod.optionGroups = optionGroups;
-
+    const { name, categoryId, description, priceCents, imageUrl, isAvailable, optionGroups } = req.body || {};
+    const nextPrice = priceCents === undefined ? prod.priceCents : Number(priceCents);
+    if (!Number.isSafeInteger(nextPrice) || nextPrice < 0) return res.status(400).json({ error: 'Preço inválido.' });
+    if (name !== undefined && (String(name).trim().length < 2 || String(name).trim().length > 150)) return res.status(400).json({ error: 'Nome de produto inválido.' });
+    const updated = {
+      ...prod,
+      name: name !== undefined ? String(name).trim() : prod.name,
+      categoryId: categoryId !== undefined ? String(categoryId).slice(0, 80) : prod.categoryId,
+      description: description !== undefined ? String(description).trim().slice(0, 2000) : prod.description,
+      priceCents: nextPrice,
+      imageUrl: imageUrl !== undefined ? (imageUrl ? String(imageUrl).slice(0, 2000) : undefined) : prod.imageUrl,
+      isAvailable: typeof isAvailable === 'boolean' ? isAvailable : prod.isAvailable,
+      optionGroups: Array.isArray(optionGroups) ? optionGroups : prod.optionGroups,
+    };
+    if (pgPool) {
+      try {
+        await pgPool.query(
+          `UPDATE products SET category_id=$1, name=$2, description=$3, price_cents=$4, image_url=$5, is_available=$6, option_groups=$7::jsonb, updated_at=NOW()
+           WHERE id=$8 AND tenant_slug=$9;`,
+          [updated.categoryId, updated.name, updated.description, updated.priceCents, updated.imageUrl || null, updated.isAvailable, JSON.stringify(updated.optionGroups), updated.id, tenant.slug]
+        );
+      } catch (error: any) {
+        console.error('[Product Update] PostgreSQL update failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível persistir a atualização do produto.' });
+      }
+    }
+    Object.assign(prod, updated);
     res.json({ message: 'Produto atualizado no cardápio!', data: prod });
   });
 
   // TOGGLE AVAILABILITY (Pausa rápida de produto)
-  app.patch('/api/v1/tenants/:slug/products/:id/toggle-availability', requireTenantAccess('slug'), (req: Request, res: Response) => {
-    const prod = memoryProducts.find((p) => p.tenantSlug === req.params.slug && p.id === req.params.id);
-    if (!prod) {
-      return res.status(404).json({ error: 'Produto não encontrado.' });
+  app.patch('/api/v1/tenants/:slug/products/:id/toggle-availability', requireTenantAccess('slug'), async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    let prod: any = memoryProducts.find((item) => item.tenantSlug === tenant.slug && item.id === req.params.id);
+    if (!prod && pgPool) {
+      const result = await pgPool.query('SELECT * FROM products WHERE id = $1 AND tenant_slug = $2 LIMIT 1;', [req.params.id, tenant.slug]);
+      const row = result.rows[0];
+      if (row) {
+        prod = { id: String(row.id), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug), categoryId: String(row.category_id), name: String(row.name), description: String(row.description || ''), priceCents: Number(row.price_cents), imageUrl: row.image_url || undefined, isAvailable: row.is_available !== false, isFeatured: row.is_featured === true, optionGroups: Array.isArray(row.option_groups) ? row.option_groups : [] };
+        memoryProducts.push(prod);
+      }
     }
-
-    prod.isAvailable = !prod.isAvailable;
-    res.json({
-      message: prod.isAvailable ? 'Produto reativado no cardápio!' : 'Produto pausado (esgotado temporariamente)!',
-      data: prod,
-    });
+    if (!prod) return res.status(404).json({ error: 'Produto não encontrado.' });
+    const nextAvailability = !prod.isAvailable;
+    if (pgPool) {
+      try {
+        await pgPool.query('UPDATE products SET is_available=$1, updated_at=NOW() WHERE id=$2 AND tenant_slug=$3;', [nextAvailability, prod.id, tenant.slug]);
+      } catch (error: any) {
+        return res.status(503).json({ error: 'Não foi possível persistir a disponibilidade do produto.' });
+      }
+    }
+    prod.isAvailable = nextAvailability;
+    res.json({ message: prod.isAvailable ? 'Produto reativado no cardápio!' : 'Produto pausado (esgotado temporariamente)!', data: prod });
   });
 
   // DELETE Product
-  app.delete('/api/v1/tenants/:slug/products/:id', requireTenantAccess('slug'), (req: Request, res: Response) => {
-    const idx = memoryProducts.findIndex((p) => p.tenantSlug === req.params.slug && p.id === req.params.id);
-    if (idx === -1) {
-      return res.status(404).json({ error: 'Produto não encontrado.' });
+  app.delete('/api/v1/tenants/:slug/products/:id', requireTenantAccess('slug'), async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    if (pgPool) {
+      try {
+        await pgPool.query('DELETE FROM products WHERE id=$1 AND tenant_slug=$2;', [req.params.id, tenant.slug]);
+      } catch (error: any) {
+        return res.status(503).json({ error: 'Não foi possível remover o produto do banco de dados.' });
+      }
+    } else if (process.env.NODE_ENV === 'production') {
+      return res.status(503).json({ error: 'PostgreSQL obrigatório para remover produtos em produção.' });
     }
+    const idx = memoryProducts.findIndex((item) => item.tenantSlug === tenant.slug && item.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'Produto não encontrado.' });
     const [deleted] = memoryProducts.splice(idx, 1);
     res.json({ message: 'Produto removido do cardápio.', data: deleted });
   });
