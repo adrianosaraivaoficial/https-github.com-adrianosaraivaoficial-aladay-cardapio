@@ -19,6 +19,7 @@ export const INITIAL_TENANT: RestaurantTenant = {
   deliveryZones: [],
   evolutionInstanceId: 'aladay',
   evolutionStatus: 'disconnected',
+  evolutionApiKeyConfigured: false,
   botAutoReplyEnabled: true,
   botWelcomeMessage:
     'Olá! Seja bem-vindo! Nosso cardápio digital completo está disponível pelo link abaixo:\n\n👉 https://aladay.com.br\n\nPara falar com um atendente, responda com *2*.',
