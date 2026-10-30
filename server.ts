@@ -355,7 +355,7 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: '1mb' }));
 
   // Auto-initialize PostgreSQL if DATABASE_URL is set in EasyPanel Environment
   if (process.env.DATABASE_URL) {
@@ -365,8 +365,11 @@ async function startServer() {
   // ============================================================================
   // SECURITY & MULTI-TENANT AUTHENTICATION GUARDS (OWASP / LGPD COMPLIANCE)
   // ============================================================================
-  const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' ? '' : crypto.randomBytes(48).toString('hex'));
-  if (process.env.NODE_ENV === 'production' && JWT_SECRET.length < 32) throw new Error('Configuração insegura: defina JWT_SECRET com pelo menos 32 caracteres no ambiente de produção.');
+  const isProduction = process.env.NODE_ENV === 'production';
+  const JWT_SECRET = process.env.JWT_SECRET || (isProduction ? '' : crypto.randomBytes(48).toString('hex'));
+  if (isProduction && Buffer.byteLength(JWT_SECRET, 'utf8') < 32) throw new Error('Configuração insegura: defina JWT_SECRET com pelo menos 32 bytes no ambiente de produção.');
+  if (isProduction && String(process.env.ADMIN_PASSWORD || '').length < 14) throw new Error('Configuração insegura: defina ADMIN_PASSWORD com pelo menos 14 caracteres.');
+  if (isProduction && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(process.env.ADMIN_EMAIL || ''))) throw new Error('Configuração obrigatória: defina um ADMIN_EMAIL válido.');
 
   function base64UrlEncode(input: string | Buffer): string {
     return Buffer.from(input)
@@ -389,7 +392,7 @@ async function startServer() {
       if (suppliedSignature.length !== expectedSignature.length || !crypto.timingSafeEqual(suppliedSignature, expectedSignature)) return null;
       const claims = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8'));
       const now = Math.floor(Date.now() / 1000);
-      if (!claims || typeof claims.sub !== 'string' || !claims.sub || !Number.isInteger(claims.exp) || claims.exp <= now || claims.iss !== 'https://aladay.com.br') return null;
+      if (!claims || typeof claims.sub !== 'string' || !claims.sub || !Number.isInteger(claims.iat) || claims.iat > now + 60 || !Number.isInteger(claims.exp) || claims.exp <= now || claims.exp - claims.iat > 12 * 60 * 60 || claims.iss !== 'https://aladay.com.br' || !['SUPER_ADMIN', 'TENANT_OWNER', 'KITCHEN_STAFF'].includes(claims.role) || typeof claims.tenant_slug !== 'string' || typeof claims.tenant_id !== 'string') return null;
       return claims;
     } catch { return null; }
   }
@@ -2017,7 +2020,7 @@ async function startServer() {
     {
       id: 'usr_super_01',
       name: 'Administrador Aladay',
-      email: (process.env.ADMIN_EMAIL || 'admin@aladay.com.br').trim().toLowerCase(),
+      email: (process.env.ADMIN_EMAIL || (process.env.NODE_ENV === 'production' ? '' : 'admin@aladay.local')).trim().toLowerCase(),
       passwordHash: configuredAdminPassword ? hashPassword(configuredAdminPassword) : '',
       phone: String(process.env.ADMIN_PHONE || '').replace(/\D/g, ''),
       role: 'SUPER_ADMIN',
@@ -2034,7 +2037,7 @@ async function startServer() {
     },
   ];
 
-  const memoryOtpCodes: Map<string, { code: string; email: string; expiresAt: number }> = new Map();
+  const memoryOtpCodes: Map<string, { codeHash: string; email: string; expiresAt: number }> = new Map();
 
   const memoryAuthAuditLogs: Array<{
     id: string;
@@ -2168,6 +2171,9 @@ async function startServer() {
     const cleanPhone = String(phone || '').replace(/\D/g, '');
     if (cleanPhone.length < 10 || cleanPhone.length > 15) return res.status(400).json({ success: false, error: 'Informe um telefone válido com DDD.' });
     const targetTenant = memoryTenants.find((t) => t.slug === String(tenantSlug));
+    const subscription = (memoryAsaasSubscriptions as Record<string, InMemAsaasSubscription> | undefined)?.[String(tenantSlug)];
+    const trialStillActive = subscription?.status === 'TRIAL' && Boolean(subscription.trialEndsAt) && new Date(subscription.trialEndsAt as string).getTime() > Date.now();
+    if (!subscription || (!trialStillActive && subscription.status !== 'ACTIVE')) return res.status(403).json({ success: false, error: 'É necessário ter um teste ativo ou uma assinatura confirmada para criar o acesso do restaurante.' });
     if (!targetTenant || (tenantId && targetTenant.id !== String(tenantId))) return res.status(404).json({ success: false, error: 'Restaurante não encontrado para concluir o cadastro.' });
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     let user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
@@ -2280,9 +2286,9 @@ async function startServer() {
     const otpCode = crypto.randomInt(100000, 1000000).toString();
 
     memoryOtpCodes.set(cleanEmail, {
-      code: otpCode,
+      codeHash: crypto.createHash('sha256').update(otpCode).digest('hex'),
       email: user.email,
-      expiresAt: Date.now() + 10 * 60 * 1000,
+      expiresAt: Date.now() + 5 * 60 * 1000,
     });
 
     const otpWhatsappText =
@@ -2292,7 +2298,7 @@ async function startServer() {
       `👉 *${otpCode}*\n\n` +
       `🛡️ *Perfil RBAC:* ${user.role}\n` +
       `🌐 *Domínio:* https://aladay.com.br\n` +
-      `_Válido por 10 minutos. Nunca compartilhe este código._`;
+      `_Válido por 5 minutos. Nunca compartilhe este código._`;
 
     const evolutionApiUrl = (process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
     const evolutionApiKey = process.env.EVOLUTION_API_KEY || '';
@@ -2366,7 +2372,10 @@ async function startServer() {
 
     const stored = memoryOtpCodes.get(cleanEmail);
     const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-    if (!user || !stored || stored.expiresAt <= Date.now() || stored.code !== cleanCode) {
+    const suppliedOtpHash = crypto.createHash('sha256').update(cleanCode).digest();
+    const expectedOtpHash = stored ? Buffer.from(stored.codeHash, 'hex') : Buffer.alloc(0);
+    const otpMatches = Boolean(stored && expectedOtpHash.length === suppliedOtpHash.length && crypto.timingSafeEqual(expectedOtpHash, suppliedOtpHash));
+    if (!user || !stored || stored.expiresAt <= Date.now() || !/^\\d{6}$/.test(cleanCode) || !otpMatches) {
       if (stored && stored.expiresAt <= Date.now()) memoryOtpCodes.delete(cleanEmail);
       memoryAuthAuditLogs.unshift({
         id: `audit_otp_fail_${Date.now()}`,
