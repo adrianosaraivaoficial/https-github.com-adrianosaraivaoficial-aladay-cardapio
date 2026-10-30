@@ -3104,19 +3104,28 @@ async function startServer() {
       creditCardCcv,
     } = req.body;
 
-    const safeBillingType = ['PIX', 'CREDIT_CARD', 'BOLETO'].includes(billingType) ? billingType : 'PIX';
     const tenant = memoryTenants.find((t) => t.slug === slug);
-    const resolvedName = customerName || tenant?.name || 'Assinante Aladay';
-    const resolvedEmail = customerEmail || 'financeiro@restaurante.com.br';
-    const resolvedCpfCnpj = customerCpfCnpj || '00.000.000/0001-00';
-    const resolvedPhone = customerPhone || tenant?.phone || '11987654321';
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    if (!['PIX', 'CREDIT_CARD', 'BOLETO'].includes(billingType)) return res.status(400).json({ error: 'Forma de pagamento inválida.' });
+    if (process.env.NODE_ENV === 'production' && !asaasGatewayConfig.apiKey) return res.status(503).json({ error: 'Gateway Asaas não configurado. A cobrança não pode ser criada em produção.' });
+    if (billingType === 'CREDIT_CARD') return res.status(400).json({ error: 'Pagamento com cartão temporariamente indisponível até coletarmos e validarmos os dados completos de cobrança.' });
 
+    const resolvedName = String(customerName || '').trim();
+    const resolvedEmail = String(customerEmail || '').trim().toLowerCase();
+    const resolvedCpfCnpj = String(customerCpfCnpj || '').replace(/\\D/g, '');
+    const resolvedPhone = String(customerPhone || '').replace(/\\D/g, '');
+    if (resolvedName.length < 2 || resolvedName.length > 120) return res.status(400).json({ error: 'Informe o nome completo do responsável.' });
+    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(resolvedEmail)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
+    if (![11, 14].includes(resolvedCpfCnpj.length)) return res.status(400).json({ error: 'Informe um CPF ou CNPJ válido.' });
+    if (resolvedPhone.length < 10 || resolvedPhone.length > 15) return res.status(400).json({ error: 'Informe um telefone válido com DDD.' });
+
+    const safeBillingType = billingType;
     let asaasCustomerId = '';
     let realAsaasSubscriptionId = '';
-    let realInvoiceId = `pay_asaas_${Date.now()}`;
-    let realPixPayload = defaultPixPayload;
+    let realInvoiceId = '';
+    let realPixPayload = '';
     let realPixBase64: string | undefined = undefined;
-    let realInvoiceUrl = `https://www.asaas.com/i/${realInvoiceId}`;
+    let realInvoiceUrl = '';
     let isRealGatewayCharged = false;
 
     // IF ASAAS API KEY IS CONFIGURED -> EXECUTE REAL CALLS TO ASAAS v3
