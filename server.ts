@@ -2171,9 +2171,8 @@ async function startServer() {
     const cleanPhone = String(phone || '').replace(/\D/g, '');
     if (cleanPhone.length < 10 || cleanPhone.length > 15) return res.status(400).json({ success: false, error: 'Informe um telefone válido com DDD.' });
     const targetTenant = memoryTenants.find((t) => t.slug === String(tenantSlug));
-    const subscription = (memoryAsaasSubscriptions as Record<string, InMemAsaasSubscription> | undefined)?.[String(tenantSlug)];
-    const trialStillActive = subscription?.status === 'TRIAL' && Boolean(subscription.trialEndsAt) && new Date(subscription.trialEndsAt as string).getTime() > Date.now();
-    if (!subscription || (!trialStillActive && subscription.status !== 'ACTIVE')) return res.status(403).json({ success: false, error: 'É necessário ter um teste ativo ou uma assinatura confirmada para criar o acesso do restaurante.' });
+    const trialStillActive = targetTenant?.subscriptionStatus === 'trial' && Boolean(targetTenant.trialEndsAt) && new Date(targetTenant.trialEndsAt as string).getTime() > Date.now();
+    if (!targetTenant || (!trialStillActive && targetTenant.subscriptionStatus !== 'active')) return res.status(403).json({ success: false, error: 'É necessário ter um teste ativo ou uma assinatura confirmada para criar o acesso do restaurante.' });
     if (!targetTenant || (tenantId && targetTenant.id !== String(tenantId))) return res.status(404).json({ success: false, error: 'Restaurante não encontrado para concluir o cadastro.' });
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     let user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
