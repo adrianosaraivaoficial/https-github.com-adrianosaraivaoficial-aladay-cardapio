@@ -353,6 +353,23 @@ async function initializePostgresConnection(connectionString: string, runMigrati
 
 async function startServer() {
   const app = express();
+  function isSafeExternalHttpsUrl(value: string): boolean {
+    try {
+      const parsed = new URL(String(value || '').trim());
+      if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return false;
+      const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+      if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return false;
+      const octets = host.split('.').map(Number);
+      if (octets.length === 4 && octets.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
+        const [a, b] = octets;
+        if (a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19))) return false;
+      }
+      if (host.includes(':') && (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80') || host.startsWith('::ffff:127.') || host.startsWith('::ffff:10.'))) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
   app.set('trust proxy', 1);
   let memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {};
   const memoryOnboardingBindingTokens = new Map<string, string>();
@@ -1036,7 +1053,8 @@ async function startServer() {
         statusSent: 'confirmed',
       });
 
-      const evolutionApiUrl = (tenant as any).evolutionApiUrl || process.env.EVOLUTION_API_URL || '';
+      const tenantEvolutionUrl = String((tenant as any).evolutionApiUrl || '');
+    const evolutionApiUrl = tenantEvolutionUrl && isSafeExternalHttpsUrl(tenantEvolutionUrl) ? tenantEvolutionUrl : (process.env.EVOLUTION_API_URL || '');
       const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
       const instanceName = tenant.evolutionInstanceId || 'aladay';
 
@@ -1374,7 +1392,8 @@ async function startServer() {
     if (memoryWebhookLogs.length > 60) memoryWebhookLogs.pop();
 
     // Fire actual HTTP request to Evolution API if server is reachable (non-blocking)
-    const evolutionApiUrl = (tenant as any).evolutionApiUrl || process.env.EVOLUTION_API_URL || '';
+    const tenantEvolutionUrl = String((tenant as any).evolutionApiUrl || '');
+    const evolutionApiUrl = tenantEvolutionUrl && isSafeExternalHttpsUrl(tenantEvolutionUrl) ? tenantEvolutionUrl : (process.env.EVOLUTION_API_URL || '');
     const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
     const instanceName = tenant.evolutionInstanceId || 'aladay';
 
@@ -1627,7 +1646,8 @@ async function startServer() {
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     // Evolution API credentials from tenant or default Easypanel
-    const evolutionApiUrl = (tenant as any).evolutionApiUrl || process.env.EVOLUTION_API_URL || '';
+    const tenantEvolutionUrl = String((tenant as any).evolutionApiUrl || '');
+    const evolutionApiUrl = tenantEvolutionUrl && isSafeExternalHttpsUrl(tenantEvolutionUrl) ? tenantEvolutionUrl : (process.env.EVOLUTION_API_URL || '');
     const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
     const instanceName = tenant.evolutionInstanceId || 'aladay';
 
@@ -2491,24 +2511,6 @@ async function startServer() {
       qrCount: 0,
       serverUrl: process.env.EVOLUTION_API_URL || '',
     },
-  };
-
-  const isSafeExternalHttpsUrl = (value: string): boolean => {
-    try {
-      const parsed = new URL(String(value || '').trim());
-      if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return false;
-      const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-      if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return false;
-      const octets = host.split('.').map(Number);
-      if (octets.length === 4 && octets.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
-        const [a, b] = octets;
-        if (a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19))) return false;
-      }
-      if (host.includes(':') && (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80') || host.startsWith('::ffff:127.') || host.startsWith('::ffff:10.'))) return false;
-      return true;
-    } catch {
-      return false;
-    }
   };
 
   const getTenantEvolutionConfig = (instanceName: string) => {
