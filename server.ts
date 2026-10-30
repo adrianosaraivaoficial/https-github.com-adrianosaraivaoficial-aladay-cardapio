@@ -1308,7 +1308,7 @@ async function startServer() {
           await client.query('ROLLBACK');
           return res.status(409).json({ success: false, error: 'Cobrança mudou de estado ou não corresponde ao pagamento.' });
         }
-        const reusedEndToEnd = await client.query('SELECT txid FROM pix_transactions WHERE end_to_end_id=$1 AND status='PAID' LIMIT 1;', [actualEndToEndId]);
+        const reusedEndToEnd = await client.query("SELECT txid FROM pix_transactions WHERE end_to_end_id=$1 AND status='PAID' LIMIT 1;", [actualEndToEndId]);
         if (reusedEndToEnd.rows[0]) {
           await client.query('ROLLBACK');
           return res.status(409).json({ success: false, error: 'EndToEndId já utilizado em outra cobrança.' });
