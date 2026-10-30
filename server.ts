@@ -3522,7 +3522,7 @@ async function startServer() {
     });
 
     const onboardingBindingToken = crypto.randomBytes(32).toString('hex');
-    memoryOnboardingBindingTokens.set(slug, onboardingBindingToken);
+    memoryOnboardingBindingTokens.set(slug, { token: onboardingBindingToken, expiresAt: Date.now() + 30 * 60 * 1000 });
     res.status(201).json({
       success: true,
       message: 'Período de teste grátis de 15 dias ativado. Nenhuma cobrança foi criada.',
