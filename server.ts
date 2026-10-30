@@ -371,7 +371,7 @@ async function startServer() {
   const JWT_SECRET = process.env.JWT_SECRET || (isProductionEnv ? '' : crypto.randomBytes(48).toString('hex'));
   if (isProductionEnv && Buffer.byteLength(JWT_SECRET, 'utf8') < 32) throw new Error('Configuração insegura: defina JWT_SECRET com pelo menos 32 bytes no ambiente de produção.');
   if (isProductionEnv && String(process.env.ADMIN_PASSWORD || '').length < 14) throw new Error('Configuração insegura: defina ADMIN_PASSWORD com pelo menos 14 caracteres.');
-  if (isProductionEnv && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(process.env.ADMIN_EMAIL || ''))) throw new Error('Configuração obrigatória: defina um ADMIN_EMAIL válido.');
+  if (isProductionEnv && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(process.env.ADMIN_EMAIL || ''))) throw new Error('Configuração obrigatória: defina um ADMIN_EMAIL válido.');
 
   function base64UrlEncode(input: string | Buffer): string {
     return Buffer.from(input)
@@ -716,7 +716,7 @@ async function startServer() {
       return res.status(400).json({ error: 'O carrinho deve conter de 1 a 50 itens.' });
     }
     const cleanCustomerName = String(customerName || '').trim();
-    const cleanCustomerPhone = String(customerPhone || '').replace(/\\D/g, '');
+    const cleanCustomerPhone = String(customerPhone || '').replace(/\D/g, '');
     if (cleanCustomerName.length < 2 || cleanCustomerName.length > 80) return res.status(400).json({ error: 'Informe o nome do cliente.' });
     if (cleanCustomerPhone.length < 10 || cleanCustomerPhone.length > 15) return res.status(400).json({ error: 'Informe um telefone válido com DDD.' });
     if (!['delivery', 'pickup'].includes(type)) return res.status(400).json({ error: 'Tipo de pedido inválido.' });
@@ -1584,7 +1584,7 @@ async function startServer() {
 
     const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante do pedido não encontrado.' });
-    const targetPhone = user.role === 'SUPER_ADMIN' && customPhone ? String(customPhone).replace(/\\D/g, '') : order.customerPhone;
+    const targetPhone = user.role === 'SUPER_ADMIN' && customPhone ? String(customPhone).replace(/\D/g, '') : order.customerPhone;
     if (!targetPhone || targetPhone.length < 10 || targetPhone.length > 15) return res.status(400).json({ error: 'Telefone de destino inválido.' });
     const allowedStatuses = ['received', 'confirmed', 'preparing', 'ready', 'delivered', 'cancelled'];
     const targetStatus = allowedStatuses.includes(status) ? status : order.status;
@@ -1686,7 +1686,7 @@ async function startServer() {
     if (!tenant || !order || order.tenantSlug !== tenant.slug) return res.status(404).json({ error: 'Restaurante ou pedido não encontrado.' });
     if (user.role !== 'SUPER_ADMIN' && user.tenant_slug !== tenant.slug) return res.status(403).json({ error: 'Acesso negado a este restaurante.' });
 
-    const targetPhone = (user.role === 'SUPER_ADMIN' && customPhone ? String(customPhone) : String(order.customerPhone || '')).replace(/\\D/g, '');
+    const targetPhone = (user.role === 'SUPER_ADMIN' && customPhone ? String(customPhone) : String(order.customerPhone || '')).replace(/\D/g, '');
     if (targetPhone.length < 10 || targetPhone.length > 15) return res.status(400).json({ error: 'Telefone de destino inválido.' });
     const vars = getOrderTemplateVars(order, tenant);
     const textToSend = customText
@@ -1884,7 +1884,7 @@ async function startServer() {
   // Evolution API Webhook endpoint (Real inbound from Easypanel)
   app.post('/api/v1/webhooks/evolution', (req: Request, res: Response) => {
     const webhookSecret = String(process.env.EVOLUTION_WEBHOOK_TOKEN || '');
-    const suppliedSecret = String(req.headers['x-evolution-token'] || req.headers['authorization'] || '').replace(/^Bearer\\s+/i, '');
+    const suppliedSecret = String(req.headers['x-evolution-token'] || req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
     const expectedBuffer = Buffer.from(webhookSecret);
     const suppliedBuffer = Buffer.from(suppliedSecret);
     if (!webhookSecret || !suppliedSecret || expectedBuffer.length !== suppliedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, suppliedBuffer)) {
@@ -2444,7 +2444,7 @@ async function startServer() {
     const suppliedOtpHash = crypto.createHash('sha256').update(cleanCode).digest();
     const expectedOtpHash = stored ? Buffer.from(stored.codeHash, 'hex') : Buffer.alloc(0);
     const otpMatches = Boolean(stored && expectedOtpHash.length === suppliedOtpHash.length && crypto.timingSafeEqual(expectedOtpHash, suppliedOtpHash));
-    if (!user || !stored || stored.expiresAt <= Date.now() || !/^\\d{6}$/.test(cleanCode) || !otpMatches) {
+    if (!user || !stored || stored.expiresAt <= Date.now() || !/^\d{6}$/.test(cleanCode) || !otpMatches) {
       if (stored && stored.expiresAt <= Date.now()) memoryOtpCodes.delete(cleanEmail);
       memoryAuthAuditLogs.unshift({
         id: `audit_otp_fail_${Date.now()}`,
@@ -3174,10 +3174,10 @@ async function startServer() {
 
     const resolvedName = String(customerName || '').trim();
     const resolvedEmail = String(customerEmail || '').trim().toLowerCase();
-    const resolvedCpfCnpj = String(customerCpfCnpj || '').replace(/\\D/g, '');
-    const resolvedPhone = String(customerPhone || '').replace(/\\D/g, '');
+    const resolvedCpfCnpj = String(customerCpfCnpj || '').replace(/\D/g, '');
+    const resolvedPhone = String(customerPhone || '').replace(/\D/g, '');
     if (resolvedName.length < 2 || resolvedName.length > 120) return res.status(400).json({ error: 'Informe o nome completo do responsável.' });
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(resolvedEmail)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resolvedEmail)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
     if (![11, 14].includes(resolvedCpfCnpj.length)) return res.status(400).json({ error: 'Informe um CPF ou CNPJ válido.' });
     if (resolvedPhone.length < 10 || resolvedPhone.length > 15) return res.status(400).json({ error: 'Informe um telefone válido com DDD.' });
 
@@ -3411,10 +3411,10 @@ async function startServer() {
 
     const resolvedName = String(customerName || '').trim();
     const resolvedEmail = String(customerEmail || '').trim().toLowerCase();
-    const resolvedCpfCnpj = String(customerCpfCnpj || '').replace(/\\D/g, '');
-    const resolvedPhone = String(customerPhone || '').replace(/\\D/g, '');
+    const resolvedCpfCnpj = String(customerCpfCnpj || '').replace(/\D/g, '');
+    const resolvedPhone = String(customerPhone || '').replace(/\D/g, '');
     if (resolvedName.length < 2 || resolvedName.length > 120) return res.status(400).json({ success: false, error: 'Informe o nome completo do responsável.' });
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(resolvedEmail)) return res.status(400).json({ success: false, error: 'Informe um e-mail válido.' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resolvedEmail)) return res.status(400).json({ success: false, error: 'Informe um e-mail válido.' });
     if (![11, 14].includes(resolvedCpfCnpj.length)) return res.status(400).json({ success: false, error: 'Informe um CPF ou CNPJ válido.' });
     if (resolvedPhone.length < 10 || resolvedPhone.length > 15) return res.status(400).json({ success: false, error: 'Informe um telefone válido com DDD.' });
 
