@@ -1532,15 +1532,18 @@ async function startServer() {
 
   // Manual Test Notification Dispatcher (Trigger WhatsApp notification for any status)
   app.post('/api/v1/orders/:id/test-notification', authenticateToken, async (req: Request, res: Response) => {
-    const { status, customPhone } = req.body;
+    const { status, customPhone } = req.body || {};
+    const user = (req as any).user;
     const order = memoryOrders.find((o) => o.id === req.params.id);
-    if (!order) {
-      return res.status(404).json({ error: 'Pedido não encontrado.' });
-    }
+    if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
+    if (user.role !== 'SUPER_ADMIN' && user.tenant_slug !== order.tenantSlug) return res.status(403).json({ error: 'Acesso negado a este pedido.' });
 
-    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
-    const targetPhone = customPhone || order.customerPhone || '559181214188';
-    const targetStatus = status || order.status || 'confirmed';
+    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante do pedido não encontrado.' });
+    const targetPhone = user.role === 'SUPER_ADMIN' && customPhone ? String(customPhone).replace(/\\D/g, '') : order.customerPhone;
+    if (!targetPhone || targetPhone.length < 10 || targetPhone.length > 15) return res.status(400).json({ error: 'Telefone de destino inválido.' });
+    const allowedStatuses = ['received', 'confirmed', 'preparing', 'ready', 'delivered', 'cancelled'];
+    const targetStatus = allowedStatuses.includes(status) ? status : order.status;
     const notificationText = buildStatusNotificationText(order, tenant, targetStatus);
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -1632,11 +1635,15 @@ async function startServer() {
 
   // POST test-send custom notification template
   app.post('/api/v1/notifications/test-send', authenticateToken, async (req: Request, res: Response) => {
-    const { tenantSlug, templateKey, customText, customPhone, orderId } = req.body;
-    const tenant = memoryTenants.find((t) => t.slug === tenantSlug) || memoryTenants[0];
-    const order = memoryOrders.find((o) => o.id === orderId) || memoryOrders[0];
+    const { tenantSlug, templateKey, customText, customPhone, orderId } = req.body || {};
+    const user = (req as any).user;
+    const tenant = memoryTenants.find((t) => t.slug === String(tenantSlug || ''));
+    const order = memoryOrders.find((o) => o.id === String(orderId || ''));
+    if (!tenant || !order || order.tenantSlug !== tenant.slug) return res.status(404).json({ error: 'Restaurante ou pedido não encontrado.' });
+    if (user.role !== 'SUPER_ADMIN' && user.tenant_slug !== tenant.slug) return res.status(403).json({ error: 'Acesso negado a este restaurante.' });
 
-    const targetPhone = (customPhone || order?.customerPhone || '559181214188').replace(/\D/g, '');
+    const targetPhone = (user.role === 'SUPER_ADMIN' && customPhone ? String(customPhone) : String(order.customerPhone || '')).replace(/\\D/g, '');
+    if (targetPhone.length < 10 || targetPhone.length > 15) return res.status(400).json({ error: 'Telefone de destino inválido.' });
     const vars = getOrderTemplateVars(order, tenant);
     const textToSend = customText
       ? interpolateTemplate(customText, vars)
@@ -1832,7 +1839,16 @@ async function startServer() {
 
   // Evolution API Webhook endpoint (Real inbound from Easypanel)
   app.post('/api/v1/webhooks/evolution', (req: Request, res: Response) => {
-    const { event, instance, data } = req.body;
+    const webhookSecret = String(process.env.EVOLUTION_WEBHOOK_TOKEN || '');
+    const suppliedSecret = String(req.headers['x-evolution-token'] || req.headers['authorization'] || '').replace(/^Bearer\\s+/i, '');
+    const expectedBuffer = Buffer.from(webhookSecret);
+    const suppliedBuffer = Buffer.from(suppliedSecret);
+    if (!webhookSecret || !suppliedSecret || expectedBuffer.length !== suppliedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, suppliedBuffer)) {
+      return res.status(401).json({ success: false, error: 'Webhook Evolution não autenticado.' });
+    }
+    const { event, instance, data } = req.body || {};
+    const allowedTenant = memoryTenants.find((tenant) => tenant.evolutionInstanceId === String(instance || '') || tenant.slug === String(instance || ''));
+    if (!allowedTenant) return res.status(404).json({ success: false, error: 'Instância Evolution não reconhecida.' });
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     console.log(`[Evolution API Webhook] Recebido evento: ${event} para instância ${instance}`);
 
