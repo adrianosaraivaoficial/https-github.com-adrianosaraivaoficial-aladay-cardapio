@@ -1082,6 +1082,9 @@ async function startServer() {
   // CREATE DYNAMIC PIX CHARGE — only for an existing server-side order.
   app.post('/api/v1/pix/charges', async (req: Request, res: Response) => {
     const { orderId, amountCents, tenantSlug } = req.body || {};
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(`pix_charge_${clientIp}`, 10, 10 * 60 * 1000)) return res.status(429).json({ success: false, error: 'Muitas solicitações de cobrança Pix. Aguarde alguns minutos.' });
+    if (!orderId || !tenantSlug) return res.status(400).json({ success: false, error: 'Pedido e restaurante são obrigatórios.' });
     if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ success: false, error: 'PostgreSQL obrigatório para gerar cobranças em produção.' });
 
     let order: any = memoryOrders.find((item) => item.id === String(orderId || ''));
@@ -1109,6 +1112,23 @@ async function startServer() {
     const amount = Number(amountCents);
     if (!Number.isSafeInteger(amount) || amount <= 0 || amount !== Number(order.totalCents)) {
       return res.status(400).json({ success: false, error: 'O valor da cobrança deve corresponder exatamente ao total do pedido.' });
+    }
+    if (order.paymentStatus === 'paid_online' || order.status === 'cancelled') return res.status(409).json({ success: false, error: 'Este pedido não aceita uma nova cobrança Pix.' });
+
+    const existingMemoryCharge = memoryPixTransactions.find((item) => item.orderId === order.id && item.tenantSlug === order.tenantSlug && item.status === 'PENDING' && new Date(item.expiresAt).getTime() > Date.now());
+    if (existingMemoryCharge) return res.json({ success: true, message: 'Já existe uma cobrança Pix pendente para este pedido.', data: { txid: existingMemoryCharge.txid, orderId: order.id, amountCents: existingMemoryCharge.amountCents, pixCopiaECola: existingMemoryCharge.pixCopiaECola, status: existingMemoryCharge.status, expiresAt: existingMemoryCharge.expiresAt } });
+    if (pgPool) {
+      try {
+        const existingPaid = await pgPool.query("SELECT txid FROM pix_transactions WHERE order_id=$1 AND tenant_slug=$2 AND status='PAID' LIMIT 1;", [order.id, order.tenantSlug]);
+        if (existingPaid.rows[0]) return res.status(409).json({ success: false, error: 'Este pedido já possui um pagamento Pix confirmado.' });
+        const existingPending = await pgPool.query("SELECT txid, amount_cents, pix_copia_e_cola, status, expires_at FROM pix_transactions WHERE order_id=$1 AND tenant_slug=$2 AND status='PENDING' AND expires_at>NOW() ORDER BY created_at DESC LIMIT 1;", [order.id, order.tenantSlug]);
+        if (existingPending.rows[0]) {
+          const row = existingPending.rows[0];
+          return res.json({ success: true, message: 'Já existe uma cobrança Pix pendente para este pedido.', data: { txid: row.txid, orderId: order.id, amountCents: Number(row.amount_cents), pixCopiaECola: row.pix_copia_e_cola, status: row.status, expiresAt: row.expires_at } });
+        }
+      } catch (error: any) {
+        return res.status(503).json({ success: false, error: 'Não foi possível verificar cobranças existentes.' });
+      }
     }
     const tenant = memoryTenants.find((item) => item.slug === order.tenantSlug);
     if (!tenant) return res.status(404).json({ success: false, error: 'Restaurante do pedido não encontrado.' });
