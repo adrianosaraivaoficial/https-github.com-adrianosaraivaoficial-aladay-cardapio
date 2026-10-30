@@ -1933,7 +1933,7 @@ async function startServer() {
       source: 'n8n',
       eventType: 'DISPATCH_REPLY',
       instance: tenant.evolutionInstanceId,
-      senderPhone: customerPhone || '5511999998888',
+      senderPhone: cleanPhone,
       messageText: replyMessage,
       direction: 'outbound',
       status: 'success',
