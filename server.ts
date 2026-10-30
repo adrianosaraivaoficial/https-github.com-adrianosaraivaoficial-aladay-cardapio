@@ -189,6 +189,25 @@ CREATE TABLE IF NOT EXISTS orders (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS pix_transactions (
+  txid VARCHAR(80) PRIMARY KEY,
+  order_id VARCHAR(80) NOT NULL,
+  tenant_slug VARCHAR(100) NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  pix_copia_e_cola TEXT NOT NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
+  psp VARCHAR(60) DEFAULT 'direct_bank',
+  customer_name VARCHAR(120),
+  customer_phone VARCHAR(30),
+  end_to_end_id VARCHAR(100),
+  paid_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pix_transactions_tenant_status ON pix_transactions(tenant_slug, status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_pix_transactions_order_tenant ON pix_transactions(order_id, tenant_slug);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pix_transactions_end_to_end_unique ON pix_transactions(end_to_end_id) WHERE end_to_end_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_tenant_idempotency ON orders(tenant_slug, idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE TABLE IF NOT EXISTS outbox_events (
   id VARCHAR(80) PRIMARY KEY,
   tenant_id VARCHAR(80) NOT NULL,
