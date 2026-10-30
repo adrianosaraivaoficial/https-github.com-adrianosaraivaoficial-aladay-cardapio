@@ -3372,67 +3372,46 @@ async function startServer() {
   });
 
   // POST /api/v1/asaas/subscription/:slug/start-trial
-  // Activates a 15-day Free Trial period with first R$ 129,90 invoice scheduled for +15 days
-  app.post('/api/v1/asaas/subscription/:slug/start-trial', async (req: Request, res: Response) => {
+  // Activates a 15-day trial only. No Asaas customer, payment or fake Pix payload is created.
+  app.post('/api/v1/asaas/subscription/:slug/start-trial', (req: Request, res: Response) => {
     const { slug } = req.params;
+    const tenant = memoryTenants.find((t) => t.slug === slug);
+    if (!tenant) return res.status(404).json({ success: false, error: 'Restaurante não encontrado.' });
+
     const {
       customerName,
       customerEmail,
       customerCpfCnpj,
       customerPhone,
       billingType = 'PIX',
-    } = req.body;
+    } = req.body || {};
+
+    const resolvedName = String(customerName || '').trim();
+    const resolvedEmail = String(customerEmail || '').trim().toLowerCase();
+    const resolvedCpfCnpj = String(customerCpfCnpj || '').replace(/\\D/g, '');
+    const resolvedPhone = String(customerPhone || '').replace(/\\D/g, '');
+    if (resolvedName.length < 2 || resolvedName.length > 120) return res.status(400).json({ success: false, error: 'Informe o nome completo do responsável.' });
+    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(resolvedEmail)) return res.status(400).json({ success: false, error: 'Informe um e-mail válido.' });
+    if (![11, 14].includes(resolvedCpfCnpj.length)) return res.status(400).json({ success: false, error: 'Informe um CPF ou CNPJ válido.' });
+    if (resolvedPhone.length < 10 || resolvedPhone.length > 15) return res.status(400).json({ success: false, error: 'Informe um telefone válido com DDD.' });
+
+    const existingSubscription = memoryAsaasSubscriptions[slug];
+    if (tenant.subscriptionStatus === 'active' || tenant.subscriptionStatus === 'trial' || existingSubscription) {
+      return res.status(409).json({ success: false, error: 'Este restaurante já possui uma assinatura ou período de teste registrado.' });
+    }
 
     const safeBillingType = ['PIX', 'CREDIT_CARD', 'BOLETO'].includes(billingType) ? billingType : 'PIX';
-    const tenant = memoryTenants.find((t) => t.slug === slug);
-    const resolvedName = String(customerName || tenant?.name || 'Restaurante em Teste').trim();
-    const resolvedEmail = String(customerEmail || 'contato@restaurante.com.br').trim();
-    const resolvedCpfCnpj = String(customerCpfCnpj || '00.000.000/0001-00').trim();
-    const resolvedPhone = String(customerPhone || tenant?.phone || '11987654321').replace(/\D/g, '');
-
     const now = new Date();
     const trialEndsDate = new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000);
     const trialStartedIso = now.toISOString();
     const trialEndsIso = trialEndsDate.toISOString();
     const nextDueDateStr = trialEndsIso.split('T')[0];
 
-    let asaasCustomerId = `cus_trial_${Date.now().toString(36)}`;
-    if (asaasGatewayConfig.apiKey) {
-      const custRes = await getOrCreateAsaasCustomer({
-        name: resolvedName,
-        email: resolvedEmail,
-        cpfCnpj: resolvedCpfCnpj,
-        phone: resolvedPhone,
-      });
-      if (custRes.success && custRes.customerId) {
-        asaasCustomerId = custRes.customerId;
-      }
-    }
-
-    const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-    const refMonth = `${monthNames[trialEndsDate.getMonth()]} / ${trialEndsDate.getFullYear()}`;
-    const invoiceId = `pay_trial_${Date.now()}`;
-
-    const futureInvoice: InMemAsaasInvoice = {
-      id: invoiceId,
-      subscriptionId: `sub_trial_${slug.replace(/[^a-zA-Z0-9]/g, '_')}`,
-      referenceMonth: refMonth,
-      value: 129.9,
-      status: 'PENDING',
-      dueDate: nextDueDateStr,
-      billingType: safeBillingType,
-      invoiceUrl: `https://www.asaas.com/i/${invoiceId}`,
-      description: '1ª Mensalidade Pós-Teste Grátis (15 dias) - Plano Aladay Pro R$ 129,90/mês',
-      pixCopiaECola: defaultPixPayload,
-    };
-
-    await ensurePixQrCode(futureInvoice);
-
     const subscription: InMemAsaasSubscription = {
-      id: `sub_trial_${slug.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
+      id: `sub_trial_${slug.replace(/[^a-zA-Z0-9]/g, '_')}_${crypto.randomBytes(8).toString('hex')}`,
       tenantSlug: slug,
       customer: {
-        id: asaasCustomerId,
+        id: `trial_customer_${crypto.randomBytes(8).toString('hex')}`,
         name: resolvedName,
         email: resolvedEmail,
         cpfCnpj: resolvedCpfCnpj,
@@ -3445,7 +3424,7 @@ async function startServer() {
       billingType: safeBillingType,
       nextDueDate: nextDueDateStr,
       createdAt: now.toISOString().split('T')[0],
-      invoices: [futureInvoice],
+      invoices: [],
       isTrial: true,
       trialStartedAt: trialStartedIso,
       trialEndsAt: trialEndsIso,
@@ -3453,11 +3432,9 @@ async function startServer() {
     };
 
     memoryAsaasSubscriptions[slug] = subscription;
-
-    if (tenant) {
-      tenant.subscriptionStatus = 'trial';
-      tenant.trialEndsAt = trialEndsIso;
-    }
+    tenant.subscriptionStatus = 'trial';
+    tenant.trialEndsAt = trialEndsIso;
+    tenant.phone = resolvedPhone;
 
     memoryWebhookLogs.unshift({
       id: `log_trial_${Date.now()}`,
@@ -3469,7 +3446,7 @@ async function startServer() {
       messageText: `Período de Teste Grátis de 15 dias ativado para ${resolvedName} (expira em ${trialEndsDate.toLocaleDateString('pt-BR')})`,
       direction: 'inbound',
       status: 'success',
-      payloadSummary: `Teste Grátis 15 dias ativado (#${subscription.id}) - 1ª cobrança agendada para ${nextDueDateStr}`,
+      payloadSummary: `Teste grátis de 15 dias ativado para ${slug}; cobrança não criada automaticamente.`,
       fullPayload: {
         event: 'TRIAL_15_DAYS_ACTIVATED',
         tenantSlug: slug,
@@ -3481,7 +3458,7 @@ async function startServer() {
 
     res.status(201).json({
       success: true,
-      message: 'Período de teste grátis de 15 dias ativado com sucesso!',
+      message: 'Período de teste grátis de 15 dias ativado. Nenhuma cobrança foi criada.',
       subscription,
     });
   });
