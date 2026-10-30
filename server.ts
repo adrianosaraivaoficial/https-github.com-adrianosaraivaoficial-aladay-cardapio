@@ -894,69 +894,66 @@ async function startServer() {
     return `${payload}${crc}`;
   }
 
-  // CREATE / GET DYNAMIC PIX CHARGE
+  // CREATE DYNAMIC PIX CHARGE — only for an existing server-side order.
   app.post('/api/v1/pix/charges', (req: Request, res: Response) => {
-    const { orderId, amountCents, tenantSlug, customerName, customerPhone } = req.body;
-    const tenant = memoryTenants.find((t) => t.slug === tenantSlug) || memoryTenants[0];
-    const order = memoryOrders.find((o) => o.id === orderId);
+    const { orderId, amountCents, tenantSlug } = req.body || {};
+    const order = memoryOrders.find((o) => o.id === String(orderId || ''));
+    if (!order) return res.status(404).json({ success: false, error: 'Pedido não encontrado para gerar a cobrança.' });
+    if (String(order.tenantSlug) !== String(tenantSlug || '')) return res.status(403).json({ success: false, error: 'Pedido não pertence ao restaurante informado.' });
 
-    const amount = Number(amountCents) || order?.totalCents || 8580;
-    const txid = `PIX${Date.now().toString(36).toUpperCase()}${Math.floor(100 + Math.random() * 900)}`;
-    const pixKey = (tenant as any).pixConfig?.pixKey || '+5511987654321';
-    const merchantName = (tenant as any).pixConfig?.merchantName || tenant.name || 'Brasas Burger';
-    const merchantCity = (tenant as any).pixConfig?.merchantCity || 'SAO PAULO';
+    const amount = Number(amountCents);
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount !== Number(order.totalCents)) {
+      return res.status(400).json({ success: false, error: 'O valor da cobrança deve corresponder exatamente ao total do pedido.' });
+    }
 
-    const pixCopiaECola = generatePixPayload({
-      pixKey,
-      merchantName,
-      merchantCity,
-      amountCents: amount,
-      txid,
-    });
+    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
+    if (!tenant) return res.status(404).json({ success: false, error: 'Restaurante do pedido não encontrado.' });
+    const pixKey = String((tenant as any).pixConfig?.pixKey || '').trim();
+    if (!pixKey) return res.status(409).json({ success: false, error: 'O restaurante ainda não configurou sua chave Pix.' });
 
+    const txid = `PIX${crypto.randomBytes(10).toString('hex').toUpperCase()}`;
+    const merchantName = String((tenant as any).pixConfig?.merchantName || tenant.name || '').trim();
+    const merchantCity = String((tenant as any).pixConfig?.merchantCity || '').trim();
+    if (!merchantName || !merchantCity) return res.status(409).json({ success: false, error: 'Os dados do recebedor Pix estão incompletos.' });
+
+    const pixCopiaECola = generatePixPayload({ pixKey, merchantName, merchantCity, amountCents: amount, txid });
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-
     const newCharge = {
       txid,
-      orderId: orderId || order?.id || `ord_${Date.now()}`,
+      orderId: order.id,
       tenantSlug: tenant.slug,
       amountCents: amount,
       pixCopiaECola,
       status: 'PENDING',
       expiresAt,
       psp: (tenant as any).pixConfig?.provider || 'direct_bank',
-      customerName: customerName || order?.customerName || 'Cliente',
-      customerPhone: customerPhone || order?.customerPhone || '559181214188',
+      customerName: order.customerName,
+      customerPhone: order.customerPhone,
       createdAt: new Date().toISOString(),
     };
 
     memoryPixTransactions.unshift(newCharge);
-
-    if (order) {
-      order.pixTransaction = newCharge;
-      order.paymentMethod = 'Pix Direto Restaurante';
-    }
+    order.pixTransaction = newCharge;
+    order.paymentMethod = 'Pix Direto Restaurante';
 
     res.status(201).json({
       success: true,
-      message: 'Cobrança Pix Direta do Restaurante gerada com sucesso!',
-      data: newCharge,
+      message: 'Cobrança Pix gerada para o pedido.',
+      data: { txid, orderId: order.id, amountCents: amount, pixCopiaECola, status: 'PENDING', expiresAt },
     });
   });
 
-  // GET PIX CHARGE STATUS (POLLING LISTENER)
+  // Public polling endpoint exposes payment state only, never customer/order details.
   app.get('/api/v1/pix/:txid/status', (req: Request, res: Response) => {
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(`pix_status_${clientIp}`, 60, 60 * 1000)) return res.status(429).json({ error: 'Muitas consultas. Tente novamente em instantes.' });
     const charge = memoryPixTransactions.find((c) => c.txid === req.params.txid);
-    if (!charge) {
-      return res.status(404).json({ error: 'Cobrança Pix não encontrada.' });
-    }
-    const order = memoryOrders.find((o) => o.id === charge.orderId);
+    if (!charge) return res.status(404).json({ error: 'Cobrança Pix não encontrada.' });
     res.json({
       txid: charge.txid,
       status: charge.status,
       paidAt: charge.paidAt,
-      endToEndId: charge.endToEndId,
-      order,
+      expiresAt: charge.expiresAt,
     });
   });
 
@@ -969,17 +966,19 @@ async function startServer() {
     if (!webhookSecret || !suppliedSecret) return res.status(401).json({ success: false, error: 'Webhook Pix não autenticado.' });
     const expected = Buffer.from(webhookSecret), supplied = Buffer.from(suppliedSecret);
     if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected, supplied)) return res.status(401).json({ success: false, error: 'Webhook Pix não autenticado.' });
-    if (typeof txid !== 'string' || !txid.trim() || !Number.isInteger(Number(amountCents))) return res.status(400).json({ success: false, error: 'Identificador e valor da cobrança são obrigatórios.' });
+    if (typeof txid !== 'string' || !txid.trim() || !Number.isSafeInteger(Number(amountCents)) || Number(amountCents) <= 0) return res.status(400).json({ success: false, error: 'Identificador e valor válido da cobrança são obrigatórios.' });
     const charge = memoryPixTransactions.find((c) => c.txid === txid);
     if (!charge) return res.status(404).json({ success: false, error: 'Cobrança Pix não encontrada.' });
     const order = memoryOrders.find((o) => o.id === charge.orderId);
-    if (!order || Number(amountCents) !== Number(charge.amountCents ?? order.totalCents) || Number(amountCents) !== Number(order.totalCents)) return res.status(409).json({ success: false, error: 'Valor ou pedido não corresponde à cobrança registrada.' });
+    if (!order || order.tenantSlug !== charge.tenantSlug || Number(amountCents) !== Number(charge.amountCents) || Number(amountCents) !== Number(order.totalCents)) return res.status(409).json({ success: false, error: 'Valor, restaurante ou pedido não corresponde à cobrança registrada.' });
     if (charge.status === 'PAID') return res.status(200).json({ success: true, duplicate: true, message: 'Pagamento já processado.' });
     if (charge.status !== 'PENDING') return res.status(409).json({ success: false, error: 'Estado da cobrança não permite confirmação.' });
-    console.log(`[Pix Direto Loja] Confirmação autenticada para txid: ${txid}`);
+    if (!charge.expiresAt || new Date(charge.expiresAt).getTime() <= Date.now()) { charge.status = 'EXPIRED'; return res.status(410).json({ success: false, error: 'Cobrança Pix expirada.' }); }
     const actualEndToEndId = String(endToEndId || '').trim();
-    if (!actualEndToEndId) return res.status(400).json({ success: false, error: 'EndToEndId ausente na confirmação Pix.' });
-    const actualPaidTime = paidAt ? new Date(paidAt).toISOString() : new Date().toISOString();
+    if (!actualEndToEndId || actualEndToEndId.length > 80) return res.status(400).json({ success: false, error: 'EndToEndId ausente ou inválido na confirmação Pix.' });
+    const paidDate = paidAt ? new Date(paidAt) : new Date();
+    if (!Number.isFinite(paidDate.getTime()) || paidDate.getTime() > Date.now() + 5 * 60 * 1000) return res.status(400).json({ success: false, error: 'Data de pagamento inválida.' });
+    const actualPaidTime = paidDate.toISOString();
     if (charge) {
       charge.status = 'PAID';
       charge.paidAt = actualPaidTime;
