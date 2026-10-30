@@ -3395,6 +3395,48 @@ async function startServer() {
     });
   });
 
+  // Bind the verified temporary signup subscription to the restaurant created after checkout.
+  app.post('/api/v1/asaas/subscription/:slug/bind', (req: Request, res: Response) => {
+    const { slug } = req.params;
+    const sourceSlug = String(req.body?.sourceSlug || '');
+    const isTemporaryOnboardingSlug = /^assinante_(?:\\d{11}|\\d{14}|novo)$/.test(sourceSlug);
+    if (!isTemporaryOnboardingSlug) return res.status(400).json({ success: false, error: 'Referência temporária de cadastro inválida.' });
+
+    const tenant = memoryTenants.find((t) => t.slug === slug);
+    if (!tenant) return res.status(404).json({ success: false, error: 'Restaurante não encontrado.' });
+    if (memoryAsaasSubscriptions[slug]) return res.status(409).json({ success: false, error: 'Este restaurante já possui uma assinatura vinculada.' });
+
+    const sourceSubscription = memoryAsaasSubscriptions[sourceSlug];
+    if (!sourceSubscription) return res.status(404).json({ success: false, error: 'Assinatura temporária não encontrada. Refaça a etapa de contratação.' });
+    const activeTrial = sourceSubscription.status === 'TRIAL' && Boolean(sourceSubscription.trialEndsAt) && new Date(String(sourceSubscription.trialEndsAt)).getTime() > Date.now();
+    if (!activeTrial && sourceSubscription.status !== 'ACTIVE') return res.status(409).json({ success: false, error: 'A assinatura ainda não foi confirmada. Conclua o pagamento antes de criar o restaurante.' });
+
+    const boundSubscription = JSON.parse(JSON.stringify(sourceSubscription)) as InMemAsaasSubscription;
+    boundSubscription.tenantSlug = slug;
+    memoryAsaasSubscriptions[slug] = boundSubscription;
+    delete memoryAsaasSubscriptions[sourceSlug];
+
+    tenant.subscriptionStatus = activeTrial ? 'trial' : 'active';
+    tenant.trialEndsAt = activeTrial ? boundSubscription.trialEndsAt : undefined;
+    tenant.phone = boundSubscription.customer.phone;
+
+    memoryWebhookLogs.unshift({
+      id: `log_subscription_bind_${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString('pt-BR'),
+      source: 'asaas',
+      eventType: 'SUBSCRIPTION_BOUND_TO_TENANT',
+      instance: 'Aladay Onboarding',
+      senderPhone: boundSubscription.customer.phone,
+      messageText: `Assinatura vinculada ao restaurante ${tenant.name}.`,
+      direction: 'inbound',
+      status: 'success',
+      payloadSummary: `Assinatura ${boundSubscription.id} vinculada ao tenant ${slug}.`,
+      fullPayload: { tenantSlug: slug, sourceSlug, subscriptionId: boundSubscription.id, status: boundSubscription.status },
+    });
+
+    res.status(200).json({ success: true, message: 'Assinatura vinculada ao restaurante.', subscription: toPublicSubscription(boundSubscription) });
+  });
+
   // POST /api/v1/asaas/subscription/:slug/start-trial
   // Activates a 15-day trial only. No Asaas customer, payment or fake Pix payload is created.
   app.post('/api/v1/asaas/subscription/:slug/start-trial', (req: Request, res: Response) => {
