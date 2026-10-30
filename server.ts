@@ -3353,7 +3353,7 @@ async function startServer() {
       message: isRealGatewayCharged
         ? 'Assinatura criada e debitada com sucesso no Asaas!'
         : 'Assinatura Asaas configurada! Realize o pagamento para prosseguir.',
-      subscription,
+      subscription: toPublicSubscription(subscription),
       isRealGateway: Boolean(asaasGatewayConfig.apiKey),
       isDemoMode: !asaasGatewayConfig.apiKey,
     });
@@ -3503,7 +3503,7 @@ async function startServer() {
         paid: true,
         status: 'RECEIVED',
         message: 'Assinatura já confirmada!',
-        subscription,
+        subscription: toPublicSubscription(subscription),
       });
     }
 
@@ -3525,7 +3525,7 @@ async function startServer() {
             paid: true,
             status: 'RECEIVED',
             message: 'Pagamento de R$ 129,90 confirmado pelo Asaas!',
-            subscription,
+            subscription: toPublicSubscription(subscription),
           });
         }
 
@@ -3533,7 +3533,7 @@ async function startServer() {
           paid: false,
           status: asaasStatus,
           message: 'Aguardando compensação do pagamento pelo Asaas...',
-          subscription,
+          subscription: toPublicSubscription(subscription),
         });
       }
     }
@@ -3545,7 +3545,7 @@ async function startServer() {
       message: !asaasGatewayConfig.apiKey
         ? 'Modo de demonstração ativo: nenhuma chave ASAAS_API_KEY configurada.'
         : 'Aguardando pagamento.',
-      subscription,
+      subscription: toPublicSubscription(subscription),
     });
   });
 
@@ -3591,12 +3591,12 @@ async function startServer() {
       success: true,
       message: 'Pagamento da assinatura de R$ 129,90 confirmado com sucesso! Criação do restaurante e cardápio liberada.',
       isDemoMode: !asaasGatewayConfig.apiKey,
-      subscription,
+      subscription: toPublicSubscription(subscription),
     });
   });
 
   // POST /api/v1/asaas/subscription/:slug/cancel
-  app.post('/api/v1/asaas/subscription/:slug/cancel', async (req: Request, res: Response) => {
+  app.post('/api/v1/asaas/subscription/:slug/cancel', requireTenantAccess('slug'), async (req: Request, res: Response) => {
     const { slug } = req.params;
     const subscription = memoryAsaasSubscriptions[slug];
     if (!subscription) return res.status(404).json({ error: 'Assinatura não encontrada.' });
@@ -3632,7 +3632,7 @@ async function startServer() {
   });
 
   // POST /api/v1/asaas/subscription/:slug/reactivate
-  app.post('/api/v1/asaas/subscription/:slug/reactivate', (req: Request, res: Response) => {
+  app.post('/api/v1/asaas/subscription/:slug/reactivate', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const { slug } = req.params;
     const subscription = memoryAsaasSubscriptions[slug];
     if (!subscription) return res.status(404).json({ error: 'Assinatura não encontrada.' });
