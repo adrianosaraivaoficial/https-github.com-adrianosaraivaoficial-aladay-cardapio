@@ -354,7 +354,7 @@ async function initializePostgresConnection(connectionString: string, runMigrati
 async function startServer() {
   const app = express();
   app.set('trust proxy', 1);
-  let memoryAsaasSubscriptions: Record<string, any> = {};
+  let memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {};
   const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '1mb' }));
@@ -367,11 +367,11 @@ async function startServer() {
   // ============================================================================
   // SECURITY & MULTI-TENANT AUTHENTICATION GUARDS (OWASP / LGPD COMPLIANCE)
   // ============================================================================
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isProductionEnv = process.env.NODE_ENV === 'production';
   const JWT_SECRET = process.env.JWT_SECRET || (isProduction ? '' : crypto.randomBytes(48).toString('hex'));
-  if (isProduction && Buffer.byteLength(JWT_SECRET, 'utf8') < 32) throw new Error('Configuração insegura: defina JWT_SECRET com pelo menos 32 bytes no ambiente de produção.');
-  if (isProduction && String(process.env.ADMIN_PASSWORD || '').length < 14) throw new Error('Configuração insegura: defina ADMIN_PASSWORD com pelo menos 14 caracteres.');
-  if (isProduction && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(process.env.ADMIN_EMAIL || ''))) throw new Error('Configuração obrigatória: defina um ADMIN_EMAIL válido.');
+  if (isProductionEnv && Buffer.byteLength(JWT_SECRET, 'utf8') < 32) throw new Error('Configuração insegura: defina JWT_SECRET com pelo menos 32 bytes no ambiente de produção.');
+  if (isProductionEnv && String(process.env.ADMIN_PASSWORD || '').length < 14) throw new Error('Configuração insegura: defina ADMIN_PASSWORD com pelo menos 14 caracteres.');
+  if (isProductionEnv && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(process.env.ADMIN_EMAIL || ''))) throw new Error('Configuração obrigatória: defina um ADMIN_EMAIL válido.');
 
   function base64UrlEncode(input: string | Buffer): string {
     return Buffer.from(input)
