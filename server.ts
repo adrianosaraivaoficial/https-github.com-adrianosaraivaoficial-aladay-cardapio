@@ -3399,7 +3399,7 @@ async function startServer() {
   app.post('/api/v1/asaas/subscription/:slug/start-trial', (req: Request, res: Response) => {
     const { slug } = req.params;
     const tenant = memoryTenants.find((t) => t.slug === slug);
-    const isTemporaryOnboardingSlug = /^assinante_(?:\\d{11}|\\d{14}|novo)$/.test(slug);
+    const isTemporaryOnboardingSlug = /^assinante_(?:\d{11}|\d{14}|novo)$/.test(slug);
     if (!tenant && !isTemporaryOnboardingSlug) return res.status(404).json({ success: false, error: 'Restaurante não encontrado.' });
 
     const {
