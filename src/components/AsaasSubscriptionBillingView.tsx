@@ -74,7 +74,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
         const data = await res.json();
         if (data.subscription) {
           setSubscription(data.subscription);
-          setSelectedBillingType(data.subscription.billingType || 'PIX');
+          setSelectedBillingType('PIX');
         }
         if (data.gateway) {
           setGatewayConfig(data.gateway);
@@ -106,25 +106,13 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
     setTimeout(() => setCopiedCode(null), 3000);
   };
 
-  // Switch billing method (Pix / Card / Boleto)
-  const handleChangeBillingType = async (type: AsaasBillingType) => {
-    setSelectedBillingType(type);
-    try {
-      const res = await fetch(`/api/v1/asaas/subscription/${tenant.slug}/subscribe`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          billingType: type,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setSubscription(data.subscription);
-        showToast('success', `Forma de cobrança mensal alterada para ${type === 'PIX' ? 'Pix Recorrente' : type === 'CREDIT_CARD' ? 'Cartão de Crédito' : 'Boleto Bancário'}!`);
-      }
-    } catch {
-      showToast('error', 'Falha ao atualizar método de cobrança.');
+  // Somente Pix está habilitado no backend neste momento.
+  const handleChangeBillingType = (type: AsaasBillingType) => {
+    if (type !== 'PIX') {
+      showToast('info', 'Cartão e boleto estarão disponíveis após a implementação e validação do fluxo seguro.');
+      return;
     }
+    setSelectedBillingType('PIX');
   };
 
   // Submit Credit Card
@@ -569,50 +557,16 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
             </p>
           </button>
 
-          <button
-            type="button"
-            onClick={() => handleChangeBillingType('CREDIT_CARD')}
-            className={`p-3.5 rounded-xl border text-left transition-all flex flex-col gap-1.5 ${
-              selectedBillingType === 'CREDIT_CARD'
-                ? 'border-blue-600 bg-blue-50/50 text-neutral-900 ring-2 ring-blue-600/20'
-                : 'border-neutral-200 hover:border-neutral-300 text-neutral-600 bg-white'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <CreditCard className={`w-5 h-5 ${selectedBillingType === 'CREDIT_CARD' ? 'text-blue-700' : 'text-neutral-500'}`} />
-              {selectedBillingType === 'CREDIT_CARD' && (
-                <span className="text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded">
-                  Ativo
-                </span>
-              )}
-            </div>
-            <p className="text-xs font-bold text-neutral-900">Cartão de Crédito</p>
-            <p className="text-[11px] text-neutral-500 leading-tight">
-              Débito automático mensal sem comprometer o limite total.
-            </p>
+          <button type="button" disabled className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50 text-left flex flex-col gap-1.5 opacity-50 cursor-not-allowed">
+            <CreditCard className="w-5 h-5 text-neutral-400" />
+            <p className="text-xs font-bold text-neutral-500">Cartão de Crédito (em breve)</p>
+            <p className="text-[11px] text-neutral-400 leading-tight">Indisponível até concluir a integração segura.</p>
           </button>
 
-          <button
-            type="button"
-            onClick={() => handleChangeBillingType('BOLETO')}
-            className={`p-3.5 rounded-xl border text-left transition-all flex flex-col gap-1.5 ${
-              selectedBillingType === 'BOLETO'
-                ? 'border-amber-600 bg-amber-50/50 text-neutral-900 ring-2 ring-amber-600/20'
-                : 'border-neutral-200 hover:border-neutral-300 text-neutral-600 bg-white'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <FileText className={`w-5 h-5 ${selectedBillingType === 'BOLETO' ? 'text-amber-700' : 'text-neutral-500'}`} />
-              {selectedBillingType === 'BOLETO' && (
-                <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
-                  Ativo
-                </span>
-              )}
-            </div>
-            <p className="text-xs font-bold text-neutral-900">Boleto Bancário</p>
-            <p className="text-[11px] text-neutral-500 leading-tight">
-              Boleto registrado Asaas com linha digitável e PDF.
-            </p>
+          <button type="button" disabled className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50 text-left flex flex-col gap-1.5 opacity-50 cursor-not-allowed">
+            <FileText className="w-5 h-5 text-neutral-400" />
+            <p className="text-xs font-bold text-neutral-500">Boleto (em breve)</p>
+            <p className="text-[11px] text-neutral-400 leading-tight">Indisponível até concluir a integração segura.</p>
           </button>
         </div>
 
@@ -735,178 +689,6 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
           </div>
         )}
 
-        {/* 2. CREDIT CARD DETAILS */}
-        {selectedBillingType === 'CREDIT_CARD' && (
-          <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-5 space-y-4">
-            <div className="border-b border-neutral-200/60 pb-3">
-              <h4 className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
-                <CreditCard className="w-4 h-4 text-blue-700" />
-                <span>Cadastro de Cartão de Crédito para Mensalidade Recorrente (R$ 129,90/mês)</span>
-              </h4>
-              <p className="text-[11px] text-neutral-500">
-                Os dados são transmitidos de forma segura e tokenizados diretamente pelo gateway Asaas.
-              </p>
-            </div>
-
-            <form onSubmit={handleSaveCreditCard} className="space-y-4 max-w-xl">
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 mb-1">
-                  Número do Cartão de Crédito
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    required
-                    maxLength={19}
-                    placeholder="4532 1122 3344 5566"
-                    value={ccNumber}
-                    onChange={(e) => setCcNumber(e.target.value)}
-                    className="w-full p-2.5 text-xs font-mono border border-neutral-200 rounded-lg text-neutral-900 pr-10"
-                  />
-                  <CreditCard className="w-4 h-4 text-neutral-400 absolute right-3 top-3" />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 mb-1">
-                  Nome Impresso no Cartão
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: MARCOS A SILVA"
-                  value={ccHolder}
-                  onChange={(e) => setCcHolder(e.target.value)}
-                  className="w-full p-2.5 text-xs uppercase border border-neutral-200 rounded-lg text-neutral-900"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-neutral-700 mb-1">
-                    Validade (MM/AA)
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={5}
-                    placeholder="12/29"
-                    value={ccExpiry}
-                    onChange={(e) => setCcExpiry(e.target.value)}
-                    className="w-full p-2.5 text-xs font-mono border border-neutral-200 rounded-lg text-neutral-900"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-neutral-700 mb-1">
-                    Código de Segurança (CVV)
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="password"
-                      required
-                      maxLength={4}
-                      placeholder="123"
-                      value={ccCvv}
-                      onChange={(e) => setCcCvv(e.target.value)}
-                      className="w-full p-2.5 text-xs font-mono border border-neutral-200 rounded-lg text-neutral-900"
-                    />
-                    <Lock className="w-3.5 h-3.5 text-neutral-400 absolute right-3 top-3" />
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 pt-2">
-                <button
-                  type="submit"
-                  disabled={isSubmittingCard}
-                  className="px-5 py-2.5 text-xs font-bold text-white bg-blue-700 hover:bg-blue-600 rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-50"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>{isSubmittingCard ? 'Processando no Asaas...' : 'Ativar Assinatura no Cartão (R$ 129,90/mês)'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCcNumber('4532 9988 7766 4242');
-                    setCcHolder('RESTAURANTE LTDA');
-                    setCcExpiry('10/29');
-                    setCcCvv('888');
-                  }}
-                  className="px-3 py-2 text-xs text-neutral-600 hover:text-neutral-900 bg-neutral-200/60 rounded-lg"
-                >
-                  Preencher Cartão Teste
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {/* 3. BOLETO DETAILS */}
-        {selectedBillingType === 'BOLETO' && (
-          <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-5 space-y-4">
-            <div className="border-b border-neutral-200/60 pb-3">
-              <h4 className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
-                <FileText className="w-4 h-4 text-amber-700" />
-                <span>Boleto Bancário Registrado Asaas (R$ 129,90)</span>
-              </h4>
-              <p className="text-[11px] text-neutral-500">
-                Emitido com código de barras FEBRABAN e compensação automática no próximo dia útil.
-              </p>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-neutral-700 mb-1">
-                  Linha Digitável do Boleto:
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value="03399.70428 53000.000000 00000.000000 1 98880000012990"
-                    className="flex-1 p-2.5 bg-white border border-neutral-200 rounded-lg text-xs font-mono text-neutral-700"
-                  />
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleCopy(
-                        '03399.70428 53000.000000 00000.000000 1 98880000012990',
-                        'Linha Digitável do Boleto'
-                      )
-                    }
-                    className="px-4 py-2.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg flex items-center gap-1.5 whitespace-nowrap"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>Copiar Código</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 pt-2">
-                <a
-                  href="https://www.asaas.com"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="px-4 py-2 text-xs font-semibold text-neutral-800 bg-white border border-neutral-300 hover:bg-neutral-100 rounded-lg inline-flex items-center gap-1.5"
-                >
-                  <Download className="w-3.5 h-3.5 text-neutral-600" />
-                  <span>Visualizar Boleto Asaas em PDF</span>
-                </a>
-
-                <button
-                  type="button"
-                  onClick={() => handleSimulateWebhook('PAYMENT_RECEIVED')}
-                  className="px-4 py-2 text-xs font-semibold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-lg inline-flex items-center gap-1.5"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>Simular Compensação do Boleto</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Invoices History Table */}
