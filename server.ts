@@ -353,6 +353,7 @@ async function initializePostgresConnection(connectionString: string, runMigrati
 
 async function startServer() {
   const app = express();
+  app.set('trust proxy', 1);
   let memoryAsaasSubscriptions: Record<string, any> = {};
   const PORT = Number(process.env.PORT) || 3000;
 
@@ -478,7 +479,7 @@ async function startServer() {
   // Create new tenant (Onboarding Step 1 & 2)
   app.post('/api/v1/tenants', (req: Request, res: Response) => {
     const { name, slug, phone, primaryColor, address } = req.body;
-    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
     if (!checkRateLimit(`tenant_create_${clientIp}`, 5, 60 * 60 * 1000)) return res.status(429).json({ error: 'Limite de cadastros excedido. Tente novamente mais tarde.' });
     if (!name || !slug || !phone || String(name).trim().length < 2 || String(name).trim().length > 120 || String(phone).replace(/\D/g, '').length < 10 || String(phone).replace(/\D/g, '').length > 15) return res.status(400).json({ error: 'Informe nome, identificador e telefone válidos.' });
     const cleanSlug = String(slug).toLowerCase().trim().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
@@ -972,7 +973,7 @@ async function startServer() {
 
   // Public polling endpoint exposes payment state only, never customer/order details.
   app.get('/api/v1/pix/:txid/status', (req: Request, res: Response) => {
-    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
     if (!checkRateLimit(`pix_status_${clientIp}`, 60, 60 * 1000)) return res.status(429).json({ error: 'Muitas consultas. Tente novamente em instantes.' });
     const charge = memoryPixTransactions.find((c) => c.txid === req.params.txid);
     if (!charge) return res.status(404).json({ error: 'Cobrança Pix não encontrada.' });
@@ -2151,7 +2152,7 @@ async function startServer() {
 
   // POST /api/v1/auth/login (E-mail & Senha com Rate Limiting e Proteção Timing-Safe)
   app.post('/api/v1/auth/login', (req: Request, res: Response) => {
-    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
     if (!checkRateLimit(`login_${clientIp}`, 5, 5 * 60 * 1000)) {
       return res.status(429).json({
         success: false,
@@ -2332,7 +2333,7 @@ async function startServer() {
 
   // POST /api/v1/auth/whatsapp-otp/request (Dispara código 6 dígitos real via Evolution API aladay)
   app.post('/api/v1/auth/whatsapp-otp/request', async (req: Request, res: Response) => {
-    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
     if (!checkRateLimit(`otp_${clientIp}`, 3, 10 * 60 * 1000)) {
       return res.status(429).json({
         success: false,
@@ -2340,7 +2341,9 @@ async function startServer() {
       });
     }
 
-    const { email, phone } = req.body;
+    const { email, phone } = req.body || {};
+    const normalizedEmailForLimit = String(email || '').trim().toLowerCase();
+    if (!checkRateLimit(`otp_email_${normalizedEmailForLimit}`, 3, 10 * 60 * 1000)) return res.status(429).json({ success: false, error: 'Limite de códigos para esta conta excedido. Aguarde 10 minutos.' });
     const cleanEmail = String(email || '').trim().toLowerCase();
     const cleanPhone = String(phone || '').replace(/\D/g, '');
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -2427,9 +2430,11 @@ async function startServer() {
 
   // POST /api/v1/auth/whatsapp-otp/verify (Valida o OTP de 6 dígitos e emite o JWT)
   app.post('/api/v1/auth/whatsapp-otp/verify', (req: Request, res: Response) => {
-    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
     if (!checkRateLimit(`otp_verify_${clientIp}`, 5, 10 * 60 * 1000)) return res.status(429).json({ success: false, error: 'Muitas tentativas de validação. Aguarde 10 minutos.' });
-    const { email, code } = req.body;
+    const { email, code } = req.body || {};
+    const normalizedEmailForLimit = String(email || '').trim().toLowerCase();
+    if (!checkRateLimit(`otp_verify_email_${normalizedEmailForLimit}`, 5, 10 * 60 * 1000)) return res.status(429).json({ success: false, error: 'Muitas tentativas para esta conta. Aguarde 10 minutos.' });
     const cleanEmail = String(email || '').trim().toLowerCase();
     const cleanCode = String(code || '').trim();
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
