@@ -1571,11 +1571,29 @@ async function startServer() {
   });
 
   // Public Order Tracking Endpoint (Real-time customer view)
-  app.get('/api/v1/orders/:id/tracking', (req: Request, res: Response) => {
-    const order = memoryOrders.find((o) => o.id === req.params.id);
-    if (!order) {
-      return res.status(404).json({ error: 'Pedido não encontrado para rastreamento.' });
+  app.get('/api/v1/orders/:id/tracking', async (req: Request, res: Response) => {
+    let order: any = memoryOrders.find((item) => item.id === req.params.id);
+    if (!order && pgPool) {
+      try {
+        const result = await pgPool.query('SELECT * FROM orders WHERE id = $1 LIMIT 1;', [req.params.id]);
+        const row = result.rows[0];
+        if (row) {
+          order = {
+            id: String(row.id), orderNumber: Number(row.order_number), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+            customerName: String(row.customer_name), customerPhone: String(row.customer_phone), type: String(row.order_type),
+            deliveryAddress: row.delivery_address || undefined, items: Array.isArray(row.items) ? row.items : [],
+            subtotalCents: Number(row.subtotal_cents), deliveryFeeCents: Number(row.delivery_fee_cents), totalCents: Number(row.total_cents),
+            status: String(row.status), paymentStatus: String(row.payment_status || 'pending'), paymentMethod: String(row.payment_method || 'Pix'),
+            createdAt: row.created_at, updatedAt: row.updated_at,
+          };
+          memoryOrders.push(order);
+        }
+      } catch (error: any) {
+        console.error('[Order Tracking] PostgreSQL query failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível consultar o pedido agora.' });
+      }
     }
+    if (!order) return res.status(process.env.NODE_ENV === 'production' && !pgPool ? 503 : 404).json({ error: 'Pedido não encontrado para rastreamento.' });
     const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante do pedido não encontrado.' });
 
