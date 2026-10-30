@@ -353,6 +353,7 @@ async function initializePostgresConnection(connectionString: string, runMigrati
 
 async function startServer() {
   const app = express();
+  let memoryAsaasSubscriptions: Record<string, any> = {};
   const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '1mb' }));
@@ -2174,8 +2175,9 @@ async function startServer() {
     const cleanPhone = String(phone || '').replace(/\D/g, '');
     if (cleanPhone.length < 10 || cleanPhone.length > 15) return res.status(400).json({ success: false, error: 'Informe um telefone válido com DDD.' });
     const targetTenant = memoryTenants.find((t) => t.slug === String(tenantSlug));
-    const trialStillActive = targetTenant?.subscriptionStatus === 'trial' && Boolean(targetTenant.trialEndsAt) && new Date(targetTenant.trialEndsAt as string).getTime() > Date.now();
-    if (!targetTenant || (!trialStillActive && targetTenant.subscriptionStatus !== 'active')) return res.status(403).json({ success: false, error: 'É necessário ter um teste ativo ou uma assinatura confirmada para criar o acesso do restaurante.' });
+    const subscription = memoryAsaasSubscriptions[String(tenantSlug)];
+    const trialStillActive = subscription?.status === 'TRIAL' && Boolean(subscription.trialEndsAt) && new Date(subscription.trialEndsAt).getTime() > Date.now();
+    if (!targetTenant || (!trialStillActive && subscription?.status !== 'ACTIVE')) return res.status(403).json({ success: false, error: 'É necessário ter um teste ativo ou uma assinatura confirmada no servidor para criar o acesso do restaurante.' });
     if (!targetTenant || (tenantId && targetTenant.id !== String(tenantId))) return res.status(404).json({ success: false, error: 'Restaurante não encontrado para concluir o cadastro.' });
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     let user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
@@ -2994,7 +2996,7 @@ async function startServer() {
     return { success: false, error: errorMsg };
   }
 
-  const memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {};
+  memoryAsaasSubscriptions = {};
 
   // Helper to ensure QR code base64 is generated for Pix
   async function ensurePixQrCode(invoice: InMemAsaasInvoice) {
@@ -3369,7 +3371,7 @@ async function startServer() {
     if (resolvedPhone.length < 10 || resolvedPhone.length > 15) return res.status(400).json({ success: false, error: 'Informe um telefone válido com DDD.' });
 
     const existingSubscription = memoryAsaasSubscriptions[slug];
-    if (tenant.subscriptionStatus === 'active' || tenant.subscriptionStatus === 'trial' || existingSubscription) {
+    if (tenant.subscriptionStatus === 'trial' || tenant.trialEndsAt || existingSubscription) {
       return res.status(409).json({ success: false, error: 'Este restaurante já possui uma assinatura ou período de teste registrado.' });
     }
 
