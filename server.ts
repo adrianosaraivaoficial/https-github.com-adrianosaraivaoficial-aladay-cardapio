@@ -639,23 +639,51 @@ async function startServer() {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
     }
 
-    const { products, categories, mode } = req.body;
+    const { products, categories, mode } = req.body || {};
+    if (mode === 'replace') {
+      for (let index = memoryProducts.length - 1; index >= 0; index--) {
+        if (memoryProducts[index].tenantSlug === tenant.slug) memoryProducts.splice(index, 1);
+      }
+      for (let index = memoryCategories.length - 1; index >= 0; index--) {
+        if ((memoryCategories[index] as any).tenantSlug === tenant.slug) memoryCategories.splice(index, 1);
+      }
+    }
     if (Array.isArray(products)) {
       products.forEach((prod: any) => {
-        if (!prod || !prod.id) return;
-        const cleanPrice = Math.max(0, parseInt(prod.priceCents, 10) || 0);
-        const existingIdx = memoryProducts.findIndex((p) => p.id === prod.id);
-        if (existingIdx >= 0) {
-          memoryProducts[existingIdx].priceCents = cleanPrice;
-          memoryProducts[existingIdx].name = String(prod.name || memoryProducts[existingIdx].name).slice(0, 120);
-        } else {
-          memoryProducts.push({
-            id: String(prod.id),
-            tenantId: tenant.id,
-            name: String(prod.name || 'Produto').slice(0, 120),
-            priceCents: cleanPrice,
-          });
-        }
+        if (!prod || !prod.id || !String(prod.name || '').trim()) return;
+        const cleanPrice = Number(prod.priceCents);
+        if (!Number.isSafeInteger(cleanPrice) || cleanPrice < 0) return;
+        const normalizedProduct = {
+          id: String(prod.id).slice(0, 80),
+          tenantId: tenant.id,
+          tenantSlug: tenant.slug,
+          categoryId: String(prod.categoryId || 'cat_geral').slice(0, 80),
+          name: String(prod.name).trim().slice(0, 150),
+          description: String(prod.description || '').slice(0, 2000),
+          priceCents: cleanPrice,
+          imageUrl: prod.imageUrl ? String(prod.imageUrl).slice(0, 2000) : undefined,
+          isAvailable: prod.isAvailable !== false,
+          isFeatured: prod.isFeatured === true,
+          optionGroups: Array.isArray(prod.optionGroups) ? prod.optionGroups : [],
+        };
+        const existingIdx = memoryProducts.findIndex((p) => p.id === normalizedProduct.id && p.tenantSlug === tenant.slug);
+        if (existingIdx >= 0) Object.assign(memoryProducts[existingIdx], normalizedProduct);
+        else memoryProducts.push(normalizedProduct);
+      });
+    }
+    if (Array.isArray(categories)) {
+      categories.forEach((category: any) => {
+        if (!category?.id || !String(category.name || '').trim()) return;
+        const normalizedCategory = {
+          id: String(category.id).slice(0, 80),
+          tenantId: tenant.id,
+          tenantSlug: tenant.slug,
+          name: String(category.name).trim().slice(0, 120),
+          order: Number(category.order) || 1,
+        };
+        const existingIndex = memoryCategories.findIndex((item: any) => item.id === normalizedCategory.id && item.tenantSlug === tenant.slug);
+        if (existingIndex >= 0) Object.assign(memoryCategories[existingIndex], normalizedCategory);
+        else memoryCategories.push(normalizedCategory as any);
       });
     }
 
