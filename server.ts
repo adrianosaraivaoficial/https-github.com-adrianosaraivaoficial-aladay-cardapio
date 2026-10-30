@@ -901,67 +901,87 @@ async function startServer() {
       createdAt: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
     };
 
-    memoryOrders.unshift(newOrder);
-
-    // Write to Outbox table
-    const outboxEvent = {
-      id: `evt_${Date.now()}`,
-      tenantId: tenant.id,
-      aggregateType: 'order',
-      aggregateId: newOrder.id,
-      eventType: 'order.created',
-      payload: newOrder,
-      status: 'completed',
-      processedAt: new Date().toISOString(),
-    };
-    memoryOutboxEvents.push(outboxEvent);
-
+    let outboxEvent: any;
     if (pgPool) {
-      (async () => {
-        try {
-          await pgPool.query(
-            `INSERT INTO orders (id, order_number, tenant_id, tenant_slug, customer_name, customer_phone, order_type, delivery_address, items, subtotal_cents, delivery_fee_cents, total_cents, status, idempotency_key)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14)
-             ON CONFLICT (id) DO NOTHING;`,
-            [
-              newOrder.id,
-              newOrder.orderNumber,
-              newOrder.tenantId,
-              newOrder.tenantSlug,
-              newOrder.customerName,
-              newOrder.customerPhone,
-              newOrder.type,
-              newOrder.deliveryAddress || null,
-              JSON.stringify(newOrder.items),
-              newOrder.subtotalCents,
-              newOrder.deliveryFeeCents,
-              newOrder.totalCents,
-              newOrder.status,
-              newOrder.idempotencyKey || null,
-            ]
-          );
-          await pgPool.query(
-            `INSERT INTO outbox_events (id, tenant_id, aggregate_type, aggregate_id, event_type, payload, status, processed_at)
-             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NOW())
-             ON CONFLICT (id) DO NOTHING;`,
-            [
-              outboxEvent.id,
-              outboxEvent.tenantId,
-              outboxEvent.aggregateType,
-              outboxEvent.aggregateId,
-              outboxEvent.eventType,
-              JSON.stringify(outboxEvent.payload),
-              outboxEvent.status,
-            ]
-          );
-        } catch (err) {
-          console.warn('[PostgreSQL Order Persist] Erro ao gravar pedido no PostgreSQL:', err);
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1));', [tenant.slug]);
+
+        if (scopedIdempotencyKey) {
+          const duplicate = await client.query('SELECT * FROM orders WHERE tenant_slug = $1 AND idempotency_key = $2 LIMIT 1;', [tenant.slug, scopedIdempotencyKey]);
+          if (duplicate.rows[0]) {
+            await client.query('ROLLBACK');
+            const row = duplicate.rows[0];
+            return res.json({
+              message: 'Pedido já processado anteriormente.',
+              data: {
+                id: row.id, orderNumber: row.order_number, tenantId: row.tenant_id, tenantSlug: row.tenant_slug,
+                customerName: row.customer_name, customerPhone: row.customer_phone, type: row.order_type,
+                deliveryAddress: row.delivery_address, items: row.items, subtotalCents: row.subtotal_cents,
+                deliveryFeeCents: row.delivery_fee_cents, totalCents: row.total_cents, status: row.status,
+                paymentStatus: row.payment_status, paymentMethod: row.payment_method, idempotencyKey: row.idempotency_key,
+                createdAt: row.created_at,
+              },
+            });
+          }
         }
-      })();
+
+        const nextNumber = await client.query('SELECT COALESCE(MAX(order_number), 1039) + 1 AS next_number FROM orders WHERE tenant_slug = $1;', [tenant.slug]);
+        newOrder.orderNumber = Number(nextNumber.rows[0]?.next_number || newOrder.orderNumber);
+
+        await client.query(
+          `INSERT INTO orders (id, order_number, tenant_id, tenant_slug, customer_name, customer_phone, order_type, delivery_address, items, subtotal_cents, delivery_fee_cents, total_cents, status, idempotency_key)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14);`,
+          [
+            newOrder.id, newOrder.orderNumber, newOrder.tenantId, newOrder.tenantSlug,
+            newOrder.customerName, newOrder.customerPhone, newOrder.type, newOrder.deliveryAddress || null,
+            JSON.stringify(newOrder.items), newOrder.subtotalCents, newOrder.deliveryFeeCents,
+            newOrder.totalCents, newOrder.status, newOrder.idempotencyKey || null,
+          ]
+        );
+
+        outboxEvent = {
+          id: `evt_${crypto.randomBytes(16).toString('hex')}`,
+          tenantId: tenant.id,
+          aggregateType: 'order',
+          aggregateId: newOrder.id,
+          eventType: 'order.created',
+          payload: newOrder,
+          status: 'pending',
+          processedAt: null,
+        };
+        await client.query(
+          `INSERT INTO outbox_events (id, tenant_id, aggregate_type, aggregate_id, event_type, payload, status, processed_at)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NULL);`,
+          [outboxEvent.id, outboxEvent.tenantId, outboxEvent.aggregateType, outboxEvent.aggregateId, outboxEvent.eventType, JSON.stringify(outboxEvent.payload), outboxEvent.status]
+        );
+        await client.query('COMMIT');
+      } catch (error: any) {
+        try { await client.query('ROLLBACK'); } catch { /* transaction already closed */ }
+        console.error('[Checkout Transaction] PostgreSQL write failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível registrar o pedido com segurança. Tente novamente.' });
+      } finally {
+        client.release();
+      }
+    } else {
+      outboxEvent = {
+        id: `evt_${crypto.randomBytes(16).toString('hex')}`,
+        tenantId: tenant.id,
+        aggregateType: 'order',
+        aggregateId: newOrder.id,
+        eventType: 'order.created',
+        payload: newOrder,
+        status: 'pending',
+        processedAt: null,
+      };
     }
 
+    memoryOrders.unshift(newOrder);
+    memoryOutboxEvents.push(outboxEvent);
+
     res.status(201).json({
-      message: 'Pedido gravado no banco de dados e evento Outbox despachado!',
+      message: 'Pedido criado e registrado com sucesso.',
       data: newOrder,
     });
   });
