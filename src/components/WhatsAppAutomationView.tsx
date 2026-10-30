@@ -1853,7 +1853,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const envText = `PORT=3000\nNODE_ENV=production\nDATABASE_URL=${generatedEasyPanelDbUrl}\nPGSSLMODE=disable\nJWT_SECRET=GERAR_COM_OPENSSL_RAND_HEX_48\nADMIN_EMAIL=SEU_EMAIL_ADMIN\nADMIN_PASSWORD=SENHA_FORTE_COM_14_CARACTERES_OU_MAIS\nADMIN_PHONE=DDD_TELEFONE_INTERNACIONAL\nEVOLUTION_API_URL=${evolutionUrl}\nEVOLUTION_API_KEY=${evolutionApiKey}\nEVOLUTION_WEBHOOK_TOKEN=GERAR_TOKEN_ALEATORIO_FORTE\nPIX_WEBHOOK_TOKEN=GERAR_TOKEN_ALEATORIO_FORTE\nN8N_WEBHOOK_URL=${n8nWebhookUrl}\nASAAS_ENVIRONMENT=sandbox\nASAAS_API_KEY=\nASAAS_WEBHOOK_TOKEN=`;
+                      const envText = `PORT=3000\nNODE_ENV=production\nAPP_URL=HTTPS_URL_PUBLICA_DO_APP\nDATABASE_URL=${generatedEasyPanelDbUrl}\nPGSSLMODE=disable\nJWT_SECRET=GERAR_COM_OPENSSL_RAND_HEX_48\nADMIN_EMAIL=SEU_EMAIL_ADMIN\nADMIN_PASSWORD=SENHA_FORTE_COM_14_CARACTERES_OU_MAIS\nADMIN_PHONE=DDD_TELEFONE_INTERNACIONAL\nEVOLUTION_API_URL=${evolutionUrl}\nEVOLUTION_API_KEY=${evolutionApiKey}\nEVOLUTION_WEBHOOK_TOKEN=GERAR_TOKEN_ALEATORIO_FORTE\nPIX_WEBHOOK_TOKEN=GERAR_TOKEN_ALEATORIO_FORTE\nN8N_WEBHOOK_URL=${n8nWebhookUrl}\nASAAS_ENVIRONMENT=sandbox\nASAAS_API_KEY=\nASAAS_WEBHOOK_TOKEN=`;
                       navigator.clipboard.writeText(envText);
                       setCopiedEnvBlock(true);
                       setTimeout(() => setCopiedEnvBlock(false), 3000);
@@ -1868,6 +1868,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                 <pre className="bg-neutral-900 text-neutral-200 p-3.5 rounded-lg font-mono text-[11px] overflow-x-auto leading-relaxed">
 {`PORT=3000
 NODE_ENV=production
+APP_URL=HTTPS_URL_PUBLICA_DO_APP
 DATABASE_URL=${generatedEasyPanelDbUrl}
 PGSSLMODE=disable
 JWT_SECRET=GERAR_COM_OPENSSL_RAND_HEX_48
