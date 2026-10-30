@@ -625,6 +625,12 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                   </div>
                 </div>
 
+                {!pendingInvoice && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900">
+                    Não existe cobrança pendente. O teste grátis de 15 dias não cria cobrança automática. A contratação paga deve ser iniciada pelo fluxo de assinatura.
+                  </div>
+                )}
+                {pendingInvoice && (
                 <div className="p-3 bg-white border border-neutral-200 rounded-lg space-y-1.5 text-xs text-neutral-600">
                   <p className="font-semibold text-neutral-900 flex items-center gap-1">
                     <Zap className="w-3.5 h-3.5 text-amber-500" />
@@ -637,7 +643,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                     2. Após a confirmação do pagamento pelo Asaas, o webhook atualiza a situação da assinatura. O prazo depende do provedor e da compensação bancária.
                   </p>
                 </div>
-
+                )}
 
               </div>
             </div>
