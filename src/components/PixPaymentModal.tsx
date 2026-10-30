@@ -406,8 +406,7 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
                 </span>
               </div>
 
-              {import.meta.env.DEV && (
-              {/* Simulador disponível somente em desenvolvimento */}
+              {import.meta.env.DEV ? (
               <div className="p-3 bg-neutral-900 text-white rounded-xl space-y-2 border border-neutral-700">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-300 flex items-center gap-1">
@@ -440,7 +439,7 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
                   )}
                 </button>
               </div>
-              )}
+              ) : null}
 
             </>
           )}
