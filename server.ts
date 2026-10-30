@@ -1011,6 +1011,7 @@ async function startServer() {
     const actualPaidTime = paidDate.toISOString();
     const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
     if (!tenant) return res.status(404).json({ success: false, error: 'Restaurante associado ao pedido não encontrado.' });
+    if (!(tenant as any).pixConfig?.autoApproveWebhook) return res.status(403).json({ success: false, error: 'Confirmação automática Pix está desativada para este restaurante.' });
     charge.status = 'PAID';
     charge.paidAt = actualPaidTime;
     charge.endToEndId = actualEndToEndId;
