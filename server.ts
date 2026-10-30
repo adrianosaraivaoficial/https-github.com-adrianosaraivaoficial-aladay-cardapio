@@ -987,9 +987,33 @@ async function startServer() {
   });
 
   // Get orders for a tenant (Protected by Multi-Tenant JWT Guard)
-  app.get('/api/v1/tenants/:slug/orders', requireTenantAccess('slug'), (req: Request, res: Response) => {
-    const tenantOrders = memoryOrders.filter((o) => o.tenantSlug === req.params.slug);
-    res.json({ data: tenantOrders });
+  app.get('/api/v1/tenants/:slug/orders', requireTenantAccess('slug'), async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    if (pgPool) {
+      try {
+        const result = await pgPool.query('SELECT * FROM orders WHERE tenant_slug = $1 ORDER BY created_at DESC LIMIT 500;', [tenant.slug]);
+        const tenantOrders = result.rows.map((row: any) => ({
+          id: String(row.id), orderNumber: Number(row.order_number), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+          customerName: String(row.customer_name), customerPhone: String(row.customer_phone), type: String(row.order_type),
+          deliveryAddress: row.delivery_address || undefined, items: Array.isArray(row.items) ? row.items : [],
+          subtotalCents: Number(row.subtotal_cents), deliveryFeeCents: Number(row.delivery_fee_cents), totalCents: Number(row.total_cents),
+          status: String(row.status), paymentStatus: String(row.payment_status || 'pending'), paymentMethod: String(row.payment_method || 'Pix'),
+          idempotencyKey: row.idempotency_key || undefined, whatsAppLogs: Array.isArray(row.whatsapp_logs) ? row.whatsapp_logs : [],
+          createdAt: row.created_at, updatedAt: row.updated_at,
+        }));
+        for (let index = memoryOrders.length - 1; index >= 0; index--) {
+          if (memoryOrders[index].tenantSlug === tenant.slug) memoryOrders.splice(index, 1);
+        }
+        memoryOrders.push(...tenantOrders);
+        return res.json({ data: tenantOrders });
+      } catch (error: any) {
+        console.error('[Orders Read] PostgreSQL query failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível carregar os pedidos persistidos.' });
+      }
+    }
+    if (process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'PostgreSQL obrigatório para consultar pedidos em produção.' });
+    return res.json({ data: memoryOrders.filter((order) => order.tenantSlug === tenant.slug) });
   });
 
   // --- PIX DINÂMICO HELPERS (BACEN STANDARD) ---
