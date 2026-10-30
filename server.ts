@@ -751,8 +751,8 @@ async function startServer() {
   });
 
   // Zero-Trust Checkout: server recalculates everything and writes to outbox
-  app.post('/api/v1/orders/checkout', (req: Request, res: Response) => {
-    const { tenantSlug, customerName, customerPhone, type, deliveryAddress, items, idempotencyKey } = req.body;
+  app.post('/api/v1/orders/checkout', async (req: Request, res: Response) => {
+    const { tenantSlug, customerName, customerPhone, type, deliveryAddress, items, idempotencyKey } = req.body || {};
 
     const tenant = memoryTenants.find((t) => t.slug === tenantSlug);
     if (!tenant) {
@@ -770,18 +770,71 @@ async function startServer() {
     if (type === 'delivery' && String(deliveryAddress || '').trim().length < 8) return res.status(400).json({ error: 'Informe o endereço completo para entrega.' });
     if (idempotencyKey && (typeof idempotencyKey !== 'string' || idempotencyKey.length > 120)) return res.status(400).json({ error: 'Chave de idempotência inválida.' });
 
-    // Check idempotency
-    if (idempotencyKey) {
-      const existing = memoryOrders.find((o) => o.idempotencyKey === idempotencyKey && o.tenantSlug === tenant.slug);
-      if (existing) return res.json({ message: 'Pedido já processado anteriormente.', data: existing });
+    if (process.env.NODE_ENV === 'production' && !pgPool) return res.status(503).json({ error: 'PostgreSQL obrigatório para criar pedidos em produção.' });
+
+    const scopedIdempotencyKey = idempotencyKey
+      ? crypto.createHash('sha256').update(`${tenant.slug}:${String(idempotencyKey)}`).digest('hex')
+      : undefined;
+
+    // Durable idempotency check scoped to the restaurant.
+    if (scopedIdempotencyKey) {
+      const existingMemory = memoryOrders.find((order) => order.idempotencyKey === scopedIdempotencyKey && order.tenantSlug === tenant.slug);
+      if (existingMemory) return res.json({ message: 'Pedido já processado anteriormente.', data: existingMemory });
+      if (pgPool) {
+        try {
+          const existingDb = await pgPool.query('SELECT * FROM orders WHERE tenant_slug = $1 AND idempotency_key = $2 LIMIT 1;', [tenant.slug, scopedIdempotencyKey]);
+          if (existingDb.rows[0]) {
+            const row = existingDb.rows[0];
+            const existingOrder = {
+              id: row.id, orderNumber: row.order_number, tenantId: row.tenant_id, tenantSlug: row.tenant_slug,
+              customerName: row.customer_name, customerPhone: row.customer_phone, type: row.order_type,
+              deliveryAddress: row.delivery_address, items: row.items, subtotalCents: row.subtotal_cents,
+              deliveryFeeCents: row.delivery_fee_cents, totalCents: row.total_cents, status: row.status,
+              paymentStatus: row.payment_status, paymentMethod: row.payment_method, idempotencyKey: row.idempotency_key,
+              createdAt: row.created_at,
+            };
+            return res.json({ message: 'Pedido já processado anteriormente.', data: existingOrder });
+          }
+        } catch {
+          return res.status(503).json({ error: 'Não foi possível verificar a idempotência do pedido.' });
+        }
+      }
     }
+
+    // Load canonical product data from PostgreSQL; never trust prices or options from the browser.
+    let serverCatalog: any[] = memoryProducts.filter((product) => product.tenantSlug === tenant.slug);
+    if (pgPool) {
+      try {
+        const productIds = [...new Set(items.map((item: any) => String(item?.productId || '')).filter(Boolean))];
+        const catalogResult = await pgPool.query(
+          `SELECT id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups
+           FROM products WHERE tenant_slug = $1 AND id = ANY($2::varchar[]);`,
+          [tenant.slug, productIds]
+        );
+        serverCatalog = catalogResult.rows.map((row: any) => ({
+          id: String(row.id), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+          categoryId: String(row.category_id), name: String(row.name), description: String(row.description || ''),
+          priceCents: Number(row.price_cents), imageUrl: row.image_url || undefined,
+          isAvailable: row.is_available !== false, isFeatured: row.is_featured === true,
+          optionGroups: Array.isArray(row.option_groups) ? row.option_groups : (typeof row.option_groups === 'string' ? JSON.parse(row.option_groups) : []),
+        }));
+        for (let index = memoryProducts.length - 1; index >= 0; index--) {
+          if (memoryProducts[index].tenantSlug === tenant.slug) memoryProducts.splice(index, 1);
+        }
+        memoryProducts.push(...serverCatalog);
+      } catch (error: any) {
+        console.error('[Checkout Catalog] PostgreSQL query failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível validar os produtos no catálogo persistido.' });
+      }
+    }
+    const catalogById = new Map(serverCatalog.map((product) => [String(product.id), product]));
 
     // All prices and options must come from this tenant's server-side catalog.
     let subtotalCents = 0;
     const validatedItems = [];
     for (const item of items) {
       const productId = String(item?.productId || '');
-      const catalogProduct = memoryProducts.find((p) => p.id === productId && p.tenantSlug === tenant.slug);
+      const catalogProduct = catalogById.get(productId);
       if (!catalogProduct || catalogProduct.isAvailable === false) return res.status(409).json({ error: 'Um ou mais produtos não estão disponíveis no cardápio deste restaurante.' });
 
       const quantity = Number(item.quantity);
@@ -844,7 +897,7 @@ async function startServer() {
       deliveryFeeCents,
       totalCents,
       status: 'received',
-      idempotencyKey,
+      idempotencyKey: scopedIdempotencyKey,
       createdAt: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
     };
 
