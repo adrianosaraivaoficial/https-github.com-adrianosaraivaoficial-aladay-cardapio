@@ -364,48 +364,19 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
       const isTrialActivation = Boolean(subscriptionData?.isTrial || signupMode === 'trial_15_days');
       let boundSubscription = subscriptionData;
 
-      if (isTrialActivation) {
-        // Bind 15-day Free Trial subscription to the newly created restaurant slug
-        try {
-          const bindTrialRes = await fetch(`/api/v1/asaas/subscription/${slug}/start-trial`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              customerName: subscriberName.trim() || name,
-              customerEmail: subscriberEmail.trim(),
-              customerCpfCnpj: subscriberCpfCnpj.trim(),
-              customerPhone: phone.replace(/\D/g, ''),
-              billingType: 'PIX',
-            }),
-          });
-          if (bindTrialRes.ok) {
-            const bindTrialJson = await bindTrialRes.json();
-            if (bindTrialJson.subscription) {
-              boundSubscription = bindTrialJson.subscription;
-            }
-          }
-        } catch {
-          // fallback to existing subscriptionData
-        }
-      } else {
-        // Bind the active paid Asaas subscription to the newly created restaurant slug
-        await fetch(`/api/v1/asaas/subscription/${slug}/subscribe`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            billingType,
-            customerName: subscriberName.trim() || name,
-            customerEmail: subscriberEmail.trim(),
-            customerCpfCnpj: subscriberCpfCnpj.trim(),
-            customerPhone: phone.replace(/\D/g, ''),
-          }),
-        }).catch(() => {});
-
-        await fetch(`/api/v1/asaas/subscription/${slug}/confirm-payment`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        }).catch(() => {});
+      // Bind the already verified temporary signup subscription to this new restaurant.
+      const bindRes = await fetch(`/api/v1/asaas/subscription/${slug}/bind`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceSlug: onboardingTempSlug }),
+      });
+      const bindJson = await bindRes.json();
+      if (!bindRes.ok || !bindJson.subscription) {
+        setTenantError(bindJson.error || 'Não foi possível vincular a assinatura ao restaurante. Verifique o status do pagamento e tente novamente.');
+        setIsCreating(false);
+        return;
       }
+      boundSubscription = bindJson.subscription;
 
       const tenantData: RestaurantTenant = {
         id: json.data?.id || `tenant_${Date.now()}`,
@@ -423,18 +394,18 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
         deliveryFeeCents: 900,
         minOrderCents: 3000,
         evolutionInstanceId: `instancia_${slug}`,
-        evolutionStatus: 'connected',
-        evolutionApiKeyConfigured: true,
-        subscriptionStatus: isTrialActivation ? 'trial' : 'active',
+        evolutionStatus: 'disconnected',
+        evolutionApiKeyConfigured: false,
+        subscriptionStatus: isTrialActivation ? 'trial' : (boundSubscription?.status === 'ACTIVE' ? 'active' : 'pending'),
         trialEndsAt: boundSubscription?.trialEndsAt,
         asaasSubscription: boundSubscription || undefined,
         pixConfig: {
           provider: 'direct_bank',
-          pixKey: pixKey.trim() || subscriberCpfCnpj.trim() || phone.trim(),
+          pixKey: pixKey.trim(),
           pixKeyType: 'cnpj',
           merchantName: name.slice(0, 25),
           merchantCity: 'SAO PAULO',
-          autoApproveWebhook: true,
+          autoApproveWebhook: false,
         },
       };
 
