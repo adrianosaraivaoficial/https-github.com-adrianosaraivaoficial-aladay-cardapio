@@ -71,7 +71,7 @@ const memoryTenants: InMemTenant[] = [
       merchantName: 'MEU RESTAURANTE',
       merchantCity: 'SAO PAULO',
       bankName: '',
-      autoApproveWebhook: true,
+      autoApproveWebhook: false,
     },
   },
 ];
@@ -365,7 +365,8 @@ async function startServer() {
   // ============================================================================
   // SECURITY & MULTI-TENANT AUTHENTICATION GUARDS (OWASP / LGPD COMPLIANCE)
   // ============================================================================
-  const JWT_SECRET = process.env.JWT_SECRET || 'aladay-cloudflare-jwt-secret-key-2026-hmac-sha256';
+  const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' ? '' : crypto.randomBytes(48).toString('hex'));
+  if (process.env.NODE_ENV === 'production' && JWT_SECRET.length < 32) throw new Error('Configuração insegura: defina JWT_SECRET com pelo menos 32 caracteres no ambiente de produção.');
 
   function base64UrlEncode(input: string | Buffer): string {
     return Buffer.from(input)
@@ -377,65 +378,20 @@ async function startServer() {
 
   function verifyJwtToken(token: string): any | null {
     try {
+      if (!JWT_SECRET || typeof token !== 'string' || token.length > 8192) return null;
       const parts = token.split('.');
       if (parts.length !== 3) return null;
       const [headerB64, payloadB64, signature] = parts;
-
-      // 1. Accept bootstrap token signature from client app
-      if (signature === 'aladay_hmac_sha256_sig') {
-        try {
-          const claims = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf-8'));
-          return claims;
-        } catch {
-          return null;
-        }
-      }
-
-      // 2. Validate HMAC against active JWT_SECRET and known deployment keys
-      const secretsToTest = [
-        JWT_SECRET,
-        '9f8d7a6b5c4e3f2a1b0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b',
-        'aladay-cloudflare-jwt-secret-key-2026-hmac-sha256',
-      ];
-
-      for (const secret of secretsToTest) {
-        try {
-          const expectedSignature = crypto
-            .createHmac('sha256', secret)
-            .update(`${headerB64}.${payloadB64}`)
-            .digest('base64')
-            .replace(/=/g, '')
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_');
-
-          const sigBuf = Buffer.from(signature);
-          const expBuf = Buffer.from(expectedSignature);
-          if (sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf)) {
-            const claims = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf-8'));
-            if (claims.exp && claims.exp < Math.floor(Date.now() / 1000) - 86400) {
-              return null; // Expired by more than 24h
-            }
-            return claims;
-          }
-        } catch {
-          // continue checking next secret
-        }
-      }
-
-      // 3. Fallback: Parse claims if structured properly
-      try {
-        const claims = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf-8'));
-        if (claims && claims.sub && claims.role) {
-          return claims;
-        }
-      } catch {
-        // failed parse
-      }
-
-      return null;
-    } catch {
-      return null;
-    }
+      const header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf-8'));
+      if (!header || header.alg !== 'HS256' || header.typ !== 'JWT') return null;
+      const expectedSignature = crypto.createHmac('sha256', JWT_SECRET).update(`${headerB64}.${payloadB64}`).digest();
+      const suppliedSignature = Buffer.from(signature, 'base64url');
+      if (suppliedSignature.length !== expectedSignature.length || !crypto.timingSafeEqual(suppliedSignature, expectedSignature)) return null;
+      const claims = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8'));
+      const now = Math.floor(Date.now() / 1000);
+      if (!claims || typeof claims.sub !== 'string' || !claims.sub || !Number.isInteger(claims.exp) || claims.exp <= now || claims.iss !== 'https://aladay.com.br') return null;
+      return claims;
+    } catch { return null; }
   }
 
   const authenticateToken = (req: Request, res: Response, next: express.NextFunction) => {
@@ -507,18 +463,20 @@ async function startServer() {
     });
   });
 
-  // Get list of tenants
+  const toPublicTenant = (tenant: InMemTenant) => {
+    const { evolutionApiKey, evolutionApiUrl, ...safeTenant } = tenant as any;
+    return safeTenant;
+  };
   app.get('/api/v1/tenants', (_req: Request, res: Response) => {
-    res.json({ data: memoryTenants });
+    res.json({ data: memoryTenants.map(toPublicTenant) });
   });
 
   // Create new tenant (Onboarding Step 1 & 2)
   app.post('/api/v1/tenants', (req: Request, res: Response) => {
     const { name, slug, phone, primaryColor, address } = req.body;
-    if (!name || !slug || !phone) {
-      return res.status(400).json({ error: 'Campos obrigatórios: name, slug, phone' });
-    }
-
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(`tenant_create_${clientIp}`, 5, 60 * 60 * 1000)) return res.status(429).json({ error: 'Limite de cadastros excedido. Tente novamente mais tarde.' });
+    if (!name || !slug || !phone || String(name).trim().length < 2 || String(phone).replace(/\D/g, '').length < 10) return res.status(400).json({ error: 'Informe nome, identificador e telefone válidos.' });
     const cleanSlug = String(slug).toLowerCase().trim().replace(/[^a-z0-9-]/g, '-');
     const existing = memoryTenants.find((t) => t.slug === cleanSlug);
     if (existing) {
@@ -646,7 +604,7 @@ async function startServer() {
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
     }
-    res.json({ data: tenant });
+    res.json({ data: toPublicTenant(tenant) });
   });
 
   // Bulk Import / Sync Catalog (Categories & Products) from Spreadsheet per Tenant
@@ -1003,27 +961,22 @@ async function startServer() {
   app.post('/api/v1/webhooks/pix', async (req: Request, res: Response) => {
     const { txid, endToEndId, amountCents, paidAt, payer } = req.body;
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-    console.log(`[Pix Direto Loja] Recebida confirmação de pagamento para txid: ${txid}`);
-
-    let charge = memoryPixTransactions.find((c) => c.txid === txid);
-    let order = charge ? memoryOrders.find((o) => o.id === charge.orderId) : null;
-
-    if (!charge && memoryOrders.length > 0) {
-      order = memoryOrders[0];
-      charge = {
-        txid: txid || `PIX_${Date.now()}`,
-        orderId: order.id,
-        tenantSlug: order.tenantSlug,
-        amountCents: order.totalCents,
-        status: 'PAID',
-      };
-      memoryPixTransactions.unshift(charge);
-    }
-
-    const actualEndToEndId = endToEndId || `E${Date.now()}9876543210`;
-    const actualPaidTime = paidAt || new Date().toISOString();
-
+    const webhookSecret = process.env.PIX_WEBHOOK_TOKEN || '';
+    const suppliedSecret = String(req.headers['x-webhook-token'] || req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
+    if (!webhookSecret || !suppliedSecret) return res.status(401).json({ success: false, error: 'Webhook Pix não autenticado.' });
+    const expected = Buffer.from(webhookSecret), supplied = Buffer.from(suppliedSecret);
+    if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected, supplied)) return res.status(401).json({ success: false, error: 'Webhook Pix não autenticado.' });
+    if (typeof txid !== 'string' || !txid.trim() || !Number.isInteger(Number(amountCents))) return res.status(400).json({ success: false, error: 'Identificador e valor da cobrança são obrigatórios.' });
+    const charge = memoryPixTransactions.find((c) => c.txid === txid);
+    if (!charge) return res.status(404).json({ success: false, error: 'Cobrança Pix não encontrada.' });
+    const order = memoryOrders.find((o) => o.id === charge.orderId);
+    if (!order || Number(amountCents) !== Number(charge.amountCents ?? order.totalCents) || Number(amountCents) !== Number(order.totalCents)) return res.status(409).json({ success: false, error: 'Valor ou pedido não corresponde à cobrança registrada.' });
+    if (charge.status === 'PAID') return res.status(200).json({ success: true, duplicate: true, message: 'Pagamento já processado.' });
+    if (charge.status !== 'PENDING') return res.status(409).json({ success: false, error: 'Estado da cobrança não permite confirmação.' });
+    console.log(`[Pix Direto Loja] Confirmação autenticada para txid: ${txid}`);
+    const actualEndToEndId = String(endToEndId || '').trim();
+    if (!actualEndToEndId) return res.status(400).json({ success: false, error: 'EndToEndId ausente na confirmação Pix.' });
+    const actualPaidTime = paidAt ? new Date(paidAt).toISOString() : new Date().toISOString();
     if (charge) {
       charge.status = 'PAID';
       charge.paidAt = actualPaidTime;
@@ -1052,11 +1005,11 @@ async function startServer() {
         statusSent: 'confirmed',
       });
 
-      const evolutionApiUrl = (tenant as any).evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
-      const evolutionApiKey = (tenant as any).evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405';
+      const evolutionApiUrl = (tenant as any).evolutionApiUrl || process.env.EVOLUTION_API_URL || '';
+      const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
       const instanceName = tenant.evolutionInstanceId || 'aladay';
 
-      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${instanceName}`, {
+      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${encodeURIComponent(instanceName)}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1163,7 +1116,7 @@ async function startServer() {
   app.post('/api/v1/webhooks/asaas-subscriptions', handleAsaasSubscriptionWebhook);
 
   // SIMULATE BANK PAYMENT FOR TESTING (PROTECTED IN PRODUCTION)
-  app.post('/api/v1/pix/simulate-payment', async (req: Request, res: Response) => {
+  app.post('/api/v1/pix/simulate-payment', requireSuperAdmin, async (req: Request, res: Response) => {
     // In production, block simulation unless authenticated as SUPER_ADMIN
     if (process.env.NODE_ENV === 'production') {
       const authHeader = req.headers['authorization'];
@@ -1224,11 +1177,11 @@ async function startServer() {
         statusSent: 'confirmed',
       });
 
-      const evolutionApiUrl = (tenant as any).evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
-      const evolutionApiKey = (tenant as any).evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405';
+      const evolutionApiUrl = (tenant as any).evolutionApiUrl || process.env.EVOLUTION_API_URL || '';
+      const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
       const instanceName = tenant.evolutionInstanceId || 'aladay';
 
-      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${instanceName}`, {
+      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${encodeURIComponent(instanceName)}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1284,7 +1237,7 @@ async function startServer() {
         pixKeyType: 'phone',
         merchantName: tenant.name,
         merchantCity: 'SAO PAULO',
-        autoApproveWebhook: true,
+        autoApproveWebhook: false,
       },
     });
   });
@@ -1303,7 +1256,7 @@ async function startServer() {
       pixKeyType: pixKeyType || 'phone',
       merchantName: merchantName ? String(merchantName).trim().slice(0, 25) : tenant.name.slice(0, 25),
       merchantCity: merchantCity ? String(merchantCity).trim().slice(0, 15).toUpperCase() : 'SAO PAULO',
-      autoApproveWebhook: autoApproveWebhook ?? true,
+      autoApproveWebhook: autoApproveWebhook ?? false,
       updatedAt: new Date().toISOString(),
     };
 
@@ -1455,12 +1408,12 @@ async function startServer() {
     if (memoryWebhookLogs.length > 60) memoryWebhookLogs.pop();
 
     // Fire actual HTTP request to Evolution API if server is reachable (non-blocking)
-    const evolutionApiUrl = (tenant as any).evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
-    const evolutionApiKey = (tenant as any).evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405';
+    const evolutionApiUrl = (tenant as any).evolutionApiUrl || process.env.EVOLUTION_API_URL || '';
+    const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
     const instanceName = tenant.evolutionInstanceId || 'aladay';
 
     try {
-      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${instanceName}`, {
+      fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${encodeURIComponent(instanceName)}`, {
         method: 'POST',
         headers: {
           apikey: evolutionApiKey,
@@ -1570,7 +1523,7 @@ async function startServer() {
   });
 
   // Manual Test Notification Dispatcher (Trigger WhatsApp notification for any status)
-  app.post('/api/v1/orders/:id/test-notification', async (req: Request, res: Response) => {
+  app.post('/api/v1/orders/:id/test-notification', authenticateToken, async (req: Request, res: Response) => {
     const { status, customPhone } = req.body;
     const order = memoryOrders.find((o) => o.id === req.params.id);
     if (!order) {
@@ -1650,7 +1603,7 @@ async function startServer() {
   });
 
   // PUT notification templates for a tenant
-  app.put('/api/v1/tenants/:slug/notification-templates', (req: Request, res: Response) => {
+  app.put('/api/v1/tenants/:slug/notification-templates', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
@@ -1670,7 +1623,7 @@ async function startServer() {
   });
 
   // POST test-send custom notification template
-  app.post('/api/v1/notifications/test-send', async (req: Request, res: Response) => {
+  app.post('/api/v1/notifications/test-send', authenticateToken, async (req: Request, res: Response) => {
     const { tenantSlug, templateKey, customText, customPhone, orderId } = req.body;
     const tenant = memoryTenants.find((t) => t.slug === tenantSlug) || memoryTenants[0];
     const order = memoryOrders.find((o) => o.id === orderId) || memoryOrders[0];
@@ -1684,8 +1637,8 @@ async function startServer() {
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     // Evolution API credentials from tenant or default Easypanel
-    const evolutionApiUrl = (tenant as any).evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
-    const evolutionApiKey = (tenant as any).evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405';
+    const evolutionApiUrl = (tenant as any).evolutionApiUrl || process.env.EVOLUTION_API_URL || '';
+    const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
     const instanceName = tenant.evolutionInstanceId || 'aladay';
 
     // Record Webhook Log
@@ -1709,7 +1662,7 @@ async function startServer() {
 
     let evolutionResult: any = { status: 'logged_locally' };
     try {
-      const response = await fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${instanceName}`, {
+      const response = await fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${encodeURIComponent(instanceName)}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1747,7 +1700,7 @@ async function startServer() {
   });
 
   // Update tenant general settings
-  app.put('/api/v1/tenants/:slug/settings', (req: Request, res: Response) => {
+  app.put('/api/v1/tenants/:slug/settings', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
@@ -1773,7 +1726,7 @@ async function startServer() {
   });
 
   // CREATE Product for Tenant
-  app.post('/api/v1/tenants/:slug/products', (req: Request, res: Response) => {
+  app.post('/api/v1/tenants/:slug/products', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const { name, categoryId, description, priceCents, imageUrl, optionGroups } = req.body;
     if (!name || priceCents === undefined) {
       return res.status(400).json({ error: 'Nome e Preço são obrigatórios.' });
@@ -1796,7 +1749,7 @@ async function startServer() {
   });
 
   // UPDATE Product for Tenant
-  app.put('/api/v1/tenants/:slug/products/:id', (req: Request, res: Response) => {
+  app.put('/api/v1/tenants/:slug/products/:id', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const prod = memoryProducts.find((p) => p.tenantSlug === req.params.slug && p.id === req.params.id);
     if (!prod) {
       return res.status(404).json({ error: 'Produto não encontrado para este restaurante.' });
@@ -1815,7 +1768,7 @@ async function startServer() {
   });
 
   // TOGGLE AVAILABILITY (Pausa rápida de produto)
-  app.patch('/api/v1/tenants/:slug/products/:id/toggle-availability', (req: Request, res: Response) => {
+  app.patch('/api/v1/tenants/:slug/products/:id/toggle-availability', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const prod = memoryProducts.find((p) => p.tenantSlug === req.params.slug && p.id === req.params.id);
     if (!prod) {
       return res.status(404).json({ error: 'Produto não encontrado.' });
@@ -1829,7 +1782,7 @@ async function startServer() {
   });
 
   // DELETE Product
-  app.delete('/api/v1/tenants/:slug/products/:id', (req: Request, res: Response) => {
+  app.delete('/api/v1/tenants/:slug/products/:id', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const idx = memoryProducts.findIndex((p) => p.tenantSlug === req.params.slug && p.id === req.params.id);
     if (idx === -1) {
       return res.status(404).json({ error: 'Produto não encontrado.' });
@@ -1844,7 +1797,7 @@ async function startServer() {
     res.json({ data: cats });
   });
 
-  app.post('/api/v1/tenants/:slug/categories', (req: Request, res: Response) => {
+  app.post('/api/v1/tenants/:slug/categories', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const { name } = req.body;
     if (!name) return res.status(400).json({ error: 'Nome da categoria é obrigatório.' });
 
@@ -1859,7 +1812,7 @@ async function startServer() {
   });
 
   // Webhook Logs Query Endpoint
-  app.get('/api/v1/webhooks/logs', (req: Request, res: Response) => {
+  app.get('/api/v1/webhooks/logs', authenticateToken, (req: Request, res: Response) => {
     const { instance, limit } = req.query;
     let logs = [...memoryWebhookLogs];
     if (instance) {
@@ -2049,12 +2002,23 @@ async function startServer() {
     permissions: string[];
   }
 
+  function hashPassword(password: string): string {
+    const salt = crypto.randomBytes(16).toString('hex');
+    return `scrypt$${salt}$${crypto.scryptSync(password, salt, 64).toString('hex')}`;
+  }
+  function verifyPassword(password: string, storedHash: string): boolean {
+    if (!password || !storedHash || !storedHash.startsWith('scrypt$')) return false;
+    const [, salt, expectedHex] = storedHash.split('$');
+    if (!salt || !expectedHex) return false;
+    try { const actual = crypto.scryptSync(password, salt, 64), expected = Buffer.from(expectedHex, 'hex'); return actual.length === expected.length && crypto.timingSafeEqual(actual, expected); } catch { return false; }
+  }
+  const configuredAdminPassword = process.env.ADMIN_PASSWORD || '';
   const memoryUsers: InMemAuthUser[] = [
     {
       id: 'usr_super_01',
       name: 'Administrador Aladay',
-      email: process.env.ADMIN_EMAIL || 'admin@aladay.com.br',
-      passwordHash: process.env.ADMIN_PASSWORD || 'aladay2026',
+      email: (process.env.ADMIN_EMAIL || 'admin@aladay.com.br').trim().toLowerCase(),
+      passwordHash: configuredAdminPassword ? hashPassword(configuredAdminPassword) : '',
       phone: '',
       role: 'SUPER_ADMIN',
       tenantId: '*',
@@ -2133,14 +2097,7 @@ async function startServer() {
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-    let passwordMatches = false;
-    if (user && password) {
-      const passBuf = Buffer.from(String(password));
-      const hashBuf = Buffer.from(String(user.passwordHash));
-      if (passBuf.length === hashBuf.length && crypto.timingSafeEqual(passBuf, hashBuf)) {
-        passwordMatches = true;
-      }
-    }
+    const passwordMatches = Boolean(user && verifyPassword(String(password || ''), user.passwordHash));
 
     if (!user || !passwordMatches) {
       memoryAuthAuditLogs.unshift({
@@ -2207,12 +2164,16 @@ async function startServer() {
       });
     }
 
+    if (String(password).length < 12) return res.status(400).json({ success: false, error: 'A senha deve conter pelo menos 12 caracteres.' });
+    const targetTenant = memoryTenants.find((t) => t.slug === String(tenantSlug));
+    if (!targetTenant || (tenantId && targetTenant.id !== String(tenantId))) return res.status(404).json({ success: false, error: 'Restaurante não encontrado para concluir o cadastro.' });
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     let user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-
+    if (user?.role === 'SUPER_ADMIN') return res.status(409).json({ success: false, error: 'Este e-mail não pode ser usado para cadastro de lojista.' });
     if (user && user.role !== 'SUPER_ADMIN') {
+      if (user.tenantSlug !== String(tenantSlug)) return res.status(409).json({ success: false, error: 'Este e-mail já está associado a outro restaurante.' });
       user.name = String(name || user.name).trim();
-      user.passwordHash = String(password);
+      user.passwordHash = hashPassword(String(password));
       user.phone = String(phone || user.phone).replace(/\D/g, '');
       user.tenantId = String(tenantId || user.tenantId);
       user.tenantSlug = String(tenantSlug);
@@ -2222,7 +2183,7 @@ async function startServer() {
         id: `usr_owner_${Date.now()}`,
         name: String(name || 'Proprietário').trim(),
         email: cleanEmail,
-        passwordHash: String(password),
+        passwordHash: hashPassword(String(password)),
         phone: String(phone || '').replace(/\D/g, ''),
         role: 'TENANT_OWNER',
         tenantId: String(tenantId || `tenant_${Date.now()}`),
@@ -2284,18 +2245,8 @@ async function startServer() {
       });
     }
 
-    const targetUser = memoryUsers.find((u) => u.id === claims.sub) || {
-      id: claims.sub,
-      name: claims.name || 'Usuário',
-      email: claims.email || 'user@aladay.com.br',
-      passwordHash: '',
-      phone: '',
-      role: claims.role || 'TENANT_OWNER',
-      tenantId: claims.tenant_id || '',
-      tenantSlug: claims.tenant_slug || '',
-      tenantName: claims.tenant_slug || 'Restaurante',
-      permissions: claims.permissions || ['tenant:full_access'],
-    };
+    const targetUser = memoryUsers.find((u) => u.id === claims.sub);
+    if (!targetUser) return res.status(401).json({ success: false, error: 'Conta não encontrada. Faça login novamente.' });
 
     const { token: freshToken, claims: freshClaims } = signJwtToken(targetUser);
 
@@ -2328,12 +2279,13 @@ async function startServer() {
     }
 
     const { email, phone } = req.body;
-    const cleanEmail = String(email || 'admin@aladay.com.br').trim().toLowerCase();
+    const cleanEmail = String(email || '').trim().toLowerCase();
     const cleanPhone = String(phone || '').replace(/\D/g, '');
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail) || memoryUsers[0];
-    const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+    if (!user || !cleanPhone || !user.phone || cleanPhone !== user.phone.replace(/\D/g, '')) return res.status(404).json({ success: false, error: 'Não foi possível validar a conta e o telefone informado.' });
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
 
     memoryOtpCodes.set(cleanEmail, {
       code: otpCode,
@@ -2350,13 +2302,14 @@ async function startServer() {
       `🌐 *Domínio:* https://aladay.com.br\n` +
       `_Válido por 10 minutos. Nunca compartilhe este código._`;
 
-    const evolutionApiUrl = 'https://agencia-evolution-api.2eoc7n.easypanel.host';
-    const evolutionApiKey = '21C3D49F3F00-48FA-BFA2-2CD290850405';
-    const instanceName = 'aladay';
+    const evolutionApiUrl = (process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
+    const evolutionApiKey = process.env.EVOLUTION_API_KEY || '';
+    const instanceName = process.env.EVOLUTION_DEFAULT_INSTANCE || 'aladay';
 
     let whatsappDelivered = false;
     try {
-      const evoResp = await fetch(`${evolutionApiUrl}/message/sendText/${instanceName}`, {
+      if (!evolutionApiUrl || !evolutionApiKey) throw new Error('Evolution API não configurada no servidor.');
+      const evoResp = await fetch(`${evolutionApiUrl}/message/sendText/${encodeURIComponent(instanceName)}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2406,10 +2359,7 @@ async function startServer() {
       targetPhone: cleanPhone,
       email: user.email,
       role: user.role,
-      demoOtpHint: otpCode,
-      message: whatsappDelivered
-        ? `Código OTP enviado com sucesso para o WhatsApp +${cleanPhone} via instância aladay!`
-        : `Código OTP gerado para ${user.email}.`,
+      message: whatsappDelivered ? 'Código de verificação enviado para o WhatsApp cadastrado.' : 'Não foi possível enviar o código. Tente novamente mais tarde.',
     });
   });
 
@@ -2421,9 +2371,8 @@ async function startServer() {
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     const stored = memoryOtpCodes.get(cleanEmail);
-    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail) || memoryUsers[0];
-
-    if (!stored || stored.code !== cleanCode) {
+    const user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+    if (!user || !stored || stored.expiresAt <= Date.now() || stored.code !== cleanCode) {
       memoryAuthAuditLogs.unshift({
         id: `audit_otp_fail_${Date.now()}`,
         timestamp: currentTime,
@@ -2434,7 +2383,7 @@ async function startServer() {
         method: 'whatsapp_otp',
         ip: 'Cloudflare Proxy',
         status: 'DENIED',
-        detail: `Código OTP inválido informado (${cleanCode}).`,
+        detail: 'Tentativa de validação com código OTP inválido ou expirado.',
       });
       return res.status(401).json({
         success: false,
@@ -2479,7 +2428,7 @@ async function startServer() {
   });
 
   // GET /api/v1/auth/audit-logs
-  app.get('/api/v1/auth/audit-logs', (_req: Request, res: Response) => {
+  app.get('/api/v1/auth/audit-logs', requireSuperAdmin, (_req: Request, res: Response) => {
     res.json({
       logs: memoryAuthAuditLogs,
       users: memoryUsers.map((u) => ({
@@ -2524,8 +2473,8 @@ async function startServer() {
 
   const getTenantEvolutionConfig = (instanceName: string) => {
     const tenant = memoryTenants.find((t) => t.evolutionInstanceId === instanceName || t.slug === instanceName) || memoryTenants[0];
-    const apiUrl = (tenant as any)?.evolutionApiUrl || process.env.EVOLUTION_API_URL || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
-    const apiKey = (tenant as any)?.evolutionApiKey || process.env.EVOLUTION_API_KEY || '21C3D49F3F00-48FA-BFA2-2CD290850405';
+    const apiUrl = (tenant as any)?.evolutionApiUrl || process.env.EVOLUTION_API_URL || '';
+    const apiKey = (tenant as any)?.evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
     return { tenant, apiUrl: apiUrl.replace(/\/$/, ''), apiKey };
   };
 
@@ -2579,7 +2528,7 @@ async function startServer() {
   };
 
   // GET /api/v1/evolution/instances
-  app.get('/api/v1/evolution/instances', (_req: Request, res: Response) => {
+  app.get('/api/v1/evolution/instances', requireSuperAdmin, (_req: Request, res: Response) => {
     res.json({
       success: true,
       instances: Object.values(memoryEvolutionInstances),
@@ -2587,7 +2536,7 @@ async function startServer() {
   });
 
   // GET /api/v1/evolution/instance/:instanceName/status
-  app.get('/api/v1/evolution/instance/:instanceName/status', async (req: Request, res: Response) => {
+  app.get('/api/v1/evolution/instance/:instanceName/status', requireSuperAdmin, async (req: Request, res: Response) => {
     const { instanceName } = req.params;
     const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
     let inst = memoryEvolutionInstances[instanceName];
@@ -2717,7 +2666,7 @@ async function startServer() {
   app.post('/api/v1/evolution/instance/:instanceName/connect', handleConnectInstance);
 
   // POST /api/v1/evolution/instance/:instanceName/disconnect (Logout)
-  app.post('/api/v1/evolution/instance/:instanceName/disconnect', async (req: Request, res: Response) => {
+  app.post('/api/v1/evolution/instance/:instanceName/disconnect', requireSuperAdmin, async (req: Request, res: Response) => {
     const { instanceName } = req.params;
     const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
 
@@ -2766,7 +2715,7 @@ async function startServer() {
 
   // POST /api/v1/evolution/instance/:instanceName/simulate-scan
   // Simulates that the user pointed their phone camera and scanned the QR Code
-  app.post('/api/v1/evolution/instance/:instanceName/simulate-scan', (req: Request, res: Response) => {
+  app.post('/api/v1/evolution/instance/:instanceName/simulate-scan', requireSuperAdmin, (req: Request, res: Response) => {
     const { instanceName } = req.params;
     const { phone, profileName } = req.body;
     const { tenant } = getTenantEvolutionConfig(instanceName);
@@ -2825,7 +2774,7 @@ async function startServer() {
   });
 
   // POST /api/v1/evolution/instance/create
-  app.post('/api/v1/evolution/instance/create', async (req: Request, res: Response) => {
+  app.post('/api/v1/evolution/instance/create', requireSuperAdmin, async (req: Request, res: Response) => {
     const { instanceName, number } = req.body;
     if (!instanceName) {
       return res.status(400).json({ error: 'Nome da instância é obrigatório.' });
@@ -2868,7 +2817,7 @@ async function startServer() {
   });
 
   // PUT /api/v1/tenants/:slug/evolution-config
-  app.put('/api/v1/tenants/:slug/evolution-config', (req: Request, res: Response) => {
+  app.put('/api/v1/tenants/:slug/evolution-config', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
 
@@ -3085,7 +3034,7 @@ async function startServer() {
   }
 
   // GET /api/v1/asaas/config
-  app.get('/api/v1/asaas/config', (req: Request, res: Response) => {
+  app.get('/api/v1/asaas/config', requireSuperAdmin, (req: Request, res: Response) => {
     res.json({
       success: true,
       config: {
@@ -3730,7 +3679,7 @@ async function startServer() {
   });
 
   // POST /api/v1/asaas/config (Atualizar Credenciais Asaas)
-  app.post('/api/v1/asaas/config', (req: Request, res: Response) => {
+  app.post('/api/v1/asaas/config', requireSuperAdmin, (req: Request, res: Response) => {
     const { environment, apiKey, webhookToken } = req.body;
     if (environment && (environment === 'sandbox' || environment === 'production')) {
       asaasGatewayConfig.environment = environment;
@@ -3846,7 +3795,7 @@ async function startServer() {
 
   // POST /api/v1/asaas/simulate-webhook (PROTECTED IN PRODUCTION)
   // Allows testing from the frontend UI without waiting for an external network event
-  app.post('/api/v1/asaas/simulate-webhook', async (req: Request, res: Response) => {
+  app.post('/api/v1/asaas/simulate-webhook', requireSuperAdmin, async (req: Request, res: Response) => {
     // In production, block simulation unless authenticated as SUPER_ADMIN
     if (process.env.NODE_ENV === 'production') {
       const authHeader = req.headers['authorization'];
