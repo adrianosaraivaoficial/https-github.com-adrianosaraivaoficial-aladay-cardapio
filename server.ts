@@ -2994,29 +2994,7 @@ async function startServer() {
     return { success: false, error: errorMsg };
   }
 
-  const defaultPixPayload = '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br5204000053039865406129.905802BR5915ALADAY SAAS6009SAO PAULO62070503***6304E2C9';
-
-  const memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {
-    aladay: {
-      id: 'sub_asaas_aladay_01',
-      tenantSlug: 'aladay',
-      customer: {
-        id: 'cus_aladay_01',
-        name: 'Meu Restaurante',
-        email: '',
-        cpfCnpj: '',
-        phone: '',
-      },
-      planName: 'Plano Pro Aladay - R$ 129,90/mês',
-      value: 129.9,
-      cycle: 'MONTHLY',
-      status: 'PENDING',
-      billingType: 'PIX',
-      nextDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      createdAt: new Date().toISOString().split('T')[0],
-      invoices: [],
-    },
-  };
+  const memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {};
 
   // Helper to ensure QR code base64 is generated for Pix
   async function ensurePixQrCode(invoice: InMemAsaasInvoice) {
@@ -3054,57 +3032,49 @@ async function startServer() {
     });
   });
 
-  // GET /api/v1/asaas/subscription/:slug
+  const toPublicSubscription = (subscription: InMemAsaasSubscription) => ({
+    id: subscription.id,
+    tenantSlug: subscription.tenantSlug,
+    planName: subscription.planName,
+    value: subscription.value,
+    cycle: subscription.cycle,
+    status: subscription.status,
+    billingType: subscription.billingType,
+    nextDueDate: subscription.nextDueDate,
+    createdAt: subscription.createdAt,
+    lastPaymentDate: subscription.lastPaymentDate,
+    isTrial: subscription.isTrial,
+    trialStartedAt: subscription.trialStartedAt,
+    trialEndsAt: subscription.trialEndsAt,
+    trialDaysTotal: subscription.trialDaysTotal,
+    invoices: (subscription.invoices || []).map((invoice) => ({
+      id: invoice.id,
+      referenceMonth: invoice.referenceMonth,
+      value: invoice.value,
+      status: invoice.status,
+      dueDate: invoice.dueDate,
+      billingType: invoice.billingType,
+      invoiceUrl: invoice.invoiceUrl,
+      bankSlipUrl: invoice.bankSlipUrl,
+      pixCopiaECola: invoice.pixCopiaECola,
+      pixQrCodeBase64: invoice.pixQrCodeBase64,
+      description: invoice.description,
+    })),
+  });
+
+  // GET /api/v1/asaas/subscription/:slug — public billing summary; no customer PII.
   app.get('/api/v1/asaas/subscription/:slug', async (req: Request, res: Response) => {
     const { slug } = req.params;
-    let subscription = memoryAsaasSubscriptions[slug];
-
-    if (!subscription) {
-      const tenant = memoryTenants.find((t) => t.slug === slug);
-      subscription = {
-        id: `sub_asaas_${slug.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
-        tenantSlug: slug,
-        customer: {
-          id: `cus_${Date.now()}`,
-          name: tenant ? tenant.name : 'Restaurante Parceiro',
-          email: 'contato@restaurante.com.br',
-          cpfCnpj: '00.000.000/0001-00',
-          phone: tenant ? tenant.phone : '5511999999999',
-        },
-        planName: 'Plano Pro Aladay - R$ 129,90/mês',
-        value: 129.9,
-        cycle: 'MONTHLY',
-        status: 'PENDING',
-        billingType: 'PIX',
-        nextDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        createdAt: new Date().toISOString().split('T')[0],
-        invoices: [
-          {
-            id: `pay_asaas_${Date.now()}`,
-            subscriptionId: `sub_asaas_${slug}_01`,
-            referenceMonth: 'Mês Atual',
-            value: 129.9,
-            status: 'PENDING',
-            dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-            billingType: 'PIX',
-            invoiceUrl: `https://www.asaas.com/i/pay_${Date.now()}`,
-            description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90 / mês',
-            pixCopiaECola: defaultPixPayload,
-          },
-        ],
-      };
-      memoryAsaasSubscriptions[slug] = subscription;
-    }
-
-    // Ensure pending invoice has QR Code
-    const pending = subscription.invoices.find((i) => i.status === 'PENDING');
-    if (pending) {
-      await ensurePixQrCode(pending);
+    if (!memoryTenants.some((tenant) => tenant.slug === slug)) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    const subscription = memoryAsaasSubscriptions[slug] || null;
+    if (subscription) {
+      const pending = subscription.invoices.find((i) => i.status === 'PENDING');
+      if (pending) await ensurePixQrCode(pending);
     }
 
     res.json({
       success: true,
-      subscription,
+      subscription: subscription ? toPublicSubscription(subscription) : null,
       gateway: {
         environment: asaasGatewayConfig.environment,
         apiUrl: asaasGatewayConfig.environment === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/v3',
