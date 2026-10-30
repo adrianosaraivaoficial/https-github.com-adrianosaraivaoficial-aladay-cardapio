@@ -2034,9 +2034,28 @@ async function startServer() {
   });
 
   // GET & POST Categories for Tenant
-  app.get('/api/v1/tenants/:slug/categories', (req: Request, res: Response) => {
-    const cats = memoryCategories.filter((c) => c.tenantSlug === req.params.slug);
-    res.json({ data: cats });
+  app.get('/api/v1/tenants/:slug/categories', async (req: Request, res: Response) => {
+    const tenant = memoryTenants.find((item) => item.slug === req.params.slug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    if (pgPool) {
+      try {
+        const result = await pgPool.query('SELECT id, tenant_id, tenant_slug, name, display_order FROM categories WHERE tenant_slug = $1 ORDER BY display_order ASC;', [tenant.slug]);
+        const cats = result.rows.map((row: any) => ({
+          id: String(row.id), tenantId: String(row.tenant_id), tenantSlug: String(row.tenant_slug),
+          name: String(row.name), order: Number(row.display_order) || 1,
+        }));
+        for (let index = memoryCategories.length - 1; index >= 0; index--) {
+          if ((memoryCategories[index] as any).tenantSlug === tenant.slug) memoryCategories.splice(index, 1);
+        }
+        memoryCategories.push(...cats as any);
+        return res.json({ data: cats });
+      } catch (error: any) {
+        console.error('[Categories Read] PostgreSQL query failed:', error?.message);
+        return res.status(503).json({ error: 'Não foi possível carregar as categorias persistidas.' });
+      }
+    }
+    if (process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'PostgreSQL obrigatório para consultar categorias em produção.' });
+    return res.json({ data: memoryCategories.filter((category: any) => category.tenantSlug === tenant.slug) });
   });
 
   app.post('/api/v1/tenants/:slug/categories', requireTenantAccess('slug'), (req: Request, res: Response) => {
