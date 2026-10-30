@@ -847,22 +847,29 @@ async function startServer() {
       if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 99) return res.status(400).json({ error: 'Quantidade de item inválida.' });
 
       const requestedOptions = Array.isArray(item.selectedOptions) ? item.selectedOptions : [];
+      if (requestedOptions.length > 30) return res.status(400).json({ error: 'Quantidade de opções selecionadas excede o limite.' });
       const productGroups = Array.isArray(catalogProduct.optionGroups) ? catalogProduct.optionGroups : [];
       const validatedOptions: any[] = [];
       for (const group of productGroups) {
         const selected = requestedOptions.filter((option: any) => String(option.groupId) === String(group.id));
         const minSelections = Number(group.minSelections ?? (group.required ? 1 : 0));
         const maxSelections = Number(group.maxSelections ?? group.items?.length ?? 0);
-        if (selected.length < minSelections || selected.length > maxSelections) return res.status(400).json({ error: `Seleção inválida para o grupo "${group.name}".` });
+        if (!Number.isSafeInteger(minSelections) || !Number.isSafeInteger(maxSelections) || minSelections < 0 || maxSelections < minSelections || selected.length < minSelections || selected.length > maxSelections) {
+          return res.status(400).json({ error: `Seleção inválida para o grupo "${group.name}".` });
+        }
+        const selectedIds = selected.map((option: any) => String(option.itemId));
+        if (new Set(selectedIds).size !== selectedIds.length) return res.status(400).json({ error: 'Não é permitido selecionar a mesma opção mais de uma vez.' });
         for (const selectedOption of selected) {
           const canonicalOption = (group.items || []).find((option: any) => String(option.id) === String(selectedOption.itemId));
           if (!canonicalOption) return res.status(400).json({ error: 'Opção de produto inválida.' });
+          const optionPriceCents = Number(canonicalOption.priceCents);
+          if (!Number.isSafeInteger(optionPriceCents) || optionPriceCents < 0) return res.status(409).json({ error: 'Preço de adicional inválido no catálogo.' });
           validatedOptions.push({
             groupId: group.id,
-            groupName: group.name,
+            groupName: String(group.name || '').slice(0, 100),
             itemId: canonicalOption.id,
-            itemName: canonicalOption.name,
-            priceCents: Number(canonicalOption.priceCents) || 0,
+            itemName: String(canonicalOption.name || '').slice(0, 100),
+            priceCents: optionPriceCents,
           });
         }
       }
