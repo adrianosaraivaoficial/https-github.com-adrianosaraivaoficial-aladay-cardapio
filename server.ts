@@ -472,7 +472,7 @@ async function startServer() {
     return safeTenant;
   };
   app.get('/api/v1/tenants', (_req: Request, res: Response) => {
-    res.json({ data: memoryTenants.map(toPublicTenant) });
+    res.json({ data: memoryTenants.map((tenant) => ({ slug: tenant.slug, name: tenant.name, primaryColor: tenant.primaryColor, isOpen: tenant.isOpen })) });
   });
 
   // Create new tenant (Onboarding Step 1 & 2)
@@ -1457,13 +1457,14 @@ async function startServer() {
   });
 
   // Get specific order details
-  app.get('/api/v1/orders/:id', (req: Request, res: Response) => {
+  app.get('/api/v1/orders/:id', authenticateToken, (req: Request, res: Response) => {
     const order = memoryOrders.find((o) => o.id === req.params.id);
-    if (!order) {
-      return res.status(404).json({ error: 'Pedido não encontrado.' });
-    }
-    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
-    res.json({ data: order, tenant });
+    if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
+    const user = (req as any).user;
+    if (user.role !== 'SUPER_ADMIN' && user.tenant_slug !== order.tenantSlug) return res.status(403).json({ error: 'Acesso negado a este pedido.' });
+    const tenant = memoryTenants.find((t) => t.slug === order.tenantSlug);
+    if (!tenant) return res.status(404).json({ error: 'Restaurante do pedido não encontrado.' });
+    res.json({ data: order, tenant: toPublicTenant(tenant) });
   });
 
   // Public Order Tracking Endpoint (Real-time customer view)
@@ -1589,7 +1590,7 @@ async function startServer() {
   ];
 
   // GET notification templates for a tenant
-  app.get('/api/v1/tenants/:slug/notification-templates', (req: Request, res: Response) => {
+  app.get('/api/v1/tenants/:slug/notification-templates', requireTenantAccess('slug'), (req: Request, res: Response) => {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
@@ -1819,7 +1820,7 @@ async function startServer() {
   });
 
   // Webhook Logs Query Endpoint
-  app.get('/api/v1/webhooks/logs', authenticateToken, (req: Request, res: Response) => {
+  app.get('/api/v1/webhooks/logs', requireSuperAdmin, (req: Request, res: Response) => {
     const { instance, limit } = req.query;
     let logs = [...memoryWebhookLogs];
     if (instance) {
@@ -1868,7 +1869,7 @@ async function startServer() {
   });
 
   // Bot Simulation & n8n Inbound Process Endpoint
-  app.post('/api/v1/bot/simulate-message', (req: Request, res: Response) => {
+  app.post('/api/v1/bot/simulate-message', requireSuperAdmin, (req: Request, res: Response) => {
     const { tenantSlug, customerPhone, messageText } = req.body;
     const tenant = memoryTenants.find((t) => t.slug === tenantSlug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
@@ -1937,7 +1938,7 @@ async function startServer() {
   });
 
   // Direct Test Dispatch Endpoint (for simulating live curl from UI)
-  app.post('/api/v1/webhooks/test-dispatch', (req: Request, res: Response) => {
+  app.post('/api/v1/webhooks/test-dispatch', requireSuperAdmin, (req: Request, res: Response) => {
     const { instance, senderPhone, messageText, tenantSlug } = req.body;
     const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.evolutionInstanceId === instance) || memoryTenants[0];
 
@@ -2670,8 +2671,8 @@ async function startServer() {
     });
   };
 
-  app.get('/api/v1/evolution/instance/:instanceName/connect', handleConnectInstance);
-  app.post('/api/v1/evolution/instance/:instanceName/connect', handleConnectInstance);
+  app.get('/api/v1/evolution/instance/:instanceName/connect', requireSuperAdmin, handleConnectInstance);
+  app.post('/api/v1/evolution/instance/:instanceName/connect', requireSuperAdmin, handleConnectInstance);
 
   // POST /api/v1/evolution/instance/:instanceName/disconnect (Logout)
   app.post('/api/v1/evolution/instance/:instanceName/disconnect', requireSuperAdmin, async (req: Request, res: Response) => {
