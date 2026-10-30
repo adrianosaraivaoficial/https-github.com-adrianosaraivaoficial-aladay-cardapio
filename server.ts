@@ -1060,16 +1060,16 @@ async function startServer() {
       source: 'pix_gateway',
       eventType: 'PIX_RECEIVED',
       instance: tenant.evolutionInstanceId || 'aladay',
-      senderPhone: order?.customerPhone || payer?.phone || '559181214188',
+      senderPhone: order.customerPhone,
       messageText: `💰 Pix Direto Loja confirmado. txid: ${charge?.txid || txid}. Pedido #${order?.orderNumber || ''} liberado!`,
       direction: 'inbound',
       status: 'success',
-      payloadSummary: `Pix de R$ ${((order?.totalCents || amountCents || 8580) / 100).toFixed(2)} liquidado direto na conta do restaurante`,
+      payloadSummary: `Pix de R$ ${(Number(order.totalCents) / 100).toFixed(2)} liquidado direto na conta do restaurante`,
       fullPayload: {
         event: 'pix.received',
         txid: charge?.txid || txid,
         endToEndId: actualEndToEndId,
-        amountCents: order?.totalCents || amountCents,
+        amountCents: order.totalCents,
         orderId: order?.id,
         orderNumber: order?.orderNumber,
         paidAt: actualPaidTime,
@@ -1123,7 +1123,7 @@ async function startServer() {
         source: 'pix_gateway',
         eventType: `ASAAS_SAAS_${event}`,
         instance: tenant.evolutionInstanceId || 'aladay',
-        senderPhone: tenant.phone || '559181214188',
+        senderPhone: tenant.phone || '',
         messageText: `✅ Assinatura Mensal Aladay (R$ ${Number(amountReais).toFixed(2).replace('.', ',')}) confirmada pelo Asaas (${paymentId}) para o lojista ${tenant.name}.`,
         direction: 'inbound',
         status: 'success',
@@ -1891,7 +1891,7 @@ async function startServer() {
       source: 'evolution',
       eventType: 'MESSAGES_UPSERT',
       instance: tenant.evolutionInstanceId,
-      senderPhone: customerPhone || '5511999998888',
+      senderPhone: customerPhone || '',
       messageText,
       direction: 'inbound',
       status: 'success',
@@ -1919,7 +1919,7 @@ async function startServer() {
 
     res.json({
       success: true,
-      sender: customerPhone || '5511999998888',
+      sender: customerPhone || '',
       receivedText: messageText,
       replyMessage,
       actionType,
@@ -1935,6 +1935,8 @@ async function startServer() {
     const { instance, senderPhone, messageText, tenantSlug } = req.body;
     const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.evolutionInstanceId === instance);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado para simulação.' });
+    const cleanSenderPhone = String(senderPhone || '').replace(/\D/g, '');
+    if (cleanSenderPhone.length < 10 || cleanSenderPhone.length > 15) return res.status(400).json({ error: 'Informe um telefone de teste válido.' });
 
     const cleanText = String(messageText || 'Oi, quero o cardapio').trim().toLowerCase();
     const isHuman = cleanText === '2' || cleanText.includes('atendente') || cleanText.includes('humano');
@@ -1953,7 +1955,7 @@ async function startServer() {
       source: 'n8n',
       eventType: 'WEBHOOK_MANUAL_TEST',
       instance: tenant.evolutionInstanceId,
-      senderPhone: senderPhone || '5511988887777',
+      senderPhone: cleanSenderPhone,
       messageText: cleanText,
       direction: 'inbound',
       status: 'success',
@@ -1967,7 +1969,7 @@ async function startServer() {
           event: 'messages.upsert',
           instance: tenant.evolutionInstanceId,
           data: {
-            key: { remoteJid: `${senderPhone || '5511988887777'}@s.whatsapp.net`, fromMe: false },
+            key: { remoteJid: `${cleanSenderPhone}@s.whatsapp.net`, fromMe: false },
             message: { conversation: messageText || 'Oi, quero o cardapio' },
           },
         },
