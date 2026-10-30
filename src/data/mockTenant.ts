@@ -19,10 +19,6 @@ export const INITIAL_TENANT: RestaurantTenant = {
   deliveryZones: [],
   evolutionInstanceId: 'aladay',
   evolutionStatus: 'disconnected',
-  evolutionApiKeyConfigured: true,
-  evolutionApiUrl: 'https://agencia-evolution-api.2eoc7n.easypanel.host',
-  evolutionApiKey: '21C3D49F3F00-48FA-BFA2-2CD290850405',
-  n8nWebhookUrl: 'https://agencia-n8n.2eoc7n.easypanel.host/webhook/saas',
   botAutoReplyEnabled: true,
   botWelcomeMessage:
     'Olá! Seja bem-vindo! Nosso cardápio digital completo está disponível pelo link abaixo:\n\n👉 https://aladay.com.br\n\nPara falar com um atendente, responda com *2*.',
@@ -37,7 +33,7 @@ export const INITIAL_TENANT: RestaurantTenant = {
     merchantName: 'MEU RESTAURANTE',
     merchantCity: 'SAO PAULO',
     bankName: '',
-    autoApproveWebhook: true,
+    autoApproveWebhook: false,
   },
 };
 
