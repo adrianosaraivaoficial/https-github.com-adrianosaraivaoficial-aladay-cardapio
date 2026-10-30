@@ -710,59 +710,84 @@ async function startServer() {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
     }
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'O carrinho está vazio.' });
+    if (!items || !Array.isArray(items) || items.length === 0 || items.length > 50) {
+      return res.status(400).json({ error: 'O carrinho deve conter de 1 a 50 itens.' });
     }
+    const cleanCustomerName = String(customerName || '').trim();
+    const cleanCustomerPhone = String(customerPhone || '').replace(/\\D/g, '');
+    if (cleanCustomerName.length < 2 || cleanCustomerName.length > 80) return res.status(400).json({ error: 'Informe o nome do cliente.' });
+    if (cleanCustomerPhone.length < 10 || cleanCustomerPhone.length > 15) return res.status(400).json({ error: 'Informe um telefone válido com DDD.' });
+    if (!['delivery', 'pickup'].includes(type)) return res.status(400).json({ error: 'Tipo de pedido inválido.' });
+    if (type === 'delivery' && String(deliveryAddress || '').trim().length < 8) return res.status(400).json({ error: 'Informe o endereço completo para entrega.' });
+    if (idempotencyKey && (typeof idempotencyKey !== 'string' || idempotencyKey.length > 120)) return res.status(400).json({ error: 'Chave de idempotência inválida.' });
 
     // Check idempotency
     if (idempotencyKey) {
-      const existing = memoryOrders.find((o) => o.idempotencyKey === idempotencyKey);
-      if (existing) {
-        return res.json({ message: 'Pedido já processado anteriormente.', data: existing });
-      }
+      const existing = memoryOrders.find((o) => o.idempotencyKey === idempotencyKey && o.tenantSlug === tenant.slug);
+      if (existing) return res.json({ message: 'Pedido já processado anteriormente.', data: existing });
     }
 
-    // Server-Side Price Verification (Prevents Client-Side Price Tampering)
+    // All prices and options must come from this tenant's server-side catalog.
     let subtotalCents = 0;
-    const validatedItems = items.map((item: any) => {
-      const catalogProduct = memoryProducts.find((p) => p.id === item.productId);
-      const unitPriceCents = catalogProduct
-        ? catalogProduct.priceCents
-        : Math.max(0, parseInt(item.unitPriceCents, 10) || 0);
-      const quantity = Math.max(1, Math.min(99, parseInt(item.quantity, 10) || 1));
+    const validatedItems = [];
+    for (const item of items) {
+      const productId = String(item?.productId || '');
+      const catalogProduct = memoryProducts.find((p) => p.id === productId && p.tenantSlug === tenant.slug);
+      if (!catalogProduct || catalogProduct.isAvailable === false) return res.status(409).json({ error: 'Um ou mais produtos não estão disponíveis no cardápio deste restaurante.' });
 
-      let optionsTotalCents = 0;
-      if (Array.isArray(item.selectedOptions)) {
-        optionsTotalCents = item.selectedOptions.reduce(
-          (acc: number, opt: any) => acc + Math.max(0, parseInt(opt.priceCents, 10) || 0),
-          0
-        );
+      const quantity = Number(item.quantity);
+      if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 99) return res.status(400).json({ error: 'Quantidade de item inválida.' });
+
+      const requestedOptions = Array.isArray(item.selectedOptions) ? item.selectedOptions : [];
+      const productGroups = Array.isArray(catalogProduct.optionGroups) ? catalogProduct.optionGroups : [];
+      const validatedOptions: any[] = [];
+      for (const group of productGroups) {
+        const selected = requestedOptions.filter((option: any) => String(option.groupId) === String(group.id));
+        const minSelections = Number(group.minSelections ?? (group.required ? 1 : 0));
+        const maxSelections = Number(group.maxSelections ?? group.items?.length ?? 0);
+        if (selected.length < minSelections || selected.length > maxSelections) return res.status(400).json({ error: `Seleção inválida para o grupo "${group.name}".` });
+        for (const selectedOption of selected) {
+          const canonicalOption = (group.items || []).find((option: any) => String(option.id) === String(selectedOption.itemId));
+          if (!canonicalOption) return res.status(400).json({ error: 'Opção de produto inválida.' });
+          validatedOptions.push({
+            groupId: group.id,
+            groupName: group.name,
+            itemId: canonicalOption.id,
+            itemName: canonicalOption.name,
+            priceCents: Number(canonicalOption.priceCents) || 0,
+          });
+        }
       }
+      if (validatedOptions.length !== requestedOptions.length) return res.status(400).json({ error: 'O carrinho contém opções não cadastradas para este produto.' });
 
+      const unitPriceCents = Number(catalogProduct.priceCents);
+      if (!Number.isSafeInteger(unitPriceCents) || unitPriceCents < 0) return res.status(409).json({ error: 'Preço inválido no catálogo do restaurante.' });
+      const optionsTotalCents = validatedOptions.reduce((sum, option) => sum + option.priceCents, 0);
       const calculatedItemTotal = (unitPriceCents + optionsTotalCents) * quantity;
       subtotalCents += calculatedItemTotal;
-
-      return {
-        ...item,
-        productId: String(item.productId || ''),
-        productName: String(item.productName || 'Item').slice(0, 100),
+      validatedItems.push({
+        productId: catalogProduct.id,
+        productName: String(catalogProduct.name).slice(0, 100),
         unitPriceCents,
         quantity,
+        selectedOptions: validatedOptions,
+        notes: String(item.notes || '').slice(0, 300),
         totalCents: calculatedItemTotal,
-      };
-    });
+      });
+    }
 
-    const deliveryFeeCents = type === 'delivery' ? Math.max(0, tenant.deliveryFeeCents || 0) : 0;
+    if (subtotalCents < Number(tenant.minOrderCents || 0)) return res.status(400).json({ error: 'O pedido não atingiu o valor mínimo do restaurante.' });
+    const deliveryFeeCents = type === 'delivery' ? Math.max(0, Number(tenant.deliveryFeeCents) || 0) : 0;
     const totalCents = subtotalCents + deliveryFeeCents;
 
     const orderNumber = 1040 + memoryOrders.length + 1;
     const newOrder = {
-      id: `ord_${orderNumber}`,
+      id: `ord_${crypto.randomBytes(16).toString('hex')}`,
       orderNumber,
       tenantId: tenant.id,
       tenantSlug: tenant.slug,
-      customerName: String(customerName || 'Cliente').trim().slice(0, 80),
-      customerPhone: String(customerPhone || '').replace(/\D/g, '').slice(0, 15),
+      customerName: cleanCustomerName,
+      customerPhone: cleanCustomerPhone,
       type: type === 'pickup' ? 'pickup' : 'delivery',
       deliveryAddress: deliveryAddress ? String(deliveryAddress).trim().slice(0, 200) : undefined,
       items: validatedItems,
