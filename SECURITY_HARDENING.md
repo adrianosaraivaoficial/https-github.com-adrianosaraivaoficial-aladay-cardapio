@@ -47,6 +47,8 @@ Configure these only in the deployment environment (EasyPanel), never in Git:
 - The one-time onboarding binding token and one-time owner-registration token are held in process memory and are lost on restart. Signup must be restarted if the server restarts between payment/trial activation and restaurant creation. The onboarding process still needs durable token storage and end-to-end ownership tests.
 - Tenant isolation has not been exhaustively audited across every API route and every SQL query. PostgreSQL row-level security, tenant-scoped foreign keys and comprehensive RBAC tests are still outstanding.
 - Webhook authentication uses shared secrets; provider-native signatures and replay/idempotency validation must be implemented and tested where supported.
+- The browser currently stores the JWT in localStorage. Move authentication to Secure, HttpOnly, SameSite cookies (with CSRF protection) and add a CSP/XSS review before production.
+- The legacy n8n workflow template can pass the Evolution API key through workflow execution data. Do not import/use that template in production until it is rewritten to use n8n credentials and redacts secrets from execution logs.
 - No production deploy or database migration was performed by this PR.
 
 This is an initial hardening pass, not an OWASP/LGPD certification or a guarantee of full security. Keep the PR in draft and do not deploy until the blockers above are addressed and the test suite passes.
