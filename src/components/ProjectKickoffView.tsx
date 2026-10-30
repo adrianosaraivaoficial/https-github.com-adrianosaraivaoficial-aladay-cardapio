@@ -396,7 +396,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
         evolutionInstanceId: `instancia_${slug}`,
         evolutionStatus: 'disconnected',
         evolutionApiKeyConfigured: false,
-        subscriptionStatus: isTrialActivation ? 'trial' : (boundSubscription?.status === 'ACTIVE' ? 'active' : 'pending'),
+        subscriptionStatus: boundSubscription?.status === 'TRIAL' ? 'trial' : 'active',
         trialEndsAt: boundSubscription?.trialEndsAt,
         asaasSubscription: boundSubscription || undefined,
         pixConfig: {
