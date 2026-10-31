@@ -17,6 +17,7 @@ import {
   X
 } from 'lucide-react';
 import { Order, RestaurantTenant, PixTransaction } from '../types';
+import QRCode from 'qrcode';
 
 interface PixPaymentModalProps {
   order: Order;
@@ -42,6 +43,7 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
   const [paymentStatus, setPaymentStatus] = useState<'pending' | 'approved' | 'expired'>('pending');
   const [timeLeftSeconds, setTimeLeftSeconds] = useState(15 * 60); // 15 minutes
   const [approvedOrder, setApprovedOrder] = useState<Order>(order);
+  const [localQrDataUrl, setLocalQrDataUrl] = useState<string>('');
 
   const pollIntervalRef = useRef<any>(null);
 
@@ -138,6 +140,23 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
     return () => clearInterval(timer);
   }, [isOpen, paymentStatus]);
 
+  const pixPayload =
+    transaction?.pixCopiaECola ||
+    `00020101021226580014BR.GOV.BCB.PIX0114+551198765432152040000530398654${(order.totalCents / 100).toFixed(2)}5802BR5925${tenant.name.slice(0, 25)}6015SAO PAULO62190515${order.id || 'PEDIDO1042'}6304`;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+    QRCode.toDataURL(pixPayload, { width: 260, margin: 2 })
+      .then((url) => {
+        if (active) setLocalQrDataUrl(url);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [isOpen, pixPayload]);
+
   if (!isOpen) return null;
 
   const formatMinutes = (sec: number) => {
@@ -148,13 +167,7 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
 
   const formattedAmount = `R$ ${(order.totalCents / 100).toFixed(2).replace('.', ',')}`;
 
-  const pixPayload =
-    transaction?.pixCopiaECola ||
-    `00020101021226580014BR.GOV.BCB.PIX0114+551198765432152040000530398654${(order.totalCents / 100).toFixed(2)}5802BR5925${tenant.name.slice(0, 25)}6015SAO PAULO62190515${order.id || 'PEDIDO1042'}6304`;
-
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=10&data=${encodeURIComponent(
-    pixPayload
-  )}`;
+  const qrCodeUrl = localQrDataUrl;
 
   const handleCopyCode = async () => {
     try {

@@ -286,8 +286,48 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
     window.open(`https://wa.me/5511999999999?text=${msg}`, '_blank');
   };
 
+  const aladaySchemaJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'Aladay',
+    alternateName: 'Aladay Cardápios Digitais',
+    description:
+      'Software de cardápios digitais para restaurantes, hamburguerias, pizzarias e delivery com pedidos automatizados no WhatsApp via Evolution API, QR Code para mesas e pagamento Pix direto na conta do restaurante sem comissão.',
+    url: 'https://aladay.com.br',
+    applicationCategory: 'BusinessApplication',
+    applicationSubCategory: 'Software de Cardápios Digitais para Restaurantes',
+    operatingSystem: 'Web, Android, iOS',
+    inLanguage: 'pt-BR',
+    featureList: [
+      'Cardápio digital interativo para delivery, retirada e QR Code de mesa',
+      'Automação de pedidos e status no WhatsApp via Evolution API',
+      'Pagamento Pix dinâmico com repasse 100% direto via Asaas',
+      'Importação rápida de produtos e categorias via planilha CSV/Excel',
+      'Zero taxa de comissão sobre vendas',
+    ],
+    offers: {
+      '@type': 'Offer',
+      name: 'Plano Único Aladay Pro (com 15 dias de teste grátis)',
+      price: '129.90',
+      priceCurrency: 'BRL',
+      priceValidUntil: '2027-12-31',
+      availability: 'https://schema.org/InStock',
+      url: 'https://aladay.com.br',
+      category: 'Assinatura Mensal SaaS',
+    },
+    provider: {
+      '@type': 'Organization',
+      name: 'Aladay',
+      url: 'https://aladay.com.br',
+    },
+  };
+
   return (
     <div className="space-y-16 pb-20">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(aladaySchemaJsonLd) }}
+      />
       {/* ================================================================== */}
       {/* 1. MENSAGEM PRINCIPAL & HERO HEADER                                */}
       {/* O que a Aladay faz e exatamente para quem é                         */}

@@ -56,6 +56,7 @@ import {
   parsePriceBRLToCents,
   parseOptionGroupsFromCell,
   escapeCsvCell,
+  readUploadedSpreadsheetFile,
 } from './MenuSpreadsheetModal';
 
 interface RestaurantAdminViewProps {
@@ -248,6 +249,67 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
   };
 
+  const sortedCategories = useMemo(() => {
+    return [...categories].sort((a, b) => a.order - b.order);
+  }, [categories]);
+
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState<string>('');
+
+  const handleMoveCategoryOrder = (catId: string, direction: 'up' | 'down') => {
+    const idx = sortedCategories.findIndex((c) => c.id === catId);
+    if (idx < 0) return;
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= sortedCategories.length) return;
+
+    const reordered = [...sortedCategories];
+    const temp = reordered[idx];
+    reordered[idx] = reordered[swapIdx];
+    reordered[swapIdx] = temp;
+
+    const normalized = reordered.map((c, i) => ({ ...c, order: i + 1 }));
+    if (onImportCatalog) {
+      onImportCatalog(normalized, products, 'replace');
+    }
+    triggerSyncNotice(
+      `Categoria "${temp.name}" movida para a ${swapIdx + 1}ª posição do cardápio!`
+    );
+  };
+
+  const handleSaveCategoryRename = (catId: string) => {
+    const trimmed = editingCategoryName.trim();
+    if (!trimmed) {
+      setEditingCategoryId(null);
+      return;
+    }
+    const updated = sortedCategories.map((c, i) =>
+      c.id === catId ? { ...c, name: trimmed, order: i + 1 } : { ...c, order: i + 1 }
+    );
+    if (onImportCatalog) {
+      onImportCatalog(updated, products, 'replace');
+    }
+    setEditingCategoryId(null);
+    triggerSyncNotice(`Categoria renomeada para "${trimmed}" com sucesso!`);
+  };
+
+  const handleDeleteCategoryItem = (cat: Category) => {
+    const remainingCats = sortedCategories
+      .filter((c) => c.id !== cat.id)
+      .map((c, i) => ({ ...c, order: i + 1 }));
+    const fallbackCatId = remainingCats[0]?.id;
+    const updatedProducts = fallbackCatId
+      ? products.map((p) => (p.categoryId === cat.id ? { ...p, categoryId: fallbackCatId } : p))
+      : products.filter((p) => p.categoryId !== cat.id);
+
+    if (onImportCatalog) {
+      onImportCatalog(remainingCats, updatedProducts, 'replace');
+    }
+    if (selectedCategoryFilter === cat.id) {
+      setSelectedCategoryFilter('all');
+    }
+    triggerSyncNotice(`Categoria "${cat.name}" removida e cardápio reorganizado!`);
+  };
+
   const filteredProducts = useMemo(() => {
     return products.filter((prod) => {
       const matchesSearch =
@@ -259,10 +321,14 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     });
   }, [products, productSearchQuery, selectedCategoryFilter]);
 
-  const handleOpenAddProduct = () => {
+  const handleOpenAddProduct = (preselectCatId?: string) => {
     setEditingProductId(null);
     setProdName('');
-    setProdCategory(categories[0]?.id || '');
+    setProdCategory(
+      typeof preselectCatId === 'string' && preselectCatId
+        ? preselectCatId
+        : sortedCategories[0]?.id || categories[0]?.id || ''
+    );
     setProdDescription('');
     setProdPriceReal('34.90');
     setProdImageUrl('');
@@ -416,15 +482,54 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     let idxOptions = 8;
 
     if (hasHeader) {
-      const findCol = (keywords: string[], fallback: number) => {
-        const found = firstRowLower.findIndex((h) => keywords.some((kw) => h.includes(kw)));
-        return found >= 0 ? found : fallback;
+      const usedIndices = new Set<number>();
+      const findCol = (
+        exactNames: string[],
+        partialKeywords: string[],
+        excludeKeywords: string[],
+        fallback: number
+      ) => {
+        const exactIdx = firstRowLower.findIndex(
+          (h, idx) => !usedIndices.has(idx) && exactNames.includes(h)
+        );
+        if (exactIdx >= 0) {
+          usedIndices.add(exactIdx);
+          return exactIdx;
+        }
+        const partialIdx = firstRowLower.findIndex(
+          (h, idx) =>
+            !usedIndices.has(idx) &&
+            !excludeKeywords.some((ex) => h.includes(ex)) &&
+            partialKeywords.some((kw) => h.includes(kw))
+        );
+        if (partialIdx >= 0) {
+          usedIndices.add(partialIdx);
+          return partialIdx;
+        }
+        return fallback;
       };
+
       const hasProductCol = firstRowLower.some(
-        (h) => h.includes('nome_produto') || h === 'produto' || h === 'prato' || h === 'item'
+        (h) =>
+          h === 'nome_produto' ||
+          h === 'produto' ||
+          h === 'prato' ||
+          h === 'item' ||
+          (h.includes('produto') && !h.includes('total'))
       );
-      idxOrder = findCol(['ordem', 'order', 'posicao'], 0);
-      idxCategory = findCol(['categoria', 'category', 'secao'], firstRowLower.length === 1 ? 0 : 1);
+
+      idxOrder = findCol(
+        ['ordem_categoria', 'ordem', 'order', 'posicao'],
+        ['ordem', 'order', 'posicao'],
+        [],
+        0
+      );
+      idxCategory = findCol(
+        ['categoria', 'nome_categoria', 'category', 'secao'],
+        ['categoria', 'category', 'secao'],
+        ['ordem', 'order', 'posicao', 'id_'],
+        firstRowLower.length === 1 ? 0 : 1
+      );
 
       if (!hasProductCol && firstRowLower.length <= 3) {
         idxProductName = -1;
@@ -435,18 +540,54 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
         idxImage = -1;
         idxOptions = -1;
       } else {
-        idxProductName = findCol(['nome_produto', 'produto', 'prato', 'nome', 'item'], 2);
-        idxDescription = findCol(['descricao', 'description', 'ingredientes', 'detalhe'], 3);
-        idxPrice = findCol(['preco', 'valor', 'price'], 4);
-        idxAvailable = findCol(['disponivel', 'ativo', 'status', 'available'], 5);
-        idxFeatured = findCol(['destaque', 'featured', 'promocao'], 6);
-        idxImage = findCol(['imagem', 'foto', 'image', 'url'], 7);
-        idxOptions = findCol(['adicionais', 'opcoes', 'complementos', 'options'], 8);
+        idxProductName = findCol(
+          ['nome_produto', 'produto', 'prato', 'nome', 'item'],
+          ['nome_produto', 'produto', 'prato', 'item', 'nome'],
+          ['categoria', 'category', 'ordem', 'order'],
+          2
+        );
+        idxDescription = findCol(
+          ['descricao', 'description', 'ingredientes', 'detalhe'],
+          ['descricao', 'description', 'ingredientes', 'detalhe'],
+          [],
+          3
+        );
+        idxPrice = findCol(
+          ['preco_brl', 'preco', 'valor', 'price'],
+          ['preco', 'valor', 'price'],
+          [],
+          4
+        );
+        idxAvailable = findCol(
+          ['disponivel', 'ativo', 'status', 'available'],
+          ['disponivel', 'ativo', 'status', 'available'],
+          [],
+          5
+        );
+        idxFeatured = findCol(
+          ['destaque', 'featured', 'promocao'],
+          ['destaque', 'featured', 'promocao'],
+          [],
+          6
+        );
+        idxImage = findCol(
+          ['imagem_url', 'imagem', 'foto', 'image', 'url'],
+          ['imagem', 'foto', 'image', 'url'],
+          [],
+          7
+        );
+        idxOptions = findCol(
+          ['adicionais', 'opcoes', 'complementos', 'options'],
+          ['adicionais', 'opcoes', 'complementos', 'options'],
+          [],
+          8
+        );
       }
     }
 
     const dataRows = hasHeader ? rawRows.slice(1) : rawRows;
     const previews: ParsedRowPreview[] = [];
+    const categoryOrderTracker = new Map<string, number>();
 
     dataRows.forEach((cols, idx) => {
       const rowNumber = hasHeader ? idx + 2 : idx + 1;
@@ -462,7 +603,21 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       const imageUrl = getCol(idxImage);
       const optionsRaw = getCol(idxOptions);
 
-      const categoryOrder = !isNaN(Number(orderRaw)) && Number(orderRaw) > 0 ? parseInt(orderRaw, 10) : idx + 1;
+      const normCatKey = normalizeImportStr(categoryName);
+      const explicitOrder =
+        !isNaN(Number(orderRaw)) && Number(orderRaw) > 0 ? parseInt(orderRaw, 10) : null;
+
+      let categoryOrder = 1;
+      if (normCatKey) {
+        if (categoryOrderTracker.has(normCatKey)) {
+          categoryOrder = explicitOrder ?? categoryOrderTracker.get(normCatKey)!;
+        } else {
+          categoryOrder = explicitOrder ?? categoryOrderTracker.size + 1;
+          categoryOrderTracker.set(normCatKey, categoryOrder);
+        }
+      } else {
+        categoryOrder = explicitOrder ?? idx + 1;
+      }
 
       if (!categoryName && !productName) return;
 
@@ -556,29 +711,87 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     setImportPreviewRows(previews);
   };
 
-  const handleImportFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [importUploadError, setImportUploadError] = useState<string | null>(null);
+
+  const handleImportFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = String(event.target?.result || '');
+    setImportUploadError(null);
+    try {
+      const content = await readUploadedSpreadsheetFile(file);
       handleProcessImportSpreadsheet(content, file.name);
-    };
-    reader.readAsText(file, 'UTF-8');
-    e.target.value = '';
+    } catch (err) {
+      setImportUploadError(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível ler o arquivo no celular. Selecione uma planilha (.CSV, .XLSX, .XLS ou .TXT).'
+      );
+    } finally {
+      e.target.value = '';
+    }
   };
 
-  const handleImportFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleImportFileDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDraggingImportFile(false);
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = String(event.target?.result || '');
+    setImportUploadError(null);
+    try {
+      const content = await readUploadedSpreadsheetFile(file);
       handleProcessImportSpreadsheet(content, file.name);
+    } catch (err) {
+      setImportUploadError(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível ler o arquivo selecionado.'
+      );
+    }
+  };
+
+  const handleProductImageFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = String(ev.target?.result || '');
+      if (!dataUrl) return;
+
+      // Compress/resize image via canvas so mobile camera photos (4MB+) fit cleanly in state/localStorage
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 800;
+        let width = img.width;
+        let height = img.height;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.82);
+          setProdImageUrl(compressedDataUrl);
+        } else {
+          setProdImageUrl(dataUrl);
+        }
+      };
+      img.onerror = () => {
+        setProdImageUrl(dataUrl);
+      };
+      img.src = dataUrl;
     };
-    reader.readAsText(file, 'UTF-8');
+    reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const handleLoadSampleImportTable = () => {
@@ -635,38 +848,103 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     handleProcessImportSpreadsheet(sampleCsv, 'cardapio-exemplo-importacao.csv');
   };
 
+  const organizedImportPreviewCategories = useMemo(() => {
+    const validRows = importPreviewRows.filter(
+      (r) => r.status === 'valid' || r.status === 'category_only'
+    );
+    const map = new Map<string, { name: string; order: number; count: number }>();
+    validRows.forEach((r) => {
+      const norm = normalizeImportStr(r.categoryName);
+      if (!map.has(norm)) {
+        map.set(norm, {
+          name: r.categoryName.trim(),
+          order: r.categoryOrder,
+          count: r.status === 'valid' ? 1 : 0,
+        });
+      } else {
+        const entry = map.get(norm)!;
+        if (r.status === 'valid') entry.count += 1;
+      }
+    });
+    return Array.from(map.values())
+      .sort((a, b) => a.order - b.order)
+      .map((item, idx) => ({ ...item, order: idx + 1 }));
+  }, [importPreviewRows]);
+
   const handleConfirmMenuImportModal = () => {
     const validRows = importPreviewRows.filter((r) => r.status === 'valid' || r.status === 'category_only');
     const validProductRows = importPreviewRows.filter((r) => r.status === 'valid');
     if (validRows.length === 0) return;
 
-    const baseCategories: Category[] = importMenuMode === 'replace' ? [] : [...categories];
-    const baseProducts: Product[] = importMenuMode === 'replace' ? [] : [...products];
+    const cleanedExistingCategories =
+      importMenuMode === 'replace'
+        ? []
+        : categories.filter((c) => {
+            const isNumericCorrupted = /^\d+$/.test(c.name.trim());
+            if (isNumericCorrupted) return false;
+            const hasProds = products.some((p) => p.categoryId === c.id);
+            const isImportedToo = validRows.some(
+              (r) => normalizeImportStr(r.categoryName) === normalizeImportStr(c.name)
+            );
+            return hasProds || isImportedToo;
+          });
+
+    const validExistingCatIds = new Set(cleanedExistingCategories.map((c) => c.id));
+    const baseCategories: Category[] = [...cleanedExistingCategories];
+    const baseProducts: Product[] =
+      importMenuMode === 'replace'
+        ? []
+        : products.filter((p) => validExistingCatIds.has(p.categoryId));
 
     const categoryMapByNormName = new Map<string, Category>();
     baseCategories.forEach((cat) => {
-      categoryMapByNormName.set(normalizeImportStr(cat.name), cat);
+      categoryMapByNormName.set(normalizeImportStr(cat.name), { ...cat });
     });
 
+    const importedOrderMap = new Map<string, number>();
     validRows.forEach((row) => {
+      const normCat = normalizeImportStr(row.categoryName);
+      if (!importedOrderMap.has(normCat)) {
+        importedOrderMap.set(normCat, row.categoryOrder || importedOrderMap.size + 1);
+      }
+    });
+
+    validRows.forEach((row, idx) => {
       const normCat = normalizeImportStr(row.categoryName);
       if (!categoryMapByNormName.has(normCat)) {
         const newCat: Category = {
-          id: `cat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          id: `cat_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
           name: row.categoryName.trim(),
-          order: row.categoryOrder || categoryMapByNormName.size + 1,
+          order: importedOrderMap.get(normCat) || categoryMapByNormName.size + 1,
         };
         categoryMapByNormName.set(normCat, newCat);
-        baseCategories.push(newCat);
       } else {
         const existingCat = categoryMapByNormName.get(normCat)!;
-        if (row.categoryOrder && importMenuMode === 'replace') {
-          existingCat.order = row.categoryOrder;
+        existingCat.name = row.categoryName.trim();
+        if (importedOrderMap.has(normCat)) {
+          existingCat.order = importedOrderMap.get(normCat)!;
         }
       }
     });
 
-    const finalCategories = [...baseCategories].sort((a, b) => a.order - b.order);
+    const allCats = Array.from(categoryMapByNormName.values());
+    allCats.sort((a, b) => {
+      const aInSheet = importedOrderMap.has(normalizeImportStr(a.name));
+      const bInSheet = importedOrderMap.has(normalizeImportStr(b.name));
+      if (aInSheet && !bInSheet) return -1;
+      if (!aInSheet && bInSheet) return 1;
+      return a.order - b.order;
+    });
+
+    const finalCategories: Category[] = allCats.map((cat, index) => ({
+      ...cat,
+      order: index + 1,
+    }));
+
+    finalCategories.forEach((cat) => {
+      categoryMapByNormName.set(normalizeImportStr(cat.name), cat);
+    });
+
     const finalProducts = [...baseProducts];
 
     validProductRows.forEach((row, idx) => {
@@ -675,12 +953,13 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       const normProd = normalizeImportStr(row.productName);
 
       const existingProdIndex = finalProducts.findIndex(
-        (p) => p.categoryId === targetCat.id && normalizeImportStr(p.name) === normProd
+        (p) => normalizeImportStr(p.name) === normProd
       );
 
       if (existingProdIndex >= 0) {
         finalProducts[existingProdIndex] = {
           ...finalProducts[existingProdIndex],
+          categoryId: targetCat.id,
           name: row.productName.trim(),
           description: row.description.trim(),
           priceCents: row.priceCents,
@@ -707,6 +986,11 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       }
     });
 
+    const catOrderById = new Map(finalCategories.map((c) => [c.id, c.order]));
+    finalProducts.sort(
+      (a, b) => (catOrderById.get(a.categoryId) ?? 999) - (catOrderById.get(b.categoryId) ?? 999)
+    );
+
     if (onImportCatalog) {
       onImportCatalog(finalCategories, finalProducts, importMenuMode);
     } else {
@@ -726,8 +1010,8 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
     triggerSyncNotice(
       importMenuMode === 'replace'
-        ? `Cardápio substituído com sucesso: ${finalCategories.length} categorias e ${finalProducts.length} produtos ativos em ${tenant.name}!`
-        : `Cardápio mesclado com sucesso: ${finalCategories.length} categorias e ${finalProducts.length} produtos sincronizados em ${tenant.name}!`
+        ? `Cardápio substituído e organizado: ${finalCategories.length} categorias (${finalCategories.map((c) => c.name).join(', ')}) e ${finalProducts.length} produtos ativos!`
+        : `Cardápio importado e organizado: ${finalCategories.length} categorias (${finalCategories.map((c) => c.name).join(', ')}) e ${finalProducts.length} produtos sincronizados!`
     );
 
     setIsImportMenuModalOpen(false);
@@ -1022,16 +1306,16 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       )}
 
       {/* Tabs navigation */}
-      <div className="bg-white border-b border-neutral-200 px-6 flex gap-6 text-xs font-medium overflow-x-auto">
+      <div className="bg-white border-b border-neutral-200 px-4 sm:px-6 flex gap-4 sm:gap-6 text-xs font-medium overflow-x-auto">
         <button
           onClick={() => setActiveTab('menu')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
+          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'menu'
               ? 'border-neutral-900 text-neutral-900 font-semibold'
               : 'border-transparent text-neutral-500 hover:text-neutral-800'
           }`}
         >
-          <Utensils className="w-4 h-4" />
+          <Utensils className="w-4 h-4 shrink-0" />
           <span>Cardápio &amp; Produtos</span>
           <span className="bg-neutral-100 text-neutral-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono">
             {products.length}
@@ -1040,7 +1324,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
         <button
           onClick={() => setActiveTab('categories')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
+          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'categories'
               ? 'border-neutral-900 text-neutral-900 font-semibold'
               : 'border-transparent text-neutral-500 hover:text-neutral-800'
@@ -1051,13 +1335,13 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
         <button
           onClick={() => setActiveTab('kds')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
+          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'kds'
               ? 'border-neutral-900 text-neutral-900 font-semibold'
               : 'border-transparent text-neutral-500 hover:text-neutral-800'
           }`}
         >
-          <LayoutGrid className="w-4 h-4" />
+          <LayoutGrid className="w-4 h-4 shrink-0" />
           <span>Gestão de Pedidos (KDS)</span>
           {ordersByStatus.received.length > 0 && (
             <span className="bg-orange-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-mono">
@@ -1068,49 +1352,49 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
         <button
           onClick={() => setActiveTab('settings')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
+          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'settings'
               ? 'border-neutral-900 text-neutral-900 font-semibold'
               : 'border-transparent text-neutral-500 hover:text-neutral-800'
           }`}
         >
-          <Settings className="w-4 h-4" />
+          <Settings className="w-4 h-4 shrink-0" />
           <span>Configurações &amp; Identidade</span>
         </button>
 
         <button
           onClick={() => setActiveTab('billing')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
+          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'billing'
               ? 'border-neutral-900 text-neutral-900 font-semibold'
               : 'border-transparent text-neutral-500 hover:text-neutral-800'
           }`}
         >
-          <CreditCard className="w-4 h-4" />
+          <CreditCard className="w-4 h-4 shrink-0" />
           <span>Assinatura (R$ 129,90/mês)</span>
         </button>
 
         <button
           onClick={() => setActiveTab('whatsapp')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
+          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'whatsapp'
               ? 'border-neutral-900 text-neutral-900 font-semibold'
               : 'border-transparent text-neutral-500 hover:text-neutral-800'
           }`}
         >
-          <MessageSquare className="w-4 h-4" />
+          <MessageSquare className="w-4 h-4 shrink-0" />
           <span>WhatsApp (Evolution API)</span>
         </button>
 
         <button
           onClick={() => setActiveTab('crm')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
+          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'crm'
               ? 'border-neutral-900 text-neutral-900 font-semibold'
               : 'border-transparent text-neutral-500 hover:text-neutral-800'
           }`}
         >
-          <Users className="w-4 h-4" />
+          <Users className="w-4 h-4 shrink-0" />
           <span>CRM &amp; Clientes</span>
           <span className="bg-neutral-100 text-neutral-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono">
             {customers.length}
@@ -1119,13 +1403,13 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
         <button
           onClick={() => setActiveTab('reports')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
+          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'reports'
               ? 'border-neutral-900 text-neutral-900 font-semibold'
               : 'border-transparent text-neutral-500 hover:text-neutral-800'
           }`}
         >
-          <BarChart3 className="w-4 h-4" />
+          <BarChart3 className="w-4 h-4 shrink-0" />
           <span>Dashboard &amp; Vendas</span>
           <span className="bg-emerald-100 text-emerald-800 text-[9px] px-1.5 py-0.2 rounded font-semibold uppercase tracking-wider">
             Auditado
@@ -1242,9 +1526,9 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                       className="bg-neutral-50 border border-neutral-200 text-neutral-800 text-xs rounded-lg px-2.5 py-1.5 font-medium"
                     >
                       <option value="all">Todas as Categorias ({products.length})</option>
-                      {categories.map((c) => (
+                      {sortedCategories.map((c, idx) => (
                         <option key={c.id} value={c.id}>
-                          {c.name} ({products.filter((p) => p.categoryId === c.id).length})
+                          {idx + 1}º - {c.name} ({products.filter((p) => p.categoryId === c.id).length})
                         </option>
                       ))}
                     </select>
@@ -1282,7 +1566,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                     </button>
 
                     <button
-                      onClick={handleOpenAddProduct}
+                      onClick={() => handleOpenAddProduct()}
                       className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors shadow-xs"
                     >
                       <Plus className="w-4 h-4" />
@@ -1291,129 +1575,282 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                   </div>
                 </div>
 
-                {/* Products Table */}
-                <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden shadow-2xs">
-                  <div className="p-3.5 border-b border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div>
-                      <h4 className="text-xs font-bold text-neutral-900">
-                        Cardápio Oficial de {tenant.name}
-                      </h4>
-                      <p className="text-[11px] text-neutral-500">
-                        Clique em &quot;Disponível / Pausado&quot; para esgotar itens rapidamente na hora do rush.
-                      </p>
-                    </div>
+                {/* Category Filter Quick Pills */}
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategoryFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors border ${
+                      selectedCategoryFilter === 'all'
+                        ? 'bg-neutral-900 text-white border-neutral-900'
+                        : 'bg-white text-neutral-600 border-neutral-200 hover:border-neutral-300'
+                    }`}
+                  >
+                    Todas as Categorias ({sortedCategories.length})
+                  </button>
+                  {sortedCategories.map((cat, idx) => {
+                    const count = products.filter((p) => p.categoryId === cat.id).length;
+                    const isSelected = selectedCategoryFilter === cat.id;
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setSelectedCategoryFilter(cat.id)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors border ${
+                          isSelected
+                            ? 'bg-neutral-900 text-white border-neutral-900'
+                            : 'bg-white text-neutral-700 border-neutral-200 hover:border-neutral-300'
+                        }`}
+                      >
+                        <span
+                          className={`text-[10px] font-mono px-1.5 py-0.2 rounded font-bold ${
+                            isSelected ? 'bg-white/20 text-white' : 'bg-neutral-100 text-neutral-600'
+                          }`}
+                        >
+                          {idx + 1}º
+                        </span>
+                        <span>{cat.name}</span>
+                        <span
+                          className={`text-[10px] font-mono ${
+                            isSelected ? 'text-neutral-300' : 'text-neutral-400'
+                          }`}
+                        >
+                          ({count})
+                        </span>
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => setIsCategoryModalOpen(true)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Nova Categoria</span>
+                  </button>
+                </div>
 
-                    <div className="text-[11px] text-neutral-500 font-mono">
-                      Exibindo {filteredProducts.length} de {products.length} itens
-                    </div>
-                  </div>
+                {/* Organized Products Grouped by Category */}
+                <div className="space-y-4">
+                  {(selectedCategoryFilter === 'all'
+                    ? sortedCategories
+                    : sortedCategories.filter((c) => c.id === selectedCategoryFilter)
+                  ).map((cat) => {
+                    const catIndex = sortedCategories.findIndex((c) => c.id === cat.id);
+                    const catProducts = filteredProducts.filter((p) => p.categoryId === cat.id);
 
-                  {filteredProducts.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-neutral-500">
-                      Nenhum produto encontrado com os filtros atuais.
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead className="bg-neutral-50 border-b border-neutral-200 text-neutral-700 font-semibold">
-                          <tr>
-                            <th className="p-3 text-left">Foto / Nome do Produto</th>
-                            <th className="p-3 text-left">Categoria</th>
-                            <th className="p-3 text-right">Preço</th>
-                            <th className="p-3 text-center">Status no Menu</th>
-                            <th className="p-3 text-right">Ações</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-neutral-200">
-                          {filteredProducts.map((prod) => {
-                            const categoryObj = categories.find((c) => c.id === prod.categoryId);
-                            return (
-                              <tr key={prod.id} className="hover:bg-neutral-50/60 transition-colors">
-                                <td className="p-3 flex items-center gap-3">
-                                  {prod.imageUrl ? (
-                                    <img
-                                      src={prod.imageUrl}
-                                      alt={prod.name}
-                                      className="w-11 h-11 rounded-lg object-cover bg-neutral-100 shrink-0"
-                                    />
-                                  ) : (
-                                    <div className="w-11 h-11 rounded-lg bg-neutral-100 flex items-center justify-center text-[10px] text-neutral-400 shrink-0">
-                                      Sem foto
-                                    </div>
-                                  )}
-                                  <div>
-                                    <p className="font-bold text-neutral-900">{prod.name}</p>
-                                    <p className="text-[11px] text-neutral-500 truncate max-w-xs">
-                                      {prod.description}
-                                    </p>
-                                    {prod.optionGroups && prod.optionGroups.length > 0 && (
-                                      <p className="text-[10px] text-neutral-400 mt-0.5">
-                                        {prod.optionGroups.length} grupo(s) de adicionais
-                                      </p>
-                                    )}
-                                  </div>
-                                </td>
-                                <td className="p-3 text-neutral-600 font-medium">
-                                  {categoryObj ? categoryObj.name : 'Geral'}
-                                </td>
-                                <td className="p-3 text-right font-mono font-bold text-neutral-900 tabular-nums">
-                                  {formatBRL(prod.priceCents)}
-                                </td>
-                                <td className="p-3 text-center">
-                                  <button
-                                    onClick={() => handleToggleProductWithNotice(prod.id)}
-                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${
-                                      prod.isAvailable
-                                        ? 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-                                        : 'bg-rose-50 text-rose-800 hover:bg-rose-100'
-                                    }`}
-                                    title="Clique para alternar disponibilidade imediata no cardápio do cliente"
-                                  >
-                                    <span
-                                      className={`w-1.5 h-1.5 rounded-full ${
-                                        prod.isAvailable ? 'bg-emerald-500' : 'bg-rose-500'
-                                      }`}
-                                    />
-                                    {prod.isAvailable ? 'Disponível' : 'Pausado (Esgotado)'}
-                                  </button>
-                                </td>
-                                <td className="p-3 text-right">
-                                  <div className="flex items-center justify-end gap-1">
-                                    <button
-                                      onClick={() => handleOpenEditProduct(prod)}
-                                      className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded transition-colors"
-                                      title="Editar Produto"
-                                    >
-                                      <Edit2 className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDuplicateProduct(prod)}
-                                      className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded transition-colors"
-                                      title="Duplicar Produto para criar variação rápida"
-                                    >
-                                      <Copy className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        if (confirm(`Tem certeza que deseja excluir "${prod.name}" do cardápio?`)) {
-                                          onDeleteProduct(prod.id);
-                                          triggerSyncNotice(`Prato "${prod.name}" removido do cardápio.`);
-                                        }
-                                      }}
-                                      className="p-1.5 text-rose-600 hover:text-rose-900 hover:bg-rose-50 rounded transition-colors"
-                                      title="Excluir Produto"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                    if (productSearchQuery.trim() !== '' && catProducts.length === 0) {
+                      return null;
+                    }
+
+                    return (
+                      <div
+                        key={cat.id}
+                        className="bg-white border border-neutral-200 rounded-xl overflow-hidden shadow-2xs"
+                      >
+                        {/* Category Section Header */}
+                        <div className="px-4 py-3 bg-neutral-900 text-white flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <span className="w-6 h-6 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-mono text-xs font-bold flex items-center justify-center">
+                              {catIndex + 1}º
+                            </span>
+                            {editingCategoryId === cat.id ? (
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="text"
+                                  value={editingCategoryName}
+                                  onChange={(e) => setEditingCategoryName(e.target.value)}
+                                  className="px-2 py-1 text-xs rounded bg-white text-neutral-900 font-bold outline-none"
+                                  autoFocus
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveCategoryRename(cat.id)}
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-bold"
+                                >
+                                  Salvar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingCategoryId(null)}
+                                  className="px-2 py-1 bg-neutral-700 hover:bg-neutral-600 text-neutral-200 rounded text-[11px]"
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            ) : (
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <h4 className="text-xs sm:text-sm font-bold text-white">
+                                    {cat.name}
+                                  </h4>
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-neutral-800 text-neutral-300 border border-neutral-700">
+                                    {catProducts.length} {catProducts.length === 1 ? 'item' : 'itens'}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={catIndex === 0}
+                              onClick={() => handleMoveCategoryOrder(cat.id, 'up')}
+                              className="p-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                              title="Subir posição desta categoria"
+                            >
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={catIndex === sortedCategories.length - 1}
+                              onClick={() => handleMoveCategoryOrder(cat.id, 'down')}
+                              className="p-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                              title="Descer posição desta categoria"
+                            >
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingCategoryId(cat.id);
+                                setEditingCategoryName(cat.name);
+                              }}
+                              className="p-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors"
+                              title="Renomear categoria"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddProduct(cat.id)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition-colors ml-1"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>Adicionar Item</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {catProducts.length === 0 ? (
+                          <div className="p-5 text-center text-xs text-neutral-500 flex flex-col sm:flex-row items-center justify-between gap-2 bg-neutral-50/50">
+                            <span>Nenhum prato cadastrado na categoria <strong>{cat.name}</strong>.</span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenAddProduct(cat.id)}
+                                className="px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-[11px] font-semibold"
+                              >
+                                + Cadastrar 1º Prato em {cat.name}
+                              </button>
+                              {sortedCategories.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteCategoryItem(cat)}
+                                  className="px-2.5 py-1.5 text-rose-600 hover:bg-rose-50 rounded-lg text-[11px] font-semibold"
+                                >
+                                  Remover Categoria Vazia
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                              <thead className="bg-neutral-50 border-b border-neutral-200 text-neutral-600 font-semibold">
+                                <tr>
+                                  <th className="p-3 text-left">Foto / Nome do Produto</th>
+                                  <th className="p-3 text-right">Preço</th>
+                                  <th className="p-3 text-center">Status no Menu</th>
+                                  <th className="p-3 text-right">Ações</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-neutral-200">
+                                {catProducts.map((prod) => (
+                                  <tr key={prod.id} className="hover:bg-neutral-50/60 transition-colors">
+                                    <td className="p-3 flex items-center gap-3">
+                                      {prod.imageUrl ? (
+                                        <img
+                                          src={prod.imageUrl}
+                                          alt={prod.name}
+                                          className="w-11 h-11 rounded-lg object-cover bg-neutral-100 shrink-0"
+                                        />
+                                      ) : (
+                                        <div className="w-11 h-11 rounded-lg bg-neutral-100 flex items-center justify-center text-[10px] text-neutral-400 shrink-0">
+                                          Sem foto
+                                        </div>
+                                      )}
+                                      <div>
+                                        <p className="font-bold text-neutral-900">{prod.name}</p>
+                                        <p className="text-[11px] text-neutral-500 truncate max-w-xs">
+                                          {prod.description}
+                                        </p>
+                                        {prod.optionGroups && prod.optionGroups.length > 0 && (
+                                          <p className="text-[10px] text-emerald-700 font-medium mt-0.5">
+                                            {prod.optionGroups.length} grupo(s) de adicionais
+                                          </p>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="p-3 text-right font-mono font-bold text-neutral-900 tabular-nums">
+                                      {formatBRL(prod.priceCents)}
+                                    </td>
+                                    <td className="p-3 text-center">
+                                      <button
+                                        onClick={() => handleToggleProductWithNotice(prod.id)}
+                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${
+                                          prod.isAvailable
+                                            ? 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                                            : 'bg-rose-50 text-rose-800 hover:bg-rose-100'
+                                        }`}
+                                        title="Clique para alternar disponibilidade imediata no cardápio do cliente"
+                                      >
+                                        <span
+                                          className={`w-1.5 h-1.5 rounded-full ${
+                                            prod.isAvailable ? 'bg-emerald-500' : 'bg-rose-500'
+                                          }`}
+                                        />
+                                        {prod.isAvailable ? 'Disponível' : 'Pausado (Esgotado)'}
+                                      </button>
+                                    </td>
+                                    <td className="p-3 text-right">
+                                      <div className="flex items-center justify-end gap-1">
+                                        <button
+                                          onClick={() => handleOpenEditProduct(prod)}
+                                          className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded transition-colors"
+                                          title="Editar Produto"
+                                        >
+                                          <Edit2 className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          onClick={() => handleDuplicateProduct(prod)}
+                                          className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded transition-colors"
+                                          title="Duplicar Produto para criar variação rápida"
+                                        >
+                                          <Copy className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            onDeleteProduct(prod.id);
+                                            triggerSyncNotice(`Prato "${prod.name}" removido do cardápio.`);
+                                          }}
+                                          className="p-1.5 text-rose-600 hover:text-rose-900 hover:bg-rose-50 rounded transition-colors"
+                                          title="Excluir Produto"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1637,21 +2074,110 @@ ETag: "catalog_version_1729482930"`}
                 </div>
               </div>
 
-              <div className="space-y-2">
-                {categories.map((cat, idx) => (
-                  <div
-                    key={cat.id}
-                    className="p-3 border border-neutral-200 rounded-lg flex items-center justify-between text-xs hover:border-neutral-300 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono text-neutral-400 font-bold">{idx + 1}</span>
-                      <span className="font-semibold text-neutral-900">{cat.name}</span>
+              <div className="space-y-2.5">
+                {sortedCategories.map((cat, idx) => {
+                  const catProducts = products.filter((p) => p.categoryId === cat.id);
+                  return (
+                    <div
+                      key={cat.id}
+                      className="p-3.5 border border-neutral-200 rounded-xl flex flex-col gap-2 text-xs hover:border-neutral-300 transition-colors bg-neutral-50/40"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-6 h-6 rounded-lg bg-neutral-900 text-white font-mono text-[11px] font-bold flex items-center justify-center shrink-0">
+                            {idx + 1}º
+                          </span>
+                          {editingCategoryId === cat.id ? (
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="text"
+                                value={editingCategoryName}
+                                onChange={(e) => setEditingCategoryName(e.target.value)}
+                                className="px-2 py-1 text-xs border border-neutral-300 rounded bg-white text-neutral-900 font-bold"
+                                autoFocus
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleSaveCategoryRename(cat.id)}
+                                className="px-2 py-1 bg-emerald-600 text-white rounded text-[11px] font-bold"
+                              >
+                                Salvar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingCategoryId(null)}
+                                className="px-2 py-1 bg-neutral-200 text-neutral-700 rounded text-[11px]"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="font-bold text-neutral-900 truncate">{cat.name}</span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-mono font-semibold mr-1">
+                            {catProducts.length} {catProducts.length === 1 ? 'item' : 'itens'}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => handleMoveCategoryOrder(cat.id, 'up')}
+                            className="p-1 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/70 rounded disabled:opacity-30"
+                            title="Subir posição"
+                          >
+                            <ChevronUp className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === sortedCategories.length - 1}
+                            onClick={() => handleMoveCategoryOrder(cat.id, 'down')}
+                            className="p-1 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/70 rounded disabled:opacity-30"
+                            title="Descer posição"
+                          >
+                            <ChevronDown className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingCategoryId(cat.id);
+                              setEditingCategoryName(cat.name);
+                            }}
+                            className="p-1 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/70 rounded"
+                            title="Renomear categoria"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          {sortedCategories.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCategoryItem(cat)}
+                              className="p-1 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded"
+                              title="Remover categoria"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {catProducts.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 pt-1 border-t border-neutral-200/70">
+                          {catProducts.map((p) => (
+                            <span
+                              key={p.id}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-neutral-200 text-[10px] text-neutral-700"
+                            >
+                              <span className="font-medium">{p.name}</span>
+                              <span className="font-mono text-neutral-400">{formatBRL(p.priceCents)}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <span className="text-[11px] text-neutral-500 font-mono">
-                      {products.filter((p) => p.categoryId === cat.id).length} itens
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -1671,7 +2197,7 @@ ETag: "catalog_version_1729482930"`}
               </div>
 
               <button
-                onClick={handleOpenAddProduct}
+                onClick={() => handleOpenAddProduct()}
                 className="w-full py-2.5 px-3 text-xs font-semibold text-neutral-800 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors flex items-center justify-center gap-2"
               >
                 <span>Criar Prato com Grupos de Adicionais</span>
@@ -2695,11 +3221,48 @@ ETag: "catalog_version_1729482930"`}
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 mb-1">URL da Imagem do Prato</label>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-medium text-neutral-700">
+                    Foto do Prato (Upload do Celular ou Link URL)
+                  </label>
+                  <label className="relative inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg transition-colors cursor-pointer overflow-hidden shadow-2xs">
+                    <Upload className="w-3.5 h-3.5 shrink-0" />
+                    <span>Enviar Foto do Celular</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleProductImageFileUpload}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                  </label>
+                </div>
+
+                {prodImageUrl && (
+                  <div className="flex items-center gap-3 p-2 bg-neutral-50 border border-neutral-200 rounded-lg">
+                    <img
+                      src={prodImageUrl}
+                      alt="Prévia do prato"
+                      className="w-12 h-12 rounded-lg object-cover bg-neutral-200 shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[11px] font-semibold text-emerald-800">
+                        Imagem carregada e pronta para o cardápio
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setProdImageUrl('')}
+                        className="text-[11px] text-rose-600 hover:underline font-medium"
+                      >
+                        Remover foto
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <input
                   type="text"
-                  placeholder="https://... ou caminho de imagem"
+                  placeholder="Ou cole o link https://... da imagem"
                   value={prodImageUrl}
                   onChange={(e) => setProdImageUrl(e.target.value)}
                   className="w-full p-2.5 text-xs border border-neutral-200 rounded-lg text-neutral-900 font-mono text-[11px]"
@@ -3033,6 +3596,13 @@ ETag: "catalog_version_1729482930"`}
                   </button>
                 </div>
 
+                {importUploadError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{importUploadError}</span>
+                  </div>
+                )}
+
                 <div
                   onDragOver={(e) => {
                     e.preventDefault();
@@ -3046,24 +3616,16 @@ ETag: "catalog_version_1729482930"`}
                       : 'border-neutral-300 bg-neutral-50 hover:border-neutral-400'
                   }`}
                 >
-                  <input
-                    ref={importFileInputRef}
-                    type="file"
-                    accept=".csv,.tsv,.txt"
-                    onChange={handleImportFileUpload}
-                    className="hidden"
-                  />
-
                   <div className="flex items-center gap-3.5 text-center sm:text-left">
                     <div className="w-11 h-11 rounded-xl bg-white border border-neutral-200 flex items-center justify-center text-neutral-700 shadow-2xs shrink-0">
                       <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
                     </div>
                     <div>
                       <p className="text-xs font-bold text-neutral-900">
-                        Selecione a planilha do seu computador ou arraste o arquivo aqui
+                        Toque em &ldquo;Upload de Arquivo&rdquo; para selecionar do seu celular ou computador
                       </p>
                       <p className="text-[11px] text-neutral-500 mt-0.5">
-                        Formatos aceitos: <strong>.CSV</strong>, <strong>.TSV</strong> ou <strong>.TXT</strong> (separados por ponto e vírgula <code className="bg-neutral-200 px-1 rounded">;</code> ou vírgula <code className="bg-neutral-200 px-1 rounded">,</code>)
+                        Formatos aceitos no celular e PC: <strong>.CSV</strong>, <strong>.XLSX</strong>, <strong>.XLS</strong>, <strong>.TSV</strong> ou <strong>.TXT</strong>
                       </p>
                       {importFileName && (
                         <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-900">
@@ -3074,20 +3636,22 @@ ETag: "catalog_version_1729482930"`}
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => importFileInputRef.current?.click()}
-                      className="flex items-center gap-2 px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold rounded-lg transition-colors shadow-xs"
-                    >
-                      <Upload className="w-4 h-4" />
+                  <div className="flex flex-wrap items-center justify-center gap-2 shrink-0">
+                    <label className="relative inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold rounded-lg transition-colors shadow-xs cursor-pointer overflow-hidden">
+                      <Upload className="w-4 h-4 shrink-0" />
                       <span>Upload de Arquivo</span>
-                    </button>
+                      <input
+                        ref={importFileInputRef}
+                        type="file"
+                        onChange={handleImportFileUpload}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      />
+                    </label>
 
                     <button
                       type="button"
                       onClick={handleLoadSampleImportTable}
-                      className="px-3 py-2.5 bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 text-xs font-semibold rounded-lg transition-colors"
+                      className="px-3 py-2.5 bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
                     >
                       Carregar Exemplo
                     </button>
@@ -3149,6 +3713,29 @@ ETag: "catalog_version_1729482930"`}
                   </div>
                 ) : (
                   <div className="border border-neutral-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+                    {organizedImportPreviewCategories.length > 0 && (
+                      <div className="px-4 py-3 bg-emerald-50/40 border-b border-neutral-200 space-y-2">
+                        <p className="text-[11px] font-bold text-neutral-800">
+                          Ordem de Cadastro das Categorias Identificadas na Planilha:
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {organizedImportPreviewCategories.map((cat) => (
+                            <div
+                              key={cat.name}
+                              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-emerald-200 shadow-2xs text-xs"
+                            >
+                              <span className="w-5 h-5 rounded-full bg-neutral-900 text-white font-mono text-[10px] font-bold flex items-center justify-center">
+                                {cat.order}º
+                              </span>
+                              <span className="font-bold text-neutral-900">{cat.name}</span>
+                              <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-semibold">
+                                {cat.count} {cat.count === 1 ? 'item' : 'itens'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <div className="max-h-72 overflow-y-auto">
                       <table className="w-full text-xs">
                         <thead className="bg-neutral-100 border-b border-neutral-200 text-neutral-700 sticky top-0 z-10">

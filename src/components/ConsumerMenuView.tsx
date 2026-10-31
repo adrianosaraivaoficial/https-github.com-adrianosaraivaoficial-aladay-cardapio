@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from 'react';
-import { ShoppingBag, Clock, MapPin, Plus, Minus, Check, ArrowRight, MessageSquare, AlertCircle, Sparkles, Printer, ExternalLink, Zap, QrCode } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { ShoppingBag, Clock, MapPin, Plus, Minus, Check, ArrowRight, MessageSquare, AlertCircle, Sparkles, Printer, ExternalLink, Zap, QrCode, Share2, Copy, X } from 'lucide-react';
 import { Category, DeliveryZone, OptionGroup, OptionItem, Order, OrderItem, OrderItemOption, Product, RestaurantTenant } from '../types';
 import { ThermalTicketModal } from './ThermalTicketModal';
 import { PixPaymentModal } from './PixPaymentModal';
+import QRCode from 'qrcode';
 
 interface ConsumerMenuViewProps {
   tenant: RestaurantTenant;
@@ -19,7 +20,24 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
   onOrderCreated,
   onViewTracking,
 }) => {
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string>(categories[0]?.id || '');
+  const sortedCategories = useMemo(
+    () => [...categories].sort((a, b) => a.order - b.order),
+    [categories]
+  );
+
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>(
+    sortedCategories[0]?.id || ''
+  );
+
+  useEffect(() => {
+    if (
+      sortedCategories.length > 0 &&
+      !sortedCategories.some((c) => c.id === selectedCategoryId)
+    ) {
+      setSelectedCategoryId(sortedCategories[0].id);
+    }
+  }, [sortedCategories, selectedCategoryId]);
+
   const [activeProductForCustomization, setActiveProductForCustomization] = useState<Product | null>(null);
   
   // Customization modal state
@@ -43,6 +61,69 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
   const [lastPlacedOrder, setLastPlacedOrder] = useState<Order | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [showThermalModal, setShowThermalModal] = useState<boolean>(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+
+  // Share menu state
+  const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
+  const [linkCopied, setLinkCopied] = useState<boolean>(false);
+  const [menuShareQrDataUrl, setMenuShareQrDataUrl] = useState<string>('');
+
+  const menuShareUrl = useMemo(() => {
+    if (typeof window === 'undefined') return `https://${tenant.slug}.com.br`;
+    return `${window.location.origin}${window.location.pathname}?loja=${encodeURIComponent(tenant.slug)}`;
+  }, [tenant.slug]);
+
+  useEffect(() => {
+    let active = true;
+    QRCode.toDataURL(menuShareUrl, { width: 160, margin: 1 })
+      .then((url) => {
+        if (active) setMenuShareQrDataUrl(url);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [menuShareUrl]);
+
+  const handleCopyMenuLink = async () => {
+    try {
+      await navigator.clipboard.writeText(menuShareUrl);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 3000);
+    } catch {
+      // Fallback copy method
+      const textArea = document.createElement('textarea');
+      textArea.value = menuShareUrl;
+      textArea.style.position = 'fixed';
+      textArea.style.opacity = '0';
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        setLinkCopied(true);
+        setTimeout(() => setLinkCopied(false), 3000);
+      } catch {
+        // ignore
+      }
+      document.body.removeChild(textArea);
+    }
+  };
+
+  const handleNativeShare = async () => {
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({
+          title: `Cardápio Digital - ${tenant.name}`,
+          text: `Confira o cardápio digital de ${tenant.name} e faça seu pedido online!`,
+          url: menuShareUrl,
+        });
+        return;
+      } catch {
+        // User cancelled or share failed in iframe, open modal instead
+      }
+    }
+    setIsShareModalOpen(true);
+  };
 
   // Active delivery zones
   const activeDeliveryZones = useMemo(() => {
@@ -173,9 +254,10 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
   // Checkout submission (Idempotency + Outbox pattern simulation)
   const handleCheckoutSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setCheckoutError(null);
     if (cartItems.length === 0) return;
     if (cartSubtotalCents < tenant.minOrderCents) {
-      alert(`O pedido mínimo para entrega é R$ ${(tenant.minOrderCents / 100).toFixed(2)}`);
+      setCheckoutError(`O pedido mínimo para entrega é R$ ${(tenant.minOrderCents / 100).toFixed(2)}`);
       return;
     }
 
@@ -244,19 +326,30 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
         className="p-5 text-white relative"
         style={{ backgroundColor: tenant.primaryColor }}
       >
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
             <span className="text-[10px] uppercase font-bold tracking-wider opacity-90">
               Cardápio Digital Oficial
             </span>
-            <h1 className="text-lg font-bold mt-0.5 leading-tight">{tenant.name}</h1>
+            <h1 className="text-lg font-bold mt-0.5 leading-tight truncate">{tenant.name}</h1>
             <p className="text-xs opacity-90 mt-1 flex items-center gap-1.5">
               <Clock className="w-3.5 h-3.5 shrink-0" />
               <span>{tenant.openingHoursText}</span>
             </p>
           </div>
-          <div className="bg-white/20 backdrop-blur-xs px-2.5 py-1 rounded text-[11px] font-medium shrink-0">
-            Aberto
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsShareModalOpen(true)}
+              title="Compartilhar link do cardápio"
+              className="bg-white text-neutral-900 hover:bg-neutral-100 px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer active:scale-95"
+            >
+              <Share2 className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Compartilhar</span>
+            </button>
+            <div className="bg-white/20 backdrop-blur-xs px-2.5 py-1 rounded-lg text-[11px] font-medium">
+              Aberto
+            </div>
           </div>
         </div>
 
@@ -266,6 +359,37 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
             <span>Entrega: {formatBRL(tenant.deliveryFeeCents)}</span>
           </span>
           <span>Mínimo: {formatBRL(tenant.minOrderCents)}</span>
+        </div>
+
+        {/* Share Link Quick Bar inside Menu Header */}
+        <div className="mt-3 pt-2.5 border-t border-white/20 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0 flex-1 bg-black/20 rounded-lg px-2.5 py-1.5">
+            <Share2 className="w-3.5 h-3.5 text-white/80 shrink-0" />
+            <span className="text-[11px] font-mono text-white/95 truncate" title={menuShareUrl}>
+              {menuShareUrl}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={handleCopyMenuLink}
+            className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1 shrink-0 transition-all cursor-pointer shadow-2xs ${
+              linkCopied
+                ? 'bg-emerald-500 text-white'
+                : 'bg-white text-neutral-900 hover:bg-neutral-100'
+            }`}
+          >
+            {linkCopied ? (
+              <>
+                <Check className="w-3.5 h-3.5" />
+                <span>Link Copiado!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copiar Link</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
 
@@ -363,7 +487,7 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
         <>
           {/* Category Tabs */}
           <div className="bg-neutral-50 border-b border-neutral-200 px-3 py-2 flex gap-2 overflow-x-auto no-scrollbar shrink-0">
-            {categories.map((cat) => (
+            {sortedCategories.map((cat) => (
               <button
                 key={cat.id}
                 onClick={() => setSelectedCategoryId(cat.id)}
@@ -736,6 +860,13 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
                 </div>
               </div>
 
+              {checkoutError && (
+                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{checkoutError}</span>
+                </div>
+              )}
+
               {/* Submit CTA */}
               <button
                 type="submit"
@@ -753,6 +884,120 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
                 )}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Share Menu Modal */}
+      {isShareModalOpen && (
+        <div className="absolute inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fadeIn">
+          <div className="bg-white rounded-t-2xl p-5 space-y-4 max-h-[90%] overflow-y-auto shadow-xl">
+            <div className="flex items-center justify-between border-b border-neutral-200 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                  <Share2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-neutral-900">Compartilhar Cardápio Digital</h3>
+                  <p className="text-[11px] text-neutral-500">{tenant.name}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsShareModalOpen(false)}
+                className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-neutral-700">
+                Link Direto do Cardápio
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={menuShareUrl}
+                  onFocus={(e) => e.target.select()}
+                  className="flex-1 p-2.5 text-xs font-mono bg-neutral-50 border border-neutral-300 rounded-lg text-neutral-800 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={handleCopyMenuLink}
+                  className={`px-3.5 py-2.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer ${
+                    linkCopied
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-neutral-900 hover:bg-neutral-800 text-white'
+                  }`}
+                >
+                  {linkCopied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Copiado!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copiar</span>
+                    </>
+                  )}
+                </button>
+              </div>
+              {linkCopied && (
+                <p className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1">
+                  <Check className="w-3 h-3" />
+                  <span>Link copiado para a área de transferência!</span>
+                </p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 pt-1">
+              <a
+                href={`https://wa.me/?text=${encodeURIComponent(
+                  `🍔 Confira o cardápio digital de *${tenant.name}* e faça seu pedido online:\n${menuShareUrl}`
+                )}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors shadow-xs"
+              >
+                <MessageSquare className="w-4 h-4" />
+                <span>Enviar Link pelo WhatsApp</span>
+                <ExternalLink className="w-3.5 h-3.5 opacity-80" />
+              </a>
+
+              {typeof navigator !== 'undefined' && typeof navigator.share === 'function' && (
+                <button
+                  type="button"
+                  onClick={handleNativeShare}
+                  className="w-full py-2.5 px-4 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>Mais Opções de Compartilhamento</span>
+                </button>
+              )}
+            </div>
+
+            {/* QR Code for quick physical/table sharing (generated locally for privacy) */}
+            <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3 flex items-center gap-3">
+              {menuShareQrDataUrl && (
+                <img
+                  src={menuShareQrDataUrl}
+                  alt={`QR Code ${tenant.name}`}
+                  className="w-16 h-16 rounded-lg border border-neutral-200 bg-white p-1 shrink-0"
+                />
+              )}
+              <div className="space-y-1">
+                <div className="flex items-center gap-1 text-xs font-bold text-neutral-900">
+                  <QrCode className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>QR Code do Cardápio</span>
+                </div>
+                <p className="text-[11px] text-neutral-600 leading-relaxed">
+                  Aponte a câmera do celular para abrir o cardápio digital ou envie o link direto para seus clientes no WhatsApp e Instagram.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       )}

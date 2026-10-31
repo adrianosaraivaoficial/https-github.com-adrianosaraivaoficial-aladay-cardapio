@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   FileSpreadsheet,
   Download,
@@ -16,6 +16,7 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { Category, OptionGroup, Product, RestaurantTenant } from '../types';
+import * as XLSX from 'xlsx';
 
 interface MenuSpreadsheetModalProps {
   isOpen: boolean;
@@ -216,6 +217,54 @@ export function parseSpreadsheetLines(rawText: string): string[][] {
   }
 
   return rows;
+}
+
+// Universal mobile & desktop spreadsheet reader supporting .xlsx, .xls, .ods, .csv, .tsv, .txt
+// and automatic UTF-8 / Windows-1252 (Excel Brasil) character encoding detection.
+export async function readUploadedSpreadsheetFile(file: File): Promise<string> {
+  const buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+    if (typeof file.arrayBuffer === 'function') {
+      file.arrayBuffer().then(resolve).catch(() => {
+        const fallbackReader = new FileReader();
+        fallbackReader.onload = (ev) => resolve(ev.target?.result as ArrayBuffer);
+        fallbackReader.onerror = () => reject(new Error('Não foi possível ler o arquivo selecionado no celular.'));
+        fallbackReader.readAsArrayBuffer(file);
+      });
+    } else {
+      const reader = new FileReader();
+      reader.onload = (ev) => resolve(ev.target?.result as ArrayBuffer);
+      reader.onerror = () => reject(new Error('Não foi possível ler o arquivo selecionado no celular.'));
+      reader.readAsArrayBuffer(file);
+    }
+  });
+
+  const bytes = new Uint8Array(buffer);
+  const fileNameLower = (file.name || '').toLowerCase();
+  const isZipHeader = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b; // PK.. (.xlsx / .ods)
+  const isOleHeader = bytes.length >= 4 && bytes[0] === 0xd0 && bytes[1] === 0xcf; // .xls binary
+  const isExcelExtension =
+    fileNameLower.endsWith('.xlsx') ||
+    fileNameLower.endsWith('.xls') ||
+    fileNameLower.endsWith('.ods');
+
+  if (isZipHeader || isOleHeader || isExcelExtension) {
+    const workbook = XLSX.read(buffer, { type: 'array' });
+    const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) {
+      throw new Error('A planilha selecionada está vazia.');
+    }
+    const worksheet = workbook.Sheets[firstSheetName];
+    return XLSX.utils.sheet_to_csv(worksheet, { FS: ';', blankrows: false });
+  }
+
+  // Plain text CSV / TSV / TXT: try UTF-8 first, fallback to Windows-1252 (common in Brazilian Excel)
+  try {
+    const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+    return utf8Decoder.decode(buffer);
+  } catch {
+    const latinDecoder = new TextDecoder('windows-1252');
+    return latinDecoder.decode(buffer);
+  }
 }
 
 export const MenuSpreadsheetModal: React.FC<MenuSpreadsheetModalProps> = ({
@@ -500,18 +549,57 @@ export const MenuSpreadsheetModal: React.FC<MenuSpreadsheetModalProps> = ({
     let idxOptions = 8;
 
     if (hasHeader) {
-      const findCol = (keywords: string[], fallback: number) => {
-        const found = firstRowLower.findIndex((h) => keywords.some((kw) => h.includes(kw)));
-        return found >= 0 ? found : fallback;
+      const usedIndices = new Set<number>();
+      const findCol = (
+        exactNames: string[],
+        partialKeywords: string[],
+        excludeKeywords: string[],
+        fallback: number
+      ) => {
+        // 1. Try exact header match first
+        const exactIdx = firstRowLower.findIndex(
+          (h, idx) => !usedIndices.has(idx) && exactNames.includes(h)
+        );
+        if (exactIdx >= 0) {
+          usedIndices.add(exactIdx);
+          return exactIdx;
+        }
+        // 2. Try partial keyword match while excluding conflicting keywords
+        const partialIdx = firstRowLower.findIndex(
+          (h, idx) =>
+            !usedIndices.has(idx) &&
+            !excludeKeywords.some((ex) => h.includes(ex)) &&
+            partialKeywords.some((kw) => h.includes(kw))
+        );
+        if (partialIdx >= 0) {
+          usedIndices.add(partialIdx);
+          return partialIdx;
+        }
+        return fallback;
       };
 
       // Check if it's a 2-column or 3-column categories-only sheet
       const hasProductCol = firstRowLower.some(
-        (h) => h.includes('nome_produto') || h === 'produto' || h === 'prato' || h === 'item'
+        (h) =>
+          h === 'nome_produto' ||
+          h === 'produto' ||
+          h === 'prato' ||
+          h === 'item' ||
+          (h.includes('produto') && !h.includes('total'))
       );
 
-      idxOrder = findCol(['ordem', 'order', 'posicao'], 0);
-      idxCategory = findCol(['categoria', 'category', 'secao'], firstRowLower.length === 1 ? 0 : 1);
+      idxOrder = findCol(
+        ['ordem_categoria', 'ordem', 'order', 'posicao'],
+        ['ordem', 'order', 'posicao'],
+        [],
+        0
+      );
+      idxCategory = findCol(
+        ['categoria', 'nome_categoria', 'category', 'secao'],
+        ['categoria', 'category', 'secao'],
+        ['ordem', 'order', 'posicao', 'id_'],
+        firstRowLower.length === 1 ? 0 : 1
+      );
 
       if (!hasProductCol && firstRowLower.length <= 3) {
         idxProductName = -1;
@@ -522,18 +610,54 @@ export const MenuSpreadsheetModal: React.FC<MenuSpreadsheetModalProps> = ({
         idxImage = -1;
         idxOptions = -1;
       } else {
-        idxProductName = findCol(['nome_produto', 'produto', 'prato', 'nome', 'item'], 2);
-        idxDescription = findCol(['descricao', 'description', 'ingredientes', 'detalhe'], 3);
-        idxPrice = findCol(['preco', 'valor', 'price'], 4);
-        idxAvailable = findCol(['disponivel', 'ativo', 'status', 'available'], 5);
-        idxFeatured = findCol(['destaque', 'featured', 'promocao'], 6);
-        idxImage = findCol(['imagem', 'foto', 'image', 'url'], 7);
-        idxOptions = findCol(['adicionais', 'opcoes', 'complementos', 'options'], 8);
+        idxProductName = findCol(
+          ['nome_produto', 'produto', 'prato', 'nome', 'item'],
+          ['nome_produto', 'produto', 'prato', 'item', 'nome'],
+          ['categoria', 'category', 'ordem', 'order'],
+          2
+        );
+        idxDescription = findCol(
+          ['descricao', 'description', 'ingredientes', 'detalhe'],
+          ['descricao', 'description', 'ingredientes', 'detalhe'],
+          [],
+          3
+        );
+        idxPrice = findCol(
+          ['preco_brl', 'preco', 'valor', 'price'],
+          ['preco', 'valor', 'price'],
+          [],
+          4
+        );
+        idxAvailable = findCol(
+          ['disponivel', 'ativo', 'status', 'available'],
+          ['disponivel', 'ativo', 'status', 'available'],
+          [],
+          5
+        );
+        idxFeatured = findCol(
+          ['destaque', 'featured', 'promocao'],
+          ['destaque', 'featured', 'promocao'],
+          [],
+          6
+        );
+        idxImage = findCol(
+          ['imagem_url', 'imagem', 'foto', 'image', 'url'],
+          ['imagem', 'foto', 'image', 'url'],
+          [],
+          7
+        );
+        idxOptions = findCol(
+          ['adicionais', 'opcoes', 'complementos', 'options'],
+          ['adicionais', 'opcoes', 'complementos', 'options'],
+          [],
+          8
+        );
       }
     }
 
     const dataRows = hasHeader ? rawRows.slice(1) : rawRows;
     const previews: ParsedRowPreview[] = [];
+    const categoryOrderTracker = new Map<string, number>();
 
     dataRows.forEach((cols, idx) => {
       const rowNumber = hasHeader ? idx + 2 : idx + 1;
@@ -549,7 +673,26 @@ export const MenuSpreadsheetModal: React.FC<MenuSpreadsheetModalProps> = ({
       const imageUrl = getCol(idxImage);
       const optionsRaw = getCol(idxOptions);
 
-      const categoryOrder = !isNaN(Number(orderRaw)) && Number(orderRaw) > 0 ? parseInt(orderRaw, 10) : idx + 1;
+      const normCatKey = categoryName
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim();
+
+      const explicitOrder =
+        !isNaN(Number(orderRaw)) && Number(orderRaw) > 0 ? parseInt(orderRaw, 10) : null;
+
+      let categoryOrder = 1;
+      if (normCatKey) {
+        if (categoryOrderTracker.has(normCatKey)) {
+          categoryOrder = explicitOrder ?? categoryOrderTracker.get(normCatKey)!;
+        } else {
+          categoryOrder = explicitOrder ?? categoryOrderTracker.size + 1;
+          categoryOrderTracker.set(normCatKey, categoryOrder);
+        }
+      } else {
+        categoryOrder = explicitOrder ?? idx + 1;
+      }
 
       if (!categoryName && !productName) {
         return;
@@ -646,17 +789,28 @@ export const MenuSpreadsheetModal: React.FC<MenuSpreadsheetModalProps> = ({
     setParsedRows(previews);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = String(event.target?.result || '');
+    try {
+      const content = await readUploadedSpreadsheetFile(file);
       processSpreadsheetText(content, file.name);
-    };
-    reader.readAsText(file, 'UTF-8');
-    e.target.value = '';
+      setFeedbackBanner({
+        type: 'success',
+        message: `Arquivo "${file.name}" carregado com sucesso do seu dispositivo! Confira a pré-visualização abaixo.`,
+      });
+    } catch (err) {
+      setFeedbackBanner({
+        type: 'error',
+        message:
+          err instanceof Error
+            ? err.message
+            : 'Erro ao acessar o arquivo no celular. Verifique se é uma planilha (.CSV, .XLSX, .XLS ou .TXT).',
+      });
+    } finally {
+      e.target.value = '';
+    }
   };
 
   const handleLoadSampleIntoPreview = () => {
@@ -685,6 +839,30 @@ export const MenuSpreadsheetModal: React.FC<MenuSpreadsheetModalProps> = ({
     new Set(validRows.map((r) => r.categoryName.trim()))
   );
 
+  const organizedCategorySummary = useMemo(() => {
+    const map = new Map<string, { name: string; order: number; count: number }>();
+    validRows.forEach((r) => {
+      const norm = r.categoryName
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim();
+      if (!map.has(norm)) {
+        map.set(norm, {
+          name: r.categoryName.trim(),
+          order: r.categoryOrder,
+          count: r.status === 'valid' ? 1 : 0,
+        });
+      } else {
+        const entry = map.get(norm)!;
+        if (r.status === 'valid') entry.count += 1;
+      }
+    });
+    return Array.from(map.values())
+      .sort((a, b) => a.order - b.order)
+      .map((item, idx) => ({ ...item, order: idx + 1 }));
+  }, [validRows]);
+
   const handleConfirmImport = () => {
     if (validRows.length === 0) return;
 
@@ -695,35 +873,79 @@ export const MenuSpreadsheetModal: React.FC<MenuSpreadsheetModalProps> = ({
         .replace(/[\u0300-\u036f]/g, '')
         .trim();
 
-    const baseCategories: Category[] = importMode === 'replace' ? [] : [...categories];
-    const baseProducts: Product[] = importMode === 'replace' ? [] : [...products];
+    // Filter out any corrupted numeric-only categories (e.g. "1", "2") or empty default placeholders when merging
+    const cleanedExistingCategories =
+      importMode === 'replace'
+        ? []
+        : categories.filter((c) => {
+            const isNumericCorrupted = /^\d+$/.test(c.name.trim());
+            if (isNumericCorrupted) return false;
+            const hasProds = products.some((p) => p.categoryId === c.id);
+            const isImportedToo = validRows.some(
+              (r) => normalizeName(r.categoryName) === normalizeName(c.name)
+            );
+            return hasProds || isImportedToo;
+          });
+
+    const validExistingCatIds = new Set(cleanedExistingCategories.map((c) => c.id));
+    const baseCategories: Category[] = [...cleanedExistingCategories];
+    const baseProducts: Product[] =
+      importMode === 'replace'
+        ? []
+        : products.filter((p) => validExistingCatIds.has(p.categoryId));
 
     const categoryMapByNormName = new Map<string, Category>();
     baseCategories.forEach((cat) => {
-      categoryMapByNormName.set(normalizeName(cat.name), cat);
+      categoryMapByNormName.set(normalizeName(cat.name), { ...cat });
     });
 
-    // 1. Ensure all categories from spreadsheet exist
+    // Track explicit order from the imported spreadsheet
+    const importedOrderMap = new Map<string, number>();
     validRows.forEach((row) => {
+      const normCat = normalizeName(row.categoryName);
+      if (!importedOrderMap.has(normCat)) {
+        importedOrderMap.set(normCat, row.categoryOrder || importedOrderMap.size + 1);
+      }
+    });
+
+    // 1. Ensure all categories from spreadsheet exist and update their order cleanly
+    validRows.forEach((row, idx) => {
       const normCat = normalizeName(row.categoryName);
       if (!categoryMapByNormName.has(normCat)) {
         const newCat: Category = {
-          id: `cat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          id: `cat_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
           name: row.categoryName.trim(),
-          order: row.categoryOrder || categoryMapByNormName.size + 1,
+          order: importedOrderMap.get(normCat) || categoryMapByNormName.size + 1,
         };
         categoryMapByNormName.set(normCat, newCat);
-        baseCategories.push(newCat);
       } else {
         const existingCat = categoryMapByNormName.get(normCat)!;
-        if (row.categoryOrder && importMode === 'replace') {
-          existingCat.order = row.categoryOrder;
+        existingCat.name = row.categoryName.trim();
+        if (importedOrderMap.has(normCat)) {
+          existingCat.order = importedOrderMap.get(normCat)!;
         }
       }
     });
 
-    // Sort categories by order
-    const finalCategories = [...baseCategories].sort((a, b) => a.order - b.order);
+    // Sort categories: imported categories in their explicit spreadsheet order, followed by any remaining existing categories, then normalize sequential 1..N
+    const allCats = Array.from(categoryMapByNormName.values());
+    allCats.sort((a, b) => {
+      const aInSheet = importedOrderMap.has(normalizeName(a.name));
+      const bInSheet = importedOrderMap.has(normalizeName(b.name));
+      if (aInSheet && !bInSheet) return -1;
+      if (!aInSheet && bInSheet) return 1;
+      return a.order - b.order;
+    });
+
+    const finalCategories: Category[] = allCats.map((cat, index) => ({
+      ...cat,
+      order: index + 1,
+    }));
+
+    // Update map references with normalized order
+    finalCategories.forEach((cat) => {
+      categoryMapByNormName.set(normalizeName(cat.name), cat);
+    });
 
     // 2. Process all product rows
     const finalProducts = [...baseProducts];
@@ -734,13 +956,14 @@ export const MenuSpreadsheetModal: React.FC<MenuSpreadsheetModalProps> = ({
       const normProd = normalizeName(row.productName);
 
       const existingProdIndex = finalProducts.findIndex(
-        (p) => p.categoryId === targetCat.id && normalizeName(p.name) === normProd
+        (p) => normalizeName(p.name) === normProd
       );
 
       if (existingProdIndex >= 0) {
-        // Update existing product
+        // Update existing product and ensure it is placed in the organized category
         finalProducts[existingProdIndex] = {
           ...finalProducts[existingProdIndex],
+          categoryId: targetCat.id,
           name: row.productName.trim(),
           description: row.description.trim(),
           priceCents: row.priceCents,
@@ -767,6 +990,12 @@ export const MenuSpreadsheetModal: React.FC<MenuSpreadsheetModalProps> = ({
         });
       }
     });
+
+    // Sort products by their category's sequential order
+    const catOrderById = new Map(finalCategories.map((c) => [c.id, c.order]));
+    finalProducts.sort(
+      (a, b) => (catOrderById.get(a.categoryId) ?? 999) - (catOrderById.get(b.categoryId) ?? 999)
+    );
 
     onImportCatalog(finalCategories, finalProducts, importMode);
     onClose();
@@ -1121,40 +1350,36 @@ export const MenuSpreadsheetModal: React.FC<MenuSpreadsheetModalProps> = ({
 
               {/* Step 2: Upload CSV file or Paste directly from Excel / Google Sheets */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                {/* File Dropzone */}
+                {/* File Dropzone - Mobile & Desktop Native File Picker */}
                 <div className="lg:col-span-5 border-2 border-dashed border-neutral-300 hover:border-neutral-900 rounded-xl p-5 bg-neutral-50 flex flex-col items-center justify-center text-center space-y-3 transition-colors">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".csv,.txt,.tsv"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
                   <div className="w-11 h-11 rounded-full bg-white border border-neutral-200 flex items-center justify-center text-neutral-700 shadow-2xs">
                     <Upload className="w-5 h-5" />
                   </div>
                   <div>
                     <p className="text-xs font-bold text-neutral-900">
-                      Enviar Arquivo da Planilha (.CSV)
+                      Enviar Planilha do Celular ou Computador (.CSV, .XLSX, .XLS)
                     </p>
                     <p className="text-[11px] text-neutral-500 mt-0.5">
-                      Salve sua planilha do Excel ou Google Sheets como <strong>CSV</strong> e selecione aqui.
+                      Toque no botão abaixo para abrir os <strong>Arquivos / Downloads</strong> do seu celular e selecionar sua planilha.
                     </p>
                   </div>
 
                   <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg transition-colors shadow-xs"
-                    >
-                      Escolher Arquivo .CSV
-                    </button>
+                    <label className="relative inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg transition-colors shadow-xs cursor-pointer overflow-hidden">
+                      <Upload className="w-3.5 h-3.5 shrink-0" />
+                      <span>Escolher Planilha no Celular / PC</span>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        onChange={handleFileUpload}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      />
+                    </label>
 
                     <button
                       type="button"
                       onClick={handleLoadSampleIntoPreview}
-                      className="px-3 py-2 bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 text-xs font-semibold rounded-lg transition-colors"
+                      className="px-3 py-2.5 bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
                     >
                       Carregar Exemplo
                     </button>
@@ -1218,7 +1443,7 @@ export const MenuSpreadsheetModal: React.FC<MenuSpreadsheetModalProps> = ({
                     <div className="flex flex-wrap items-center gap-2 text-[11px]">
                       <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-semibold bg-blue-50 text-blue-800 border border-blue-200">
                         <FolderPlus className="w-3.5 h-3.5" />
-                        {distinctCategoryNames.length} Categorias detectadas
+                        {organizedCategorySummary.length} Categorias organizadas
                       </span>
                       <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
                         <PackagePlus className="w-3.5 h-3.5" />
@@ -1232,6 +1457,31 @@ export const MenuSpreadsheetModal: React.FC<MenuSpreadsheetModalProps> = ({
                       )}
                     </div>
                   </div>
+
+                  {/* Organized Category Structure Summary */}
+                  {organizedCategorySummary.length > 0 && (
+                    <div className="px-4 py-3 bg-emerald-50/40 border-b border-neutral-200 space-y-2">
+                      <p className="text-[11px] font-bold text-neutral-800">
+                        Ordem de Cadastro das Categorias Identificadas na Planilha:
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {organizedCategorySummary.map((cat) => (
+                          <div
+                            key={cat.name}
+                            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-emerald-200 shadow-2xs text-xs"
+                          >
+                            <span className="w-5 h-5 rounded-full bg-neutral-900 text-white font-mono text-[10px] font-bold flex items-center justify-center">
+                              {cat.order}º
+                            </span>
+                            <span className="font-bold text-neutral-900">{cat.name}</span>
+                            <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-semibold">
+                              {cat.count} {cat.count === 1 ? 'item' : 'itens'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="max-h-64 overflow-y-auto">
                     <table className="w-full text-xs">

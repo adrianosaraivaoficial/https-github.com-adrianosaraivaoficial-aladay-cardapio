@@ -17,15 +17,24 @@ import {
 } from './data/mockTenant';
 import { AuthSession, Category, CustomerRecord, Order, OrderStatus, Product, RestaurantTenant } from './types';
 import { BLUEPRINT_SECTIONS } from './data/blueprintSections';
-import { LogIn, Lock, ShieldAlert, X, ArrowRight } from 'lucide-react';
+import { LogIn, Lock, ShieldAlert, X, ArrowRight, Menu, Share2, Copy, Check, MessageSquare, ExternalLink } from 'lucide-react';
 import { WhatsAppAutomationView } from './components/WhatsAppAutomationView';
 import { AuthPortalView } from './components/AuthPortalView';
 import { LandingPageView } from './components/LandingPageView';
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<'home' | 'kickoff' | 'consumer' | 'admin' | 'calculator' | 'diagrams' | 'tracking' | 'whatsapp' | 'auth'>('home');
+  const sharedLojaParam = React.useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    return new URLSearchParams(window.location.search).get('loja');
+  }, []);
+
+  const [currentView, setCurrentView] = useState<'home' | 'kickoff' | 'consumer' | 'admin' | 'calculator' | 'diagrams' | 'tracking' | 'whatsapp' | 'auth'>(() =>
+    sharedLojaParam ? 'consumer' : 'home'
+  );
   const [selectedTrackingOrder, setSelectedTrackingOrder] = useState<Order | null>(null);
   const [showSubscriptionNoticeModal, setShowSubscriptionNoticeModal] = useState<boolean>(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+  const [topMenuLinkCopied, setTopMenuLinkCopied] = useState<boolean>(false);
 
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => {
     try {
@@ -48,6 +57,15 @@ export default function App() {
 
   const [tenant, setTenant] = useState<RestaurantTenant>(() => {
     try {
+      const savedList: RestaurantTenant[] = JSON.parse(
+        localStorage.getItem('aladay_prod_tenants_list_v2') || 'null'
+      ) || INITIAL_TENANTS_LIST;
+      if (sharedLojaParam) {
+        const matchedBySlug = savedList.find(
+          (t) => t.slug.toLowerCase() === sharedLojaParam.toLowerCase()
+        );
+        if (matchedBySlug) return matchedBySlug;
+      }
       const saved = localStorage.getItem('aladay_prod_tenant_v2');
       return saved ? JSON.parse(saved) : INITIAL_TENANT;
     } catch {
@@ -55,13 +73,106 @@ export default function App() {
     }
   });
 
+  // Helper to automatically repair any numeric-only category names (e.g. "1", "2", "3", "4")
+  // that may have been saved in localStorage from a previous spreadsheet upload and normalize order sequentially
+  const sanitizeCatalogData = (
+    rawCatalog: Record<string, { categories: Category[]; products: Product[]; orders: Order[] }>
+  ) => {
+    const defaultOrderNames: Record<string, string> = {
+      '1': 'Lanches & Burgers',
+      '2': 'Porções & Entradas',
+      '3': 'Bebidas',
+      '4': 'Sobremesas',
+    };
+    const normalizeStr = (s: string) =>
+      s
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim();
+
+    const cleaned: Record<string, { categories: Category[]; products: Product[]; orders: Order[] }> = {};
+
+    Object.entries(rawCatalog).forEach(([slug, data]) => {
+      if (!data || !Array.isArray(data.categories) || !Array.isArray(data.products)) {
+        cleaned[slug] = data;
+        return;
+      }
+
+      const catMapByNorm = new Map<string, Category>();
+      const idRemap = new Map<string, string>();
+
+      // First pass: register valid non-numeric categories
+      data.categories.forEach((cat) => {
+        const trimmed = cat.name.trim();
+        if (!/^\d+$/.test(trimmed)) {
+          const norm = normalizeStr(trimmed);
+          if (!catMapByNorm.has(norm)) {
+            catMapByNorm.set(norm, { ...cat, name: trimmed });
+          } else {
+            idRemap.set(cat.id, catMapByNorm.get(norm)!.id);
+          }
+        }
+      });
+
+      // Second pass: repair numeric-only categories ("1", "2", "3", "4")
+      data.categories.forEach((cat) => {
+        const trimmed = cat.name.trim();
+        if (/^\d+$/.test(trimmed)) {
+          const numOrder = parseInt(trimmed, 10) || cat.order || 1;
+          const mappedName = defaultOrderNames[trimmed] || `Categoria ${trimmed}`;
+          const norm = normalizeStr(mappedName);
+          if (catMapByNorm.has(norm)) {
+            const target = catMapByNorm.get(norm)!;
+            idRemap.set(cat.id, target.id);
+          } else {
+            const repairedCat: Category = {
+              ...cat,
+              name: mappedName,
+              order: numOrder,
+            };
+            catMapByNorm.set(norm, repairedCat);
+          }
+        }
+      });
+
+      const remappedProducts = data.products.map((p) => ({
+        ...p,
+        categoryId: idRemap.get(p.categoryId) || p.categoryId,
+      }));
+
+      // Remove empty default placeholder categories if repaired/imported categories exist with products
+      const allUniqueCats = Array.from(catMapByNorm.values());
+      const nonEmptyOrOnlyCats =
+        allUniqueCats.length > 2
+          ? allUniqueCats.filter(
+              (c) =>
+                remappedProducts.some((p) => p.categoryId === c.id) ||
+                (normalizeStr(c.name) !== 'pratos principais' && normalizeStr(c.name) !== 'geral')
+            )
+          : allUniqueCats;
+
+      const sortedCats = (nonEmptyOrOnlyCats.length > 0 ? nonEmptyOrOnlyCats : allUniqueCats)
+        .sort((a, b) => a.order - b.order)
+        .map((c, idx) => ({ ...c, order: idx + 1 }));
+
+      cleaned[slug] = {
+        ...data,
+        categories: sortedCats,
+        products: remappedProducts,
+      };
+    });
+
+    return cleaned;
+  };
+
   // Catalogs indexed by tenant slug (Multi-tenancy isolated state)
   const [catalogsByTenant, setCatalogsByTenant] = useState<
     Record<string, { categories: Category[]; products: Product[]; orders: Order[] }>
   >(() => {
     try {
       const saved = localStorage.getItem('aladay_prod_catalogs_v2');
-      if (saved) return JSON.parse(saved);
+      if (saved) return sanitizeCatalogData(JSON.parse(saved));
     } catch {
       // ignore
     }
@@ -157,13 +268,22 @@ export default function App() {
     isSuperAdmin || (Boolean(authSession) && isTenantStaffOrOwner && isTenantSubscribed)
   );
 
-  // Enforce access boundary: unsubscribed clients CAN ONLY access 'home', 'kickoff' (to buy), or 'auth' (to login)
+  // Enforce access boundary: unsubscribed clients CAN ONLY access 'home', 'kickoff' (to buy), or 'auth' (to login),
+  // OR 'consumer' / 'tracking' when accessing a restaurant's shared menu link (?loja=...)
   React.useEffect(() => {
-    if (!hasActiveSubscription && currentView !== 'home' && currentView !== 'kickoff' && currentView !== 'auth') {
+    const isAllowedPublicStoreView =
+      Boolean(sharedLojaParam) && (currentView === 'consumer' || currentView === 'tracking');
+    if (
+      !hasActiveSubscription &&
+      !isAllowedPublicStoreView &&
+      currentView !== 'home' &&
+      currentView !== 'kickoff' &&
+      currentView !== 'auth'
+    ) {
       setCurrentView('home');
       setShowSubscriptionNoticeModal(true);
     }
-  }, [hasActiveSubscription, currentView]);
+  }, [hasActiveSubscription, currentView, sharedLojaParam]);
 
   const handleNavigateSafely = (targetView: typeof currentView) => {
     if (!hasActiveSubscription && targetView !== 'home' && targetView !== 'kickoff' && targetView !== 'auth') {
@@ -459,18 +579,32 @@ export default function App() {
   return (
     <div className="min-h-screen bg-neutral-100 text-neutral-900 flex flex-col font-sans selection:bg-neutral-900 selection:text-white">
       {/* Universal Top Bar Contract (Brand Zone - Nav Zone - Primary Action) */}
-      <header className="sticky top-0 z-50 bg-white border-b border-neutral-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-8">
+      <header className="sticky top-0 z-50 bg-white border-b border-neutral-200 shadow-2xs">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-2 sm:gap-8">
           {/* Zone 1: Single Text Element Brand Wordmark */}
-          <button
-            type="button"
-            onClick={() => handleNavigateSafely('home')}
-            className="text-lg font-black tracking-tight text-neutral-950 hover:text-emerald-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-          >
-            Aladay
-          </button>
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              type="button"
+              onClick={() => {
+                handleNavigateSafely('home');
+                setIsMobileMenuOpen(false);
+              }}
+              className="text-lg font-black tracking-tight text-neutral-950 hover:text-emerald-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Aladay
+            </button>
 
-          {/* Zone 2: Navigation Links - Unsubscribed clients ONLY see Home & Public Sections */}
+            {authSession && hasActiveSubscription && isTrialActiveAndValid && (
+              <span
+                className="inline-flex sm:hidden items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold font-mono shrink-0"
+                title={`Período de Teste Grátis de 15 dias ativo (${trialDaysLeft} dias restantes)`}
+              >
+                <span>🎁 {trialDaysLeft}d</span>
+              </span>
+            )}
+          </div>
+
+          {/* Zone 2: Desktop Navigation Links - Unsubscribed clients ONLY see Home & Public Sections */}
           <nav className="hidden md:flex items-center gap-5 text-xs font-medium text-neutral-600">
             {hasActiveSubscription ? (
               <>
@@ -524,18 +658,27 @@ export default function App() {
                 </button>
                 <a
                   href="#demonstracao-celular"
+                  onClick={() => {
+                    if (currentView !== 'home') handleNavigateSafely('home');
+                  }}
                   className="hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0"
                 >
                   Demonstração no Celular
                 </a>
                 <a
                   href="#planos"
+                  onClick={() => {
+                    if (currentView !== 'home') handleNavigateSafely('home');
+                  }}
                   className="hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0"
                 >
                   Planos &amp; Preço (R$ 129,90)
                 </a>
                 <a
                   href="#calculadora"
+                  onClick={() => {
+                    if (currentView !== 'home') handleNavigateSafely('home');
+                  }}
                   className="hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0"
                 >
                   Calculadora de Economia
@@ -544,8 +687,8 @@ export default function App() {
             )}
           </nav>
 
-          {/* Zone 3: Active Profile Badge & Login / Auth Portal */}
-          <div className="flex items-center gap-2.5 shrink-0">
+          {/* Zone 3: Active Profile Badge & Login / Auth Portal + Mobile Hamburger Button */}
+          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
             {authSession && hasActiveSubscription ? (
               <>
                 {authSession.user.role === 'SUPER_ADMIN' ? (
@@ -574,7 +717,10 @@ export default function App() {
 
                 <button
                   type="button"
-                  onClick={() => handleNavigateSafely('auth')}
+                  onClick={() => {
+                    handleNavigateSafely('auth');
+                    setIsMobileMenuOpen(false);
+                  }}
                   className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                   title="Gerenciar conta"
                 >
@@ -584,7 +730,10 @@ export default function App() {
 
                 <button
                   type="button"
-                  onClick={handleLogout}
+                  onClick={() => {
+                    handleLogout();
+                    setIsMobileMenuOpen(false);
+                  }}
                   className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:text-rose-800 hover:bg-rose-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer border border-rose-200"
                   title="Sair da sessão"
                 >
@@ -592,11 +741,14 @@ export default function App() {
                 </button>
               </>
             ) : (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2">
                 <button
                   type="button"
-                  onClick={() => handleNavigateSafely('auth')}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  onClick={() => {
+                    handleNavigateSafely('auth');
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 text-xs font-medium text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   <LogIn className="w-3.5 h-3.5 text-neutral-500" />
                   <span>Entrar</span>
@@ -604,15 +756,274 @@ export default function App() {
 
                 <button
                   type="button"
-                  onClick={() => handleNavigateSafely('kickoff')}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-2xs"
+                  onClick={() => {
+                    handleNavigateSafely('kickoff');
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="flex items-center gap-1 px-2.5 sm:px-3.5 py-1.5 text-[11px] sm:text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-2xs"
                 >
-                  <span>Teste Grátis 15 Dias</span>
+                  <span>Teste Grátis 15d</span>
                 </button>
               </div>
             )}
+
+            {/* Mobile Hamburger Button */}
+            <button
+              type="button"
+              onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+              aria-label="Abrir ou fechar menu de navegação"
+              aria-expanded={isMobileMenuOpen}
+              className="md:hidden inline-flex items-center justify-center p-2 rounded-lg text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 border border-neutral-200 transition-colors cursor-pointer"
+            >
+              {isMobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            </button>
           </div>
         </div>
+
+        {/* Always-Visible Mobile Top Navigation Strip (< md) */}
+        <nav
+          aria-label="Navegação rápida mobile"
+          className="md:hidden border-t border-neutral-200 bg-neutral-50 px-3 py-2 flex items-center gap-1.5 overflow-x-auto"
+        >
+          {hasActiveSubscription ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  handleNavigateSafely('home');
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  currentView === 'home'
+                    ? 'bg-neutral-900 text-white shadow-2xs'
+                    : 'bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-100'
+                }`}
+              >
+                Início
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleNavigateSafely('consumer');
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  currentView === 'consumer'
+                    ? 'bg-neutral-900 text-white shadow-2xs'
+                    : 'bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-100'
+                }`}
+              >
+                Cardápio Digital
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleNavigateSafely('admin');
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  currentView === 'admin'
+                    ? 'bg-neutral-900 text-white shadow-2xs'
+                    : 'bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-100'
+                }`}
+              >
+                Painel &amp; KDS (Loja)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleNavigateSafely('whatsapp');
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  currentView === 'whatsapp'
+                    ? 'bg-neutral-900 text-white shadow-2xs'
+                    : 'bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-100'
+                }`}
+              >
+                WhatsApp
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  handleNavigateSafely('home');
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  currentView === 'home'
+                    ? 'bg-neutral-900 text-white shadow-2xs'
+                    : 'bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-100'
+                }`}
+              >
+                Início
+              </button>
+              <a
+                href="#demonstracao-celular"
+                onClick={() => {
+                  if (currentView !== 'home') handleNavigateSafely('home');
+                  setIsMobileMenuOpen(false);
+                }}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-100 transition-colors"
+              >
+                Demonstração no Celular
+              </a>
+              <a
+                href="#planos"
+                onClick={() => {
+                  if (currentView !== 'home') handleNavigateSafely('home');
+                  setIsMobileMenuOpen(false);
+                }}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-100 transition-colors"
+              >
+                Planos (R$ 129,90)
+              </a>
+              <a
+                href="#calculadora"
+                onClick={() => {
+                  if (currentView !== 'home') handleNavigateSafely('home');
+                  setIsMobileMenuOpen(false);
+                }}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-100 transition-colors"
+              >
+                Calculadora
+              </a>
+            </>
+          )}
+        </nav>
+
+        {/* Expandable Mobile Drawer Menu */}
+        {isMobileMenuOpen && (
+          <div className="md:hidden border-t border-neutral-200 bg-white px-4 py-4 space-y-3 shadow-lg">
+            {authSession && hasActiveSubscription && (
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-neutral-100">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold">
+                    <span>🏪 {tenant.name}</span>
+                  </span>
+                  {isTrialActiveAndValid && (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold font-mono">
+                      <span>🎁 Teste Grátis: {trialDaysLeft}d</span>
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleNavigateSafely('auth');
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-lg"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>Minha Conta</span>
+                </button>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-1.5">
+              {hasActiveSubscription ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleNavigateSafely('home');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition-colors ${
+                      currentView === 'home' ? 'bg-neutral-900 text-white' : 'text-neutral-700 hover:bg-neutral-100'
+                    }`}
+                  >
+                    Início
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleNavigateSafely('consumer');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition-colors ${
+                      currentView === 'consumer' ? 'bg-neutral-900 text-white' : 'text-neutral-700 hover:bg-neutral-100'
+                    }`}
+                  >
+                    Cardápio Digital (Visão do Cliente)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleNavigateSafely('admin');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition-colors ${
+                      currentView === 'admin' ? 'bg-neutral-900 text-white' : 'text-neutral-700 hover:bg-neutral-100'
+                    }`}
+                  >
+                    Painel &amp; KDS (Gestão da Loja)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleNavigateSafely('whatsapp');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition-colors ${
+                      currentView === 'whatsapp' ? 'bg-neutral-900 text-white' : 'text-neutral-700 hover:bg-neutral-100'
+                    }`}
+                  >
+                    Automação de WhatsApp
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleNavigateSafely('home');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition-colors ${
+                      currentView === 'home' ? 'bg-neutral-900 text-white' : 'text-neutral-700 hover:bg-neutral-100'
+                    }`}
+                  >
+                    Página Inicial
+                  </button>
+                  <a
+                    href="#demonstracao-celular"
+                    onClick={() => {
+                      if (currentView !== 'home') handleNavigateSafely('home');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="block w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold text-neutral-700 hover:bg-neutral-100 transition-colors"
+                  >
+                    Demonstração no Celular
+                  </a>
+                  <a
+                    href="#planos"
+                    onClick={() => {
+                      if (currentView !== 'home') handleNavigateSafely('home');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="block w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold text-neutral-700 hover:bg-neutral-100 transition-colors"
+                  >
+                    Planos &amp; Preço (R$ 129,90/mês)
+                  </a>
+                  <a
+                    href="#calculadora"
+                    onClick={() => {
+                      if (currentView !== 'home') handleNavigateSafely('home');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="block w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold text-neutral-700 hover:bg-neutral-100 transition-colors"
+                  >
+                    Calculadora de Economia
+                  </a>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Main Content Viewport */}
@@ -637,7 +1048,75 @@ export default function App() {
         )}
 
         {currentView === 'consumer' && (
-          <div className="py-2">
+          <div className="py-2 space-y-4">
+            {/* Share Digital Menu Banner at top of Digital Menu Page */}
+            <div className="max-w-md mx-auto bg-white border border-neutral-200 rounded-2xl p-3.5 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+                  <Share2 className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-neutral-900">
+                    Link do Cardápio Digital
+                  </p>
+                  <p className="text-[11px] font-mono text-neutral-500 truncate">
+                    {typeof window !== 'undefined'
+                      ? `${window.location.origin}${window.location.pathname}?loja=${tenant.slug}`
+                      : `https://${tenant.slug}.com.br`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url =
+                      typeof window !== 'undefined'
+                        ? `${window.location.origin}${window.location.pathname}?loja=${encodeURIComponent(tenant.slug)}`
+                        : `https://${tenant.slug}.com.br`;
+                    navigator.clipboard?.writeText(url).catch(() => {});
+                    setTopMenuLinkCopied(true);
+                    setTimeout(() => setTopMenuLinkCopied(false), 3000);
+                  }}
+                  className={`flex-1 sm:flex-initial px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                    topMenuLinkCopied
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-neutral-900 hover:bg-neutral-800 text-white'
+                  }`}
+                >
+                  {topMenuLinkCopied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Copiado!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copiar Link</span>
+                    </>
+                  )}
+                </button>
+
+                <a
+                  href={`https://wa.me/?text=${encodeURIComponent(
+                    `🍔 Confira o cardápio digital de *${tenant.name}* e faça seu pedido online:\n${
+                      typeof window !== 'undefined'
+                        ? `${window.location.origin}${window.location.pathname}?loja=${encodeURIComponent(tenant.slug)}`
+                        : `https://${tenant.slug}.com.br`
+                    }`
+                  )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 sm:flex-initial px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span>WhatsApp</span>
+                  <ExternalLink className="w-3 h-3 opacity-80" />
+                </a>
+              </div>
+            </div>
+
             <ConsumerMenuView
               tenant={tenant}
               categories={categories}

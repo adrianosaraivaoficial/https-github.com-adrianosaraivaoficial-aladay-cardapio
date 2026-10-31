@@ -21,7 +21,7 @@ export const INITIAL_TENANT: RestaurantTenant = {
   evolutionStatus: 'disconnected',
   evolutionApiKeyConfigured: true,
   evolutionApiUrl: 'https://agencia-evolution-api.2eoc7n.easypanel.host',
-  evolutionApiKey: '21C3D49F3F00-48FA-BFA2-2CD290850405',
+  evolutionApiKey: '',
   n8nWebhookUrl: 'https://agencia-n8n.2eoc7n.easypanel.host/webhook/saas',
   botAutoReplyEnabled: true,
   botWelcomeMessage:

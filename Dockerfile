@@ -32,9 +32,13 @@ RUN npm install --omit=dev --legacy-peer-deps
 COPY --from=builder /app/dist ./dist
 
 # Copy backend server and essential source files
-COPY server.ts ./
-COPY src ./src
-COPY tsconfig.json ./
+COPY --chown=node:node server.ts ./
+COPY --chown=node:node src ./src
+COPY --chown=node:node tsconfig.json ./
+
+# Ensure non-root ownership and drop privileges
+RUN chown -R node:node /app
+USER node
 
 # Expose default Easypanel port
 EXPOSE 3000
