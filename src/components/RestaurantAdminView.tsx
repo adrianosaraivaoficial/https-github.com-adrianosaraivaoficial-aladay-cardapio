@@ -137,10 +137,9 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     setTimeout(() => setStatusUpdateToast(null), 5000);
   };
 
-  // Live Sync & Walkthrough state
+  // Live Sync & Preview state
   const [liveSyncNotice, setLiveSyncNotice] = useState<string | null>(null);
   const [showLivePreviewSplit, setShowLivePreviewSplit] = useState(false);
-  const [showHowItWorksModal, setShowHowItWorksModal] = useState(false);
 
   // Product Filters & Bulk adjustments
   const [productSearchQuery, setProductSearchQuery] = useState('');
@@ -1731,84 +1730,6 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
               </div>
             </form>
 
-            {/* Explanatory Banner & Interactive Architecture Guide: Como funciona a atualização dos dados por restaurante */}
-            <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-2xs space-y-4">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-neutral-100">
-                <div className="flex items-start gap-2.5">
-                  <div className="p-2 rounded-lg bg-orange-50 text-orange-700 mt-0.5 shrink-0">
-                    <Sparkles className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-neutral-900">
-                      Como Funciona a Atualização dos Dados do Cardápio por Restaurante
-                    </h3>
-                    <p className="text-xs text-neutral-600 mt-0.5">
-                      Entenda o ciclo completo de vida de uma alteração de cardápio no SaaS, desde a edição até a tela do cliente.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setShowHowItWorksModal(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors"
-                  >
-                    <HelpCircle className="w-3.5 h-3.5 text-neutral-500" />
-                    <span>Ver Arquitetura Técnica</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowLivePreviewSplit(!showLivePreviewSplit)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                      showLivePreviewSplit
-                        ? 'bg-neutral-900 text-white'
-                        : 'bg-orange-50 text-orange-900 hover:bg-orange-100 border border-orange-200'
-                    }`}
-                  >
-                    <Smartphone className="w-3.5 h-3.5" />
-                    <span>{showLivePreviewSplit ? 'Ocultar Celular do Cliente' : 'Modo Lado a Lado (Celular)'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* 4 Interactive Visual Pillars of Menu Updates */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-                <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                  <span className="font-mono text-[10px] text-neutral-400 font-bold">ETAPA 1</span>
-                  <p className="font-bold text-neutral-900 mt-1">1. Edição no Painel Web</p>
-                  <p className="text-[11px] text-neutral-600 mt-0.5 leading-relaxed">
-                    O lojista altera preços, descrições, fotos ou pausa pratos esgotados com apenas 1 clique no botão de status.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                  <span className="font-mono text-[10px] text-neutral-400 font-bold">ETAPA 2</span>
-                  <p className="font-bold text-neutral-900 mt-1">2. Isolamento via RLS</p>
-                  <p className="text-[11px] text-neutral-600 mt-0.5 leading-relaxed">
-                    A API grava no PostgreSQL usando Row-Level Security (<code className="bg-neutral-200 px-1 py-0.2 rounded font-mono text-[10px]">tenant_id</code>), blindando os dados contra outros restaurantes.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                  <span className="font-mono text-[10px] text-neutral-400 font-bold">ETAPA 3</span>
-                  <p className="font-bold text-neutral-900 mt-1">3. Propagação em Tempo Real</p>
-                  <p className="text-[11px] text-neutral-600 mt-0.5 leading-relaxed">
-                    O link público e os QR Codes dos clientes não usam cache estático defasado: o novo preço entra no ar imediatamente no celular do cliente.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                  <span className="font-mono text-[10px] text-neutral-400 font-bold">ETAPA 4</span>
-                  <p className="font-bold text-neutral-900 mt-1">4. Snapshot Imutável</p>
-                  <p className="text-[11px] text-neutral-600 mt-0.5 leading-relaxed">
-                    Mudar o preço hoje NÃO altera os pedidos já concluídos ontem: o histórico de faturamento e notas fiscais permanece 100% íntegro.
-                  </p>
-                </div>
-              </div>
-            </div>
-
             {/* Split Screen Container (if toggled) */}
             <div className={`grid gap-6 ${showLivePreviewSplit ? 'grid-cols-1 xl:grid-cols-12' : 'grid-cols-1'}`}>
               {/* Left Column: Product Management */}
@@ -1842,6 +1763,19 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setShowLivePreviewSplit(!showLivePreviewSplit)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                        showLivePreviewSplit
+                          ? 'bg-neutral-900 text-white'
+                          : 'bg-orange-50 text-orange-900 hover:bg-orange-100 border border-orange-200'
+                      }`}
+                    >
+                      <Smartphone className="w-3.5 h-3.5" />
+                      <span>{showLivePreviewSplit ? 'Ocultar Prévia Mobile' : 'Prévia Mobile'}</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => setSpreadsheetModalTab('export')}
@@ -2265,76 +2199,6 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                       className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white font-semibold rounded-lg shadow-xs"
                     >
                       Aplicar Reajuste
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Technical Architecture Modal for Menu Updates */}
-            {showHowItWorksModal && (
-              <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-                <div className="bg-white rounded-xl max-w-2xl w-full p-6 shadow-2xl border border-neutral-200 space-y-4 max-h-[85vh] overflow-y-auto">
-                  <div className="flex items-center justify-between pb-3 border-b border-neutral-200">
-                    <div className="flex items-center gap-2">
-                      <ShieldCheck className="w-5 h-5 text-emerald-600" />
-                      <h3 className="text-sm font-bold text-neutral-900">
-                        Arquitetura de Atualização do Cardápio por Restaurante
-                      </h3>
-                    </div>
-                    <button
-                      onClick={() => setShowHowItWorksModal(false)}
-                      className="text-neutral-400 hover:text-neutral-700"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  <div className="space-y-3 text-xs text-neutral-700 leading-relaxed">
-                    <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                      <p className="font-bold text-neutral-900">1. Por que um restaurante nunca altera o cardápio de outro?</p>
-                      <p className="mt-1">
-                        O SaaS utiliza <strong>Row-Level Security (RLS)</strong> no PostgreSQL. Em cada requisição de alteração de produto, o backend extrai o <code className="bg-neutral-200 px-1 py-0.2 rounded font-mono text-[11px]">tenant_id</code> do JWT assinado e executa:
-                      </p>
-                      <pre className="bg-neutral-900 text-neutral-100 p-2.5 rounded font-mono text-[11px] mt-1.5 overflow-x-auto">
-{`SET LOCAL app.current_tenant_id = 'tenant_brasas_01';
-UPDATE products SET price_cents = 3990, is_available = true 
-WHERE id = 'prod_smash_bacon' AND tenant_id = current_setting('app.current_tenant_id');`}
-                      </pre>
-                      <p className="mt-1 text-neutral-600 text-[11px]">
-                        Mesmo que um invasor tente enviar o ID de produto de outro restaurante, a política RLS retorna 0 linhas afetadas no banco de dados.
-                      </p>
-                    </div>
-
-                    <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                      <p className="font-bold text-neutral-900">2. Como o celular do cliente atualiza tão rápido?</p>
-                      <p className="mt-1">
-                        O cardápio público consulta a rota <code className="bg-neutral-200 px-1 py-0.2 rounded font-mono text-[11px]">GET /api/v1/tenants/:slug/products</code>. O servidor responde com cabeçalhos HTTP inteligentes:
-                      </p>
-                      <pre className="bg-neutral-900 text-neutral-100 p-2.5 rounded font-mono text-[11px] mt-1.5 overflow-x-auto">
-{`Cache-Control: public, max-age=15, stale-while-revalidate=60
-ETag: "catalog_version_1729482930"`}
-                      </pre>
-                      <p className="mt-1 text-neutral-600 text-[11px]">
-                        Assim, quando o lojista altera o preço ou pausa um item, a versão do catálogo é incrementada e o celular do cliente busca a versão fresca em no máximo 15 segundos ou sob revalidação automática ao adicionar itens ao carrinho.
-                      </p>
-                    </div>
-
-                    <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                      <p className="font-bold text-neutral-900">3. Princípio do Snapshot Imutável de Pedidos</p>
-                      <p className="mt-1">
-                        Quando um cliente fecha um pedido de um Smash Burger a R$ 34,90, o sistema grava uma cópia física exata de todos os itens na tabela <code className="bg-neutral-200 px-1 py-0.2 rounded font-mono text-[11px]">order_items</code>. Se amanhã o dono aumentar o prato para R$ 42,00, a tabela de produtos muda, mas o pedido passado mantém R$ 34,90 intactos.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end pt-3 border-t border-neutral-200 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setShowHowItWorksModal(false)}
-                      className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white font-semibold rounded-lg shadow-xs"
-                    >
-                      Fechar Explicação
                     </button>
                   </div>
                 </div>
