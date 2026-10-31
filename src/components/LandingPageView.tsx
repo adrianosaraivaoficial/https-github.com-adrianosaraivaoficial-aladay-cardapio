@@ -213,6 +213,16 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
   });
   const [proposalSent, setProposalSent] = useState<boolean>(false);
 
+  const openSupportWhatsApp = (encodedText: string) => {
+    const link = document.createElement('a');
+    link.href = `https://wa.me/559131976334?text=${encodedText}`;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleSubmitProposal = (e: React.FormEvent) => {
     e.preventDefault();
     trackConversionEvent('request_proposal', {
@@ -230,7 +240,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
           `• Cidade: ${proposalForm.city}\n` +
           `• WhatsApp: ${proposalForm.whatsapp}`
       );
-      window.open(`https://wa.me/5511999999999?text=${text}`, '_blank');
+      openSupportWhatsApp(text);
       setIsProposalModalOpen(false);
       setProposalSent(false);
     }, 1200);
@@ -288,7 +298,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
     const msg = encodeURIComponent(
       'Olá! Gostaria de tirar dúvidas sobre o Aladay Cardápios Digitais (Plano R$ 99,00/mês Anual ou R$ 129,90/mês e Pix Direto).'
     );
-    window.open(`https://wa.me/5511999999999?text=${msg}`, '_blank');
+    openSupportWhatsApp(msg);
   };
 
   const aladaySchemaJsonLd = {
