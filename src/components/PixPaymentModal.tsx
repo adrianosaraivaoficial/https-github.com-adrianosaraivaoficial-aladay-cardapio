@@ -17,6 +17,7 @@ import {
   X
 } from 'lucide-react';
 import { Order, RestaurantTenant, PixTransaction } from '../types';
+import { generateDynamicPixPayload, resolveTenantPixCredentials } from '../utils/pixPayloadGenerator';
 import QRCode from 'qrcode';
 
 interface PixPaymentModalProps {
@@ -47,7 +48,9 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
 
   const pollIntervalRef = useRef<any>(null);
 
-  // Initialize or fetch dynamic Pix charge
+  const tenantPix = resolveTenantPixCredentials(tenant);
+
+  // Initialize or fetch dynamic Pix charge using the tenant's configured Pix key and Beneficiary Name
   useEffect(() => {
     if (!isOpen) return;
 
@@ -63,6 +66,11 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
             orderId: order.id,
             amountCents: order.totalCents,
             tenantSlug: tenant.slug,
+            pixKey: tenantPix.pixKey,
+            pixKeyType: tenantPix.pixKeyType,
+            beneficiaryName: tenantPix.beneficiaryName,
+            merchantName: tenantPix.merchantNameEmv,
+            merchantCity: tenantPix.merchantCityEmv,
             customerName: order.customerName,
             customerPhone: order.customerPhone,
           }),
@@ -78,7 +86,7 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
           }
         }
       } catch (err) {
-        console.error('Failed to create Pix charge, generating fallback:', err);
+        console.error('Failed to create Pix charge, generating local EMV payload:', err);
       } finally {
         if (isMounted) setIsLoading(false);
       }
@@ -89,7 +97,19 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, order.id, order.totalCents, tenant.slug]);
+  }, [
+    isOpen,
+    order.id,
+    order.totalCents,
+    order.customerName,
+    order.customerPhone,
+    tenant.slug,
+    tenantPix.pixKey,
+    tenantPix.pixKeyType,
+    tenantPix.beneficiaryName,
+    tenantPix.merchantNameEmv,
+    tenantPix.merchantCityEmv,
+  ]);
 
   // Polling listener to detect webhook confirmation
   useEffect(() => {
@@ -140,9 +160,19 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
     return () => clearInterval(timer);
   }, [isOpen, paymentStatus]);
 
-  const pixPayload =
-    transaction?.pixCopiaECola ||
-    `00020101021226580014BR.GOV.BCB.PIX0114+551198765432152040000530398654${(order.totalCents / 100).toFixed(2)}5802BR5925${tenant.name.slice(0, 25)}6015SAO PAULO62190515${order.id || 'PEDIDO1042'}6304`;
+  const effectivePixKey = transaction?.pixKey || tenantPix.pixKey;
+  const effectiveBeneficiaryName =
+    transaction?.beneficiaryName || transaction?.merchantName || tenantPix.beneficiaryName;
+  const effectiveMerchantCity = transaction?.merchantCity || tenantPix.merchantCityEmv;
+
+  // Always generate a valid BACEN EMV dynamic payload with the current tenant's Chave Pix and Nome do Beneficiário
+  const pixPayload = generateDynamicPixPayload({
+    pixKey: effectivePixKey,
+    beneficiaryName: effectiveBeneficiaryName,
+    merchantCity: effectiveMerchantCity,
+    amountCents: order.totalCents,
+    txid: transaction?.txid || order.id || `PEDIDO${order.orderNumber}`,
+  });
 
   useEffect(() => {
     if (!isOpen) return;
@@ -265,6 +295,18 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
 
               <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 text-left text-xs space-y-1.5 font-mono">
                 <div className="flex justify-between text-neutral-500">
+                  <span>Beneficiário Recebedor:</span>
+                  <span className="text-neutral-900 font-bold truncate max-w-[200px]">
+                    {effectiveBeneficiaryName}
+                  </span>
+                </div>
+                <div className="flex justify-between text-neutral-500">
+                  <span>Chave Pix de Destino:</span>
+                  <span className="text-emerald-700 font-bold truncate max-w-[200px]">
+                    {effectivePixKey}
+                  </span>
+                </div>
+                <div className="flex justify-between text-neutral-500">
                   <span>ID Transação Pix:</span>
                   <span className="text-neutral-800 font-bold">{transaction?.txid?.slice(0, 18) || 'PIX_OK_20261021'}...</span>
                 </div>
@@ -335,6 +377,33 @@ export const PixPaymentModal: React.FC<PixPaymentModalProps> = ({
                     Expira em
                   </span>
                   <p className="text-xs font-mono font-bold text-amber-600">{formatMinutes(timeLeftSeconds)}</p>
+                </div>
+              </div>
+
+              {/* Restaurant Beneficiary & Pix Key Details */}
+              <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-xl text-xs space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Recebimento Direto na Conta do Restaurante</span>
+                  </span>
+                  <span className="text-[10px] font-mono font-bold bg-white px-2 py-0.5 rounded border border-emerald-200 text-emerald-800">
+                    BACEN EMV
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-emerald-200/70">
+                  <div>
+                    <span className="text-[10px] text-emerald-700 block">Nome do Beneficiário:</span>
+                    <p className="font-bold text-neutral-900 text-xs truncate" title={effectiveBeneficiaryName}>
+                      {effectiveBeneficiaryName}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-emerald-700 block">Chave Pix de Destino:</span>
+                    <p className="font-mono font-bold text-neutral-900 text-xs truncate" title={effectivePixKey}>
+                      {effectivePixKey}
+                    </p>
+                  </div>
                 </div>
               </div>
 

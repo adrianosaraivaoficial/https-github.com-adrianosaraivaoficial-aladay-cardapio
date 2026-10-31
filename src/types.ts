@@ -81,6 +81,8 @@ export interface RestaurantTenant {
   botClosedHoursMessage?: string;
   botHumanHandoffMessage?: string;
   statusNotificationTemplates?: StatusNotificationTemplates;
+  pixKey?: string;
+  pixBeneficiaryName?: string;
   pixConfig?: PixGatewayConfig;
   asaasSubscription?: AsaasSubscriptionData;
   subscriptionStatus?: 'active' | 'trial' | 'past_due' | 'suspended';
@@ -120,8 +122,10 @@ export interface AsaasSubscriptionData {
   tenantSlug: string;
   customer: AsaasCustomer;
   planName: string;
-  value: number; // 129.90
-  cycle: 'MONTHLY';
+  value: number; // 99.00 (Anual no Cartão) or 129.90 (Mensal)
+  cycle: 'MONTHLY' | 'YEARLY';
+  monthlyEquivalentValue?: number;
+  installmentCount?: number;
   status: AsaasSubscriptionStatus;
   billingType: AsaasBillingType;
   nextDueDate: string;
@@ -204,6 +208,10 @@ export interface PixTransaction {
   orderId: string;
   tenantSlug: string;
   amountCents: number;
+  pixKey?: string;
+  beneficiaryName?: string;
+  merchantName?: string;
+  merchantCity?: string;
   pixCopiaECola: string;
   qrCodeBase64?: string;
   status: 'PENDING' | 'PAID' | 'EXPIRED' | 'CANCELLED';
@@ -217,6 +225,7 @@ export interface PixGatewayConfig {
   provider: 'direct_bank' | 'openpix' | 'mercadopago' | 'asaas' | 'efi' | 'manual';
   pixKey: string;
   pixKeyType: 'cpf' | 'cnpj' | 'email' | 'phone' | 'random';
+  beneficiaryName?: string;
   merchantName: string;
   merchantCity: string;
   bankName?: string;

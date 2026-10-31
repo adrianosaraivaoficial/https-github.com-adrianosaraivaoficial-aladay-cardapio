@@ -10,13 +10,18 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - APP_URL=${APP_URL:-https://cardapio.seudominio.com.br}
+      - APP_URL=${APP_URL:-https://aladay.com.br}
+      - DATABASE_URL=${DATABASE_URL}
+      - PGSSLMODE=${PGSSLMODE:-disable}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@aladay.com.br}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - EVOLUTION_API_URL=${EVOLUTION_API_URL:-https://agencia-evolution-api.2eoc7n.easypanel.host}
       - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
+      - EVOLUTION_DEFAULT_INSTANCE=${EVOLUTION_DEFAULT_INSTANCE:-aladay}
       - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-https://agencia-n8n.2eoc7n.easypanel.host/webhook-test/saas}
       - JWT_SECRET=${JWT_SECRET}
       - PIX_WEBHOOK_SECRET=${PIX_WEBHOOK_SECRET}
-      - ASAAS_ENVIRONMENT=${ASAAS_ENVIRONMENT:-sandbox}
+      - ASAAS_ENVIRONMENT=${ASAAS_ENVIRONMENT:-production}
       - ASAAS_API_KEY=${ASAAS_API_KEY}
       - ASAAS_WEBHOOK_TOKEN=${ASAAS_WEBHOOK_TOKEN}
       - GEMINI_API_KEY=${GEMINI_API_KEY}

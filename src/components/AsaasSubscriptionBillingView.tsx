@@ -48,7 +48,8 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
   });
 
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedBillingType, setSelectedBillingType] = useState<AsaasBillingType>('PIX');
+  const [selectedPlanCycle, setSelectedPlanCycle] = useState<'YEARLY' | 'MONTHLY'>('YEARLY');
+  const [selectedBillingType, setSelectedBillingType] = useState<AsaasBillingType>('CREDIT_CARD');
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [feedbackNotice, setFeedbackNotice] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
@@ -74,7 +75,11 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
         const data = await res.json();
         if (data.subscription) {
           setSubscription(data.subscription);
-          setSelectedBillingType(data.subscription.billingType || 'PIX');
+          const subCycle = data.subscription.cycle === 'YEARLY' ? 'YEARLY' : 'MONTHLY';
+          setSelectedPlanCycle(subCycle);
+          setSelectedBillingType(
+            subCycle === 'YEARLY' ? 'CREDIT_CARD' : data.subscription.billingType || 'PIX'
+          );
         }
         if (data.gateway) {
           setGatewayConfig(data.gateway);
@@ -106,28 +111,45 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
     setTimeout(() => setCopiedCode(null), 3000);
   };
 
+  // Switch plan cycle (YEARLY R$ 99,00/mês on Credit Card vs MONTHLY R$ 129,90/mês)
+  const handleSelectPlanCycle = (cycle: 'YEARLY' | 'MONTHLY') => {
+    setSelectedPlanCycle(cycle);
+    if (cycle === 'YEARLY') {
+      setSelectedBillingType('CREDIT_CARD');
+    }
+  };
+
   // Switch billing method (Pix / Card / Boleto)
   const handleChangeBillingType = async (type: AsaasBillingType) => {
+    if (selectedPlanCycle === 'YEARLY' && type !== 'CREDIT_CARD') {
+      showToast('info', 'A assinatura anual por R$ 99,00/mês é exclusiva para pagamento no Cartão de Crédito.');
+      setSelectedBillingType('CREDIT_CARD');
+      return;
+    }
     setSelectedBillingType(type);
+    if (type === 'CREDIT_CARD') {
+      return;
+    }
     try {
       const res = await fetch(`/api/v1/asaas/subscription/${tenant.slug}/subscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           billingType: type,
+          planCycle: selectedPlanCycle,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         setSubscription(data.subscription);
-        showToast('success', `Forma de cobrança mensal alterada para ${type === 'PIX' ? 'Pix Recorrente' : type === 'CREDIT_CARD' ? 'Cartão de Crédito' : 'Boleto Bancário'}!`);
+        showToast('success', `Forma de cobrança mensal alterada para ${type === 'PIX' ? 'Pix Recorrente' : 'Boleto Bancário'}!`);
       }
     } catch {
       showToast('error', 'Falha ao atualizar método de cobrança.');
     }
   };
 
-  // Submit Credit Card
+  // Submit Credit Card (for Annual R$ 99,00/mês or Monthly R$ 129,90/mês)
   const handleSaveCreditCard = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!ccNumber || !ccHolder || !ccExpiry || !ccCvv) {
@@ -142,25 +164,33 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           billingType: 'CREDIT_CARD',
+          planCycle: selectedPlanCycle,
           creditCardNumber: ccNumber,
           creditCardHolder: ccHolder,
           creditCardExpiry: ccExpiry,
           creditCardCcv: ccCvv,
         }),
       });
-      if (res.ok) {
-        const data = await res.json();
+      const data = await res.json();
+      if (res.ok && data.subscription) {
         setSubscription(data.subscription);
-        showToast('success', 'Cartão cadastrado com sucesso! Mensalidade de R$ 129,90 liquidada via Asaas.');
+        showToast(
+          'success',
+          selectedPlanCycle === 'YEARLY'
+            ? 'Assinatura Anual por R$ 99,00/mês no Cartão de Crédito ativada com sucesso via Asaas!'
+            : 'Cartão cadastrado com sucesso! Mensalidade de R$ 129,90 liquidada via Asaas.'
+        );
         setCcNumber('');
         setCcHolder('');
         setCcExpiry('');
         setCcCvv('');
-        if (tenant.evolutionStatus !== 'connected') {
-          onUpdateTenant({ ...tenant });
-        }
+        onUpdateTenant({
+          ...tenant,
+          subscriptionStatus: 'active',
+          asaasSubscription: data.subscription,
+        });
       } else {
-        showToast('error', 'Não foi possível autorizar o cartão no Asaas.');
+        showToast('error', data.error || 'Não foi possível autorizar o cartão no Asaas.');
       }
     } catch {
       showToast('error', 'Erro ao processar transação de cartão.');
@@ -286,10 +316,10 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
               </span>
             </div>
             <h2 className="text-lg font-bold tracking-tight">
-              Assinatura Recorrente Aladay &bull; R$ 129,90 / mês
+              Assinatura Aladay &bull; Anual R$ 99,00/mês (Cartão) ou Mensal R$ 129,90/mês
             </h2>
             <p className="text-xs text-neutral-300 max-w-2xl leading-relaxed">
-              O gateway <strong>Asaas</strong> processa exclusivamente a mensalidade de R$ 129,90 da sua plataforma. Os pedidos e cobranças Pix dos seus clientes finais entram <strong>100% diretos na sua conta bancária</strong> com taxa 0%.
+              Escolha a <strong>Assinatura Anual por R$ 99,00/mês no Cartão de Crédito</strong> (economizando R$ 370,80/ano) ou o plano mensal de R$ 129,90. Os pedidos Pix dos seus clientes finais entram <strong>100% diretos na sua conta bancária</strong> com taxa 0%.
             </p>
           </div>
 
@@ -481,13 +511,16 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
 
         <div className="bg-white border border-neutral-200 rounded-xl p-4 space-y-1 shadow-sm">
           <p className="text-[11px] font-medium text-neutral-500 uppercase tracking-wider">
-            Valor Mensal Recorrente
+            Valor do Plano Selecionado
           </p>
           <p className="text-xl font-bold font-mono text-neutral-900">
-            R$ 129,90 <span className="text-xs font-normal text-neutral-500">/ mês</span>
+            {selectedPlanCycle === 'YEARLY' ? 'R$ 99,00' : 'R$ 129,90'}{' '}
+            <span className="text-xs font-normal text-neutral-500">/ mês</span>
           </p>
           <p className="text-[11px] text-emerald-700 font-medium">
-            Cobrança mensal no gateway Asaas
+            {selectedPlanCycle === 'YEARLY'
+              ? 'Plano Anual no Cartão (12x R$ 99,00)'
+              : 'Plano Mensal no gateway Asaas'}
           </p>
         </div>
 
@@ -501,7 +534,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
               : '20/11/2026'}
           </p>
           <p className="text-[11px] text-neutral-500">
-            Ciclo Mensal Automático
+            {selectedPlanCycle === 'YEARLY' ? 'Ciclo Anual (12x no Cartão)' : 'Ciclo Mensal Automático'}
           </p>
         </div>
 
@@ -535,12 +568,101 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
 
       {/* Main Payment & Active Invoice Management Card */}
       <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-sm space-y-6">
+        {/* 1. Plan Cycle Selector: Anual R$ 99,00/mês (Cartão) vs Mensal R$ 129,90/mês */}
+        <div className="space-y-3 pb-5 border-b border-neutral-200">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-bold text-neutral-900">
+                1. Escolha o Ciclo da Sua Assinatura Aladay
+              </h3>
+              <p className="text-xs text-neutral-500">
+                Economize 24% escolhendo a assinatura anual por R$ 99,00/mês no cartão de crédito.
+              </p>
+            </div>
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold w-fit">
+              <CreditCard className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Anual: Economia de R$ 370,80/ano</span>
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Annual Plan Option: R$ 99,00/mês on Credit Card */}
+            <button
+              type="button"
+              onClick={() => handleSelectPlanCycle('YEARLY')}
+              className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between gap-3 cursor-pointer ${
+                selectedPlanCycle === 'YEARLY'
+                  ? 'border-2 border-emerald-600 bg-emerald-50/70 text-neutral-900 shadow-xs'
+                  : 'border-neutral-200 hover:border-neutral-300 bg-white text-neutral-700'
+              }`}
+            >
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="px-2 py-0.5 rounded bg-neutral-900 text-emerald-400 text-[10px] font-extrabold uppercase tracking-wider">
+                    Mais Escolhido &middot; 24% OFF
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-800 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                    <CreditCard className="w-3 h-3" />
+                    <span>Exclusivo Cartão de Crédito</span>
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between pt-1">
+                  <p className="text-sm font-black text-neutral-950">Assinatura Anual</p>
+                  <div>
+                    <span className="text-2xl font-black font-mono text-emerald-700">R$ 99,00</span>
+                    <span className="text-xs text-neutral-500 font-semibold">/mês</span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-neutral-600 leading-relaxed">
+                  Cobrança parcelada em <strong>12x de R$ 99,00 no cartão de crédito</strong> (total R$ 1.188,00/ano). Você economiza <strong>R$ 370,80 por ano</strong> em relação ao plano mensal.
+                </p>
+              </div>
+            </button>
+
+            {/* Monthly Plan Option: R$ 129,90/mês */}
+            <button
+              type="button"
+              onClick={() => handleSelectPlanCycle('MONTHLY')}
+              className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between gap-3 cursor-pointer ${
+                selectedPlanCycle === 'MONTHLY'
+                  ? 'border-2 border-emerald-600 bg-emerald-50/70 text-neutral-900 shadow-xs'
+                  : 'border-neutral-200 hover:border-neutral-300 bg-white text-neutral-700'
+              }`}
+            >
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="px-2 py-0.5 rounded bg-neutral-200 text-neutral-800 text-[10px] font-bold uppercase tracking-wider">
+                    Ciclo Mensal
+                  </span>
+                  <span className="text-[11px] font-medium text-neutral-500">
+                    Pix, Cartão ou Boleto
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between pt-1">
+                  <p className="text-sm font-black text-neutral-950">Assinatura Mensal</p>
+                  <div>
+                    <span className="text-2xl font-black font-mono text-neutral-900">R$ 129,90</span>
+                    <span className="text-xs text-neutral-500 font-semibold">/mês</span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-neutral-600 leading-relaxed">
+                  Renovação mês a mês sem fidelidade anual. Permite pagamento via Pix Recorrente, Cartão de Crédito ou Boleto Asaas.
+                </p>
+              </div>
+            </button>
+          </div>
+        </div>
+
         <div>
           <h3 className="text-sm font-bold text-neutral-900">
-            Método de Pagamento da Assinatura Mensal (R$ 129,90)
+            {selectedPlanCycle === 'YEARLY'
+              ? '2. Pagamento da Assinatura Anual no Cartão de Crédito (R$ 99,00/mês)'
+              : '2. Método de Pagamento da Assinatura Mensal (R$ 129,90/mês)'}
           </h3>
           <p className="text-xs text-neutral-500">
-            Escolha como prefere pagar a mensalidade da plataforma Aladay. Alterne a qualquer momento sem custos.
+            {selectedPlanCycle === 'YEARLY'
+              ? 'O plano anual de R$ 99,00/mês é processado exclusivamente via Cartão de Crédito (12x de R$ 99,00).'
+              : 'Escolha como prefere pagar a mensalidade da plataforma Aladay. Alterne a qualquer momento sem custos.'}
           </p>
         </div>
 
@@ -548,16 +670,19 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
         <div className="grid grid-cols-3 gap-3">
           <button
             type="button"
+            disabled={selectedPlanCycle === 'YEARLY'}
             onClick={() => handleChangeBillingType('PIX')}
             className={`p-3.5 rounded-xl border text-left transition-all flex flex-col gap-1.5 ${
-              selectedBillingType === 'PIX'
+              selectedPlanCycle === 'YEARLY'
+                ? 'border-neutral-200 bg-neutral-100 text-neutral-400 opacity-60 cursor-not-allowed'
+                : selectedBillingType === 'PIX'
                 ? 'border-emerald-600 bg-emerald-50/50 text-neutral-900 ring-2 ring-emerald-600/20'
                 : 'border-neutral-200 hover:border-neutral-300 text-neutral-600 bg-white'
             }`}
           >
             <div className="flex items-center justify-between">
-              <QrCode className={`w-5 h-5 ${selectedBillingType === 'PIX' ? 'text-emerald-700' : 'text-neutral-500'}`} />
-              {selectedBillingType === 'PIX' && (
+              <QrCode className={`w-5 h-5 ${selectedBillingType === 'PIX' && selectedPlanCycle === 'MONTHLY' ? 'text-emerald-700' : 'text-neutral-400'}`} />
+              {selectedBillingType === 'PIX' && selectedPlanCycle === 'MONTHLY' && (
                 <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
                   Ativo
                 </span>
@@ -565,7 +690,9 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
             </div>
             <p className="text-xs font-bold text-neutral-900">Pix Recorrente Asaas</p>
             <p className="text-[11px] text-neutral-500 leading-tight">
-              Liberação em segundos via QR Code e Copia e Cola.
+              {selectedPlanCycle === 'YEARLY'
+                ? 'Disponível apenas no Plano Mensal (R$ 129,90).'
+                : 'Liberação em segundos via QR Code e Copia e Cola.'}
             </p>
           </button>
 
@@ -582,28 +709,33 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
               <CreditCard className={`w-5 h-5 ${selectedBillingType === 'CREDIT_CARD' ? 'text-blue-700' : 'text-neutral-500'}`} />
               {selectedBillingType === 'CREDIT_CARD' && (
                 <span className="text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded">
-                  Ativo
+                  {selectedPlanCycle === 'YEARLY' ? 'Plano Anual R$ 99/mês' : 'Ativo'}
                 </span>
               )}
             </div>
             <p className="text-xs font-bold text-neutral-900">Cartão de Crédito</p>
             <p className="text-[11px] text-neutral-500 leading-tight">
-              Débito automático mensal sem comprometer o limite total.
+              {selectedPlanCycle === 'YEARLY'
+                ? '12x de R$ 99,00 sem juros no cartão de crédito.'
+                : 'Débito automático mensal sem comprometer o limite total.'}
             </p>
           </button>
 
           <button
             type="button"
+            disabled={selectedPlanCycle === 'YEARLY'}
             onClick={() => handleChangeBillingType('BOLETO')}
             className={`p-3.5 rounded-xl border text-left transition-all flex flex-col gap-1.5 ${
-              selectedBillingType === 'BOLETO'
+              selectedPlanCycle === 'YEARLY'
+                ? 'border-neutral-200 bg-neutral-100 text-neutral-400 opacity-60 cursor-not-allowed'
+                : selectedBillingType === 'BOLETO'
                 ? 'border-amber-600 bg-amber-50/50 text-neutral-900 ring-2 ring-amber-600/20'
                 : 'border-neutral-200 hover:border-neutral-300 text-neutral-600 bg-white'
             }`}
           >
             <div className="flex items-center justify-between">
-              <FileText className={`w-5 h-5 ${selectedBillingType === 'BOLETO' ? 'text-amber-700' : 'text-neutral-500'}`} />
-              {selectedBillingType === 'BOLETO' && (
+              <FileText className={`w-5 h-5 ${selectedBillingType === 'BOLETO' && selectedPlanCycle === 'MONTHLY' ? 'text-amber-700' : 'text-neutral-400'}`} />
+              {selectedBillingType === 'BOLETO' && selectedPlanCycle === 'MONTHLY' && (
                 <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
                   Ativo
                 </span>
@@ -611,7 +743,9 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
             </div>
             <p className="text-xs font-bold text-neutral-900">Boleto Bancário</p>
             <p className="text-[11px] text-neutral-500 leading-tight">
-              Boleto registrado Asaas com linha digitável e PDF.
+              {selectedPlanCycle === 'YEARLY'
+                ? 'Disponível apenas no Plano Mensal (R$ 129,90).'
+                : 'Boleto registrado Asaas com linha digitável e PDF.'}
             </p>
           </button>
         </div>
@@ -738,14 +872,25 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
         {/* 2. CREDIT CARD DETAILS */}
         {selectedBillingType === 'CREDIT_CARD' && (
           <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-5 space-y-4">
-            <div className="border-b border-neutral-200/60 pb-3">
-              <h4 className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
-                <CreditCard className="w-4 h-4 text-blue-700" />
-                <span>Cadastro de Cartão de Crédito para Mensalidade Recorrente (R$ 129,90/mês)</span>
-              </h4>
-              <p className="text-[11px] text-neutral-500">
-                Os dados são transmitidos de forma segura e tokenizados diretamente pelo gateway Asaas.
-              </p>
+            <div className="border-b border-neutral-200/60 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h4 className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
+                  <CreditCard className="w-4 h-4 text-blue-700" />
+                  <span>
+                    {selectedPlanCycle === 'YEARLY'
+                      ? 'Cadastro de Cartão de Crédito · Assinatura Anual (R$ 99,00/mês)'
+                      : 'Cadastro de Cartão de Crédito · Assinatura Mensal (R$ 129,90/mês)'}
+                  </span>
+                </h4>
+                <p className="text-[11px] text-neutral-500">
+                  {selectedPlanCycle === 'YEARLY'
+                    ? 'Parcelamento anual em 12x de R$ 99,00 no cartão de crédito via gateway Asaas.'
+                    : 'Os dados são transmitidos de forma segura e tokenizados diretamente pelo gateway Asaas.'}
+                </p>
+              </div>
+              <span className="text-xs font-mono font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200 w-fit">
+                {selectedPlanCycle === 'YEARLY' ? '12x de R$ 99,00' : 'R$ 129,90 / mês'}
+              </span>
             </div>
 
             <form onSubmit={handleSaveCreditCard} className="space-y-4 max-w-xl">
@@ -761,7 +906,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                     placeholder="4532 1122 3344 5566"
                     value={ccNumber}
                     onChange={(e) => setCcNumber(e.target.value)}
-                    className="w-full p-2.5 text-xs font-mono border border-neutral-200 rounded-lg text-neutral-900 pr-10"
+                    className="w-full p-2.5 text-xs font-mono border border-neutral-200 rounded-lg text-neutral-900 pr-10 bg-white"
                   />
                   <CreditCard className="w-4 h-4 text-neutral-400 absolute right-3 top-3" />
                 </div>
@@ -777,7 +922,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                   placeholder="Ex: MARCOS A SILVA"
                   value={ccHolder}
                   onChange={(e) => setCcHolder(e.target.value)}
-                  className="w-full p-2.5 text-xs uppercase border border-neutral-200 rounded-lg text-neutral-900"
+                  className="w-full p-2.5 text-xs uppercase border border-neutral-200 rounded-lg text-neutral-900 bg-white"
                 />
               </div>
 
@@ -793,7 +938,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                     placeholder="12/29"
                     value={ccExpiry}
                     onChange={(e) => setCcExpiry(e.target.value)}
-                    className="w-full p-2.5 text-xs font-mono border border-neutral-200 rounded-lg text-neutral-900"
+                    className="w-full p-2.5 text-xs font-mono border border-neutral-200 rounded-lg text-neutral-900 bg-white"
                   />
                 </div>
 
@@ -809,21 +954,27 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                       placeholder="123"
                       value={ccCvv}
                       onChange={(e) => setCcCvv(e.target.value)}
-                      className="w-full p-2.5 text-xs font-mono border border-neutral-200 rounded-lg text-neutral-900"
+                      className="w-full p-2.5 text-xs font-mono border border-neutral-200 rounded-lg text-neutral-900 bg-white"
                     />
                     <Lock className="w-3.5 h-3.5 text-neutral-400 absolute right-3 top-3" />
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 pt-2">
+              <div className="flex flex-wrap items-center gap-2 pt-2">
                 <button
                   type="submit"
                   disabled={isSubmittingCard}
-                  className="px-5 py-2.5 text-xs font-bold text-white bg-blue-700 hover:bg-blue-600 rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                  className="px-5 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>{isSubmittingCard ? 'Processando no Asaas...' : 'Ativar Assinatura no Cartão (R$ 129,90/mês)'}</span>
+                  <span>
+                    {isSubmittingCard
+                      ? 'Processando no Asaas...'
+                      : selectedPlanCycle === 'YEARLY'
+                      ? 'Ativar Assinatura Anual no Cartão (R$ 99,00/mês)'
+                      : 'Ativar Assinatura Mensal no Cartão (R$ 129,90/mês)'}
+                  </span>
                 </button>
 
                 <button
@@ -834,7 +985,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                     setCcExpiry('10/29');
                     setCcCvv('888');
                   }}
-                  className="px-3 py-2 text-xs text-neutral-600 hover:text-neutral-900 bg-neutral-200/60 rounded-lg"
+                  className="px-3 py-2 text-xs text-neutral-600 hover:text-neutral-900 bg-neutral-200/60 rounded-lg cursor-pointer"
                 >
                   Preencher Cartão Teste
                 </button>

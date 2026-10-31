@@ -43,6 +43,8 @@ interface LandingPageViewProps {
   onNavigateToSetup: () => void;
   onNavigateToDemoMenu: () => void;
   onNavigateToAdmin: () => void;
+  onNavigateToTerms?: () => void;
+  onNavigateToPrivacy?: () => void;
 }
 
 // Sample interactive products for the live mobile phone demonstration
@@ -101,6 +103,8 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
   onNavigateToSetup,
   onNavigateToDemoMenu,
   onNavigateToAdmin,
+  onNavigateToTerms,
+  onNavigateToPrivacy,
 }) => {
   // ---------------------------------------------------------------------------
   // 1. Analytics & Privacy Consent State (LGPD / GDPR)
@@ -178,15 +182,16 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
   };
 
   // ---------------------------------------------------------------------------
-  // 3. Calculator State (Marketplaces vs Aladay R$ 129,90)
+  // 3. Calculator State (Marketplaces vs Aladay R$ 99,00/mês Anual ou R$ 129,90/mês Mensal)
   // ---------------------------------------------------------------------------
   const [monthlyOrders, setMonthlyOrders] = useState<number>(450);
   const [averageTicketBRL, setAverageTicketBRL] = useState<number>(68);
   const [marketplaceFeePercent, setMarketplaceFeePercent] = useState<number>(18);
+  const [calculatorPlanCycle, setCalculatorPlanCycle] = useState<'YEARLY' | 'MONTHLY'>('YEARLY');
 
   const grossMonthlyRevenue = monthlyOrders * averageTicketBRL;
   const marketplaceMonthlyCost = (grossMonthlyRevenue * marketplaceFeePercent) / 100;
-  const aladayMonthlyCost = 129.9;
+  const aladayMonthlyCost = calculatorPlanCycle === 'YEARLY' ? 99.0 : 129.9;
   const monthlySavings = Math.max(0, marketplaceMonthlyCost - aladayMonthlyCost);
   const annualSavings = monthlySavings * 12;
 
@@ -305,16 +310,28 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
       'Importação rápida de produtos e categorias via planilha CSV/Excel',
       'Zero taxa de comissão sobre vendas',
     ],
-    offers: {
-      '@type': 'Offer',
-      name: 'Plano Único Aladay Pro (com 15 dias de teste grátis)',
-      price: '129.90',
-      priceCurrency: 'BRL',
-      priceValidUntil: '2027-12-31',
-      availability: 'https://schema.org/InStock',
-      url: 'https://aladay.com.br',
-      category: 'Assinatura Mensal SaaS',
-    },
+    offers: [
+      {
+        '@type': 'Offer',
+        name: 'Assinatura Anual Aladay Pro no Cartão de Crédito (12x de R$ 99,00)',
+        price: '99.00',
+        priceCurrency: 'BRL',
+        priceValidUntil: '2027-12-31',
+        availability: 'https://schema.org/InStock',
+        url: 'https://aladay.com.br',
+        category: 'Assinatura Anual SaaS (Cartão de Crédito)',
+      },
+      {
+        '@type': 'Offer',
+        name: 'Assinatura Mensal Aladay Pro (com 15 dias de teste grátis)',
+        price: '129.90',
+        priceCurrency: 'BRL',
+        priceValidUntil: '2027-12-31',
+        availability: 'https://schema.org/InStock',
+        url: 'https://aladay.com.br',
+        category: 'Assinatura Mensal SaaS',
+      },
+    ],
     provider: {
       '@type': 'Organization',
       name: 'Aladay',
@@ -743,48 +760,57 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
           </p>
         </div>
 
-        {/* Pricing Cards Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
-          {/* Main Plan Card: Plano Pro R$ 129,90 */}
-          <div className="lg:col-span-7 bg-neutral-950 text-white rounded-2xl p-6 sm:p-8 flex flex-col justify-between border-2 border-emerald-500 relative shadow-xl">
-            {/* Best Value Ribbon */}
-            <div className="absolute -top-3.5 right-6 bg-emerald-500 text-neutral-950 text-xs font-extrabold px-3 py-1 rounded-full shadow-md">
-              15 DIAS GRÁTIS PARA TESTAR &middot; PLANO COMPLETO
+        {/* Pricing Cards Grid: Anual R$ 99,00/mês (Cartão) & Mensal R$ 129,90/mês */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+          {/* Card 1 (Featured): Assinatura Anual R$ 99,00/mês no Cartão de Crédito */}
+          <div className="lg:col-span-6 bg-neutral-950 text-white rounded-2xl p-6 sm:p-7 flex flex-col justify-between border-2 border-emerald-500 relative shadow-xl">
+            <div className="absolute -top-3.5 right-5 bg-emerald-500 text-neutral-950 text-[11px] font-extrabold px-3 py-1 rounded-full shadow-md flex items-center gap-1">
+              <CreditCard className="w-3.5 h-3.5" />
+              <span>MAIS VANTAJOSO &middot; ECONOMIZE R$ 370,80/ANO</span>
             </div>
 
-            <div className="space-y-6">
+            <div className="space-y-5">
               <div>
                 <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
-                  15 Dias Grátis &middot; Depois Assinatura Mensal Fixa
+                  Assinatura Anual &middot; Exclusivo no Cartão de Crédito
                 </span>
-                <h3 className="text-2xl font-black text-white mt-1">Plano Aladay Pro</h3>
+                <h3 className="text-2xl font-black text-white mt-1">Plano Aladay Anual</h3>
                 <p className="text-xs text-neutral-400 mt-1">
-                  Experimente grátis por 15 dias sem compromisso. Ideal para restaurantes, lanchonetes, pizzarias e dark kitchens.
+                  Garanta o menor valor mensal contratando o ciclo anual parcelado em 12x no cartão de crédito.
                 </p>
               </div>
 
               {/* Price display */}
-              <div className="flex flex-wrap items-baseline gap-2 border-y border-neutral-800 py-4">
-                <span className="text-4xl sm:text-5xl font-black font-mono text-white">R$ 129,90</span>
-                <span className="text-neutral-400 text-sm">/mês após 15 dias grátis</span>
-                <span className="ml-auto text-xs font-mono text-emerald-400 bg-neutral-900 px-2.5 py-1 rounded-md border border-neutral-800">
-                  R$ 0,00 hoje &middot; 0% comissão
-                </span>
+              <div className="border-y border-neutral-800 py-4 space-y-2">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="text-4xl sm:text-5xl font-black font-mono text-white">R$ 99,00</span>
+                  <span className="text-neutral-300 text-sm font-semibold">/mês</span>
+                  <span className="ml-auto text-[11px] font-mono text-emerald-400 bg-neutral-900 px-2.5 py-1 rounded-md border border-neutral-800">
+                    24% de desconto
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-neutral-400 font-mono">
+                  <span className="flex items-center gap-1.5 text-emerald-300 font-semibold">
+                    <CreditCard className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>No Cartão de Crédito (12x de R$ 99,00)</span>
+                  </span>
+                  <span className="line-through text-neutral-500">De R$ 129,90/mês</span>
+                </div>
               </div>
 
               {/* What is included checklist */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-neutral-300">
+              <div className="space-y-2.5 text-xs text-neutral-300">
                 <div className="flex items-start gap-2">
                   <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>Cardápio digital ilimitado (Link &amp; QR Code)</span>
+                  <span><strong>Pagamento exclusivo no Cartão de Crédito</strong> (12x R$ 99,00)</span>
                 </div>
                 <div className="flex items-start gap-2">
                   <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>Pix 100% direto na conta bancária da sua loja</span>
+                  <span>Cardápio digital ilimitado (Link &amp; QR Code de Mesa)</span>
                 </div>
                 <div className="flex items-start gap-2">
                   <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>Pedidos, produtos e categorias ilimitados</span>
+                  <span>Pix dos pedidos 100% direto na conta bancária da loja (0% comissão)</span>
                 </div>
                 <div className="flex items-start gap-2">
                   <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
@@ -792,99 +818,97 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 </div>
                 <div className="flex items-start gap-2">
                   <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>Painel KDS Kanban para cozinha e expedição</span>
+                  <span>Painel KDS com contador visual SLA &amp; impressão térmica</span>
                 </div>
                 <div className="flex items-start gap-2">
                   <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>Gestão de taxas de entrega por bairro ou raio</span>
+                  <span>Inclui 15 dias de teste grátis para experimentar tudo</span>
+                </div>
+              </div>
+            </div>
+
+            {/* CTA inside Annual Card */}
+            <div className="pt-6 mt-6 border-t border-neutral-800 space-y-2">
+              <button
+                type="button"
+                onClick={() => handleTrackedSignup('pricing_annual_99_cc')}
+                className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold text-xs sm:text-sm rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <CreditCard className="w-4 h-4" />
+                <span>Assinar Anual por R$ 99,00/mês no Cartão</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+              <p className="text-[11px] text-neutral-400 text-center">
+                12x de R$ 99,00 no cartão de crédito (total R$ 1.188,00/ano) &middot; Economia de R$ 370,80.
+              </p>
+            </div>
+          </div>
+
+          {/* Card 2: Assinatura Mensal R$ 129,90/mês */}
+          <div className="lg:col-span-6 bg-white border border-neutral-200 rounded-2xl p-6 sm:p-7 flex flex-col justify-between shadow-xs">
+            <div className="space-y-5">
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-emerald-700 uppercase tracking-wider">
+                    Assinatura Mensal Flexível
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    15 Dias Grátis
+                  </span>
+                </div>
+                <h3 className="text-xl font-black text-neutral-950 mt-1">Plano Aladay Mensal</h3>
+                <p className="text-xs text-neutral-600 mt-1">
+                  Sem fidelidade anual. Pague mês a mês via Pix, Cartão de Crédito ou Boleto Asaas.
+                </p>
+              </div>
+
+              {/* Price display */}
+              <div className="border-y border-neutral-200 py-4 space-y-1.5">
+                <div className="flex flex-wrap items-baseline gap-1.5">
+                  <span className="text-3xl sm:text-4xl font-black font-mono text-neutral-950">R$ 129,90</span>
+                  <span className="text-neutral-500 text-xs font-medium">/mês</span>
+                </div>
+                <p className="text-[11px] font-mono text-emerald-700">
+                  Pix, Cartão de Crédito ou Boleto &middot; 0% comissão
+                </p>
+              </div>
+
+              <div className="space-y-2.5 text-xs text-neutral-700">
+                <div className="flex items-start gap-2">
+                  <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>Todos os recursos do Plano Pro liberados</span>
                 </div>
                 <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>Impressão de comandas térmicas (58mm e 80mm)</span>
+                  <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>Pix 100% direto na conta bancária da sua loja</span>
                 </div>
                 <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>Pedidos, produtos e categorias ilimitados</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>KDS Cozinha + WhatsApp Automático Evolution API</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                   <span>Sem fidelidade: cancele quando quiser sem multa</span>
                 </div>
               </div>
             </div>
 
-            {/* CTA inside Pro Card */}
-            <div className="pt-6 mt-6 border-t border-neutral-800 space-y-2">
+            <div className="pt-6 mt-6 border-t border-neutral-200 space-y-2">
               <button
                 type="button"
-                onClick={() => handleTrackedSignup('pricing_main_pro')}
-                className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold text-sm rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                onClick={() => handleTrackedSignup('pricing_monthly_129_90')}
+                className="w-full py-3.5 bg-neutral-900 hover:bg-neutral-800 text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
-                <span>Começar 15 Dias de Teste Grátis (R$ 0,00 hoje)</span>
+                <span>Começar 15 Dias Grátis (Plano Mensal)</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
               <p className="text-[11px] text-neutral-500 text-center">
-                Teste grátis por 15 dias sem cartão obrigatório. Após o teste, R$ 129,90/mês via Asaas.
+                R$ 0,00 hoje &middot; Após 15 dias, R$ 129,90/mês via Asaas.
               </p>
-            </div>
-          </div>
-
-          {/* Secondary Card: Redes, Franquias & Solicitar Proposta */}
-          <div className="lg:col-span-5 bg-neutral-50 border border-neutral-200 rounded-2xl p-6 sm:p-8 flex flex-col justify-between">
-            <div className="space-y-5">
-              <div>
-                <span className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">
-                  Operações Multi-Unidade
-                </span>
-                <h3 className="text-xl font-bold text-neutral-950 mt-1">
-                  Redes, Franquias &amp; Dark Kitchens
-                </h3>
-                <p className="text-xs text-neutral-600 mt-1">
-                  Para grupos gastronômicos com múltiplas filiais, dark kitchens centralizadas ou operações com alta volumetria.
-                </p>
-              </div>
-
-              <div className="space-y-3 text-xs text-neutral-700">
-                <div className="p-3 bg-white rounded-lg border border-neutral-200 space-y-1">
-                  <p className="font-bold text-neutral-900">Multi-Filiais Centralizadas</p>
-                  <p className="text-neutral-500">
-                    Gerencie cardápios por região, filiais separadas e relatórios consolidados em um único painel.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-white rounded-lg border border-neutral-200 space-y-1">
-                  <p className="font-bold text-neutral-900">Integrações Customizadas</p>
-                  <p className="text-neutral-500">
-                    Webhooks n8n, ERPs de PDV e canais dedicados de disparo no WhatsApp.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-white rounded-lg border border-neutral-200 space-y-1">
-                  <p className="font-bold text-neutral-900">Onboarding &amp; SLA Dedicado</p>
-                  <p className="text-neutral-500">
-                    Apoio na digitalização de cardápios com gerente de contas exclusivo.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-6 border-t border-neutral-200 space-y-2">
-              <button
-                type="button"
-                onClick={() => {
-                  trackConversionEvent('click_request_proposal_button', { source: 'pricing_enterprise' });
-                  setIsProposalModalOpen(true);
-                }}
-                className="w-full py-3.5 bg-neutral-900 hover:bg-neutral-800 text-white font-semibold text-xs rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Building2 className="w-4 h-4 text-neutral-300" />
-                <span>Solicitar Proposta para Redes</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleTrackedWhatsApp('pricing_talk_human')}
-                className="w-full py-3 bg-white hover:bg-neutral-100 text-neutral-800 border border-neutral-300 font-medium text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <PhoneCall className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Falar com Consultor Comercial</span>
-              </button>
             </div>
           </div>
         </div>
@@ -930,7 +954,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 <tr>
                   <td className="py-3 px-4 font-medium text-neutral-900">Custo Total Mensal</td>
                   <td className="py-3 px-4 text-neutral-600">R$ 2.000 a R$ 8.000+ em comissões</td>
-                  <td className="py-3 px-4 font-bold text-emerald-700 bg-emerald-50/50">Fixo R$ 129,90/mês</td>
+                  <td className="py-3 px-4 font-bold text-emerald-700 bg-emerald-50/50">R$ 99,00/mês (Anual no Cartão) ou R$ 129,90/mês (Mensal)</td>
                 </tr>
               </tbody>
             </table>
@@ -1050,6 +1074,32 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
 
           {/* Result Card */}
           <div className="lg:col-span-5 bg-neutral-50 border border-neutral-200 rounded-2xl p-6 space-y-4">
+            {/* Plan cycle toggle inside calculator */}
+            <div className="grid grid-cols-2 gap-1.5 p-1 bg-neutral-200/70 rounded-xl text-[11px] font-semibold">
+              <button
+                type="button"
+                onClick={() => setCalculatorPlanCycle('YEARLY')}
+                className={`py-1.5 px-2 rounded-lg transition-all cursor-pointer ${
+                  calculatorPlanCycle === 'YEARLY'
+                    ? 'bg-neutral-900 text-white shadow-2xs'
+                    : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                Anual (R$ 99,00/mês Cartão)
+              </button>
+              <button
+                type="button"
+                onClick={() => setCalculatorPlanCycle('MONTHLY')}
+                className={`py-1.5 px-2 rounded-lg transition-all cursor-pointer ${
+                  calculatorPlanCycle === 'MONTHLY'
+                    ? 'bg-neutral-900 text-white shadow-2xs'
+                    : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                Mensal (R$ 129,90/mês)
+              </button>
+            </div>
+
             <div className="space-y-2.5 border-b border-neutral-200 pb-4 text-xs">
               <div className="flex justify-between">
                 <span className="text-neutral-600">Faturamento Bruto:</span>
@@ -1064,9 +1114,11 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-neutral-600">Mensalidade Fixa Aladay:</span>
+                <span className="text-neutral-600">
+                  Assinatura Fixa Aladay ({calculatorPlanCycle === 'YEARLY' ? 'Anual no Cartão' : 'Mensal'}):
+                </span>
                 <span className="font-mono font-semibold text-emerald-700">
-                  R$ 129,90 / mês
+                  {calculatorPlanCycle === 'YEARLY' ? 'R$ 99,00 / mês' : 'R$ 129,90 / mês'}
                 </span>
               </div>
             </div>
@@ -1388,7 +1440,27 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             <div className="space-y-1">
               <p className="font-bold text-neutral-950">Privacidade &amp; Métricas (LGPD)</p>
               <p className="text-neutral-600 leading-relaxed text-[11px]">
-                Utilizamos cookies essenciais para o funcionamento do site e, com seu consentimento, métricas de navegação anônimas via Google Analytics 4 para aprimorar o serviço.
+                Utilizamos cookies essenciais para o funcionamento do site e, com seu consentimento, métricas de navegação anônimas via Google Analytics 4 para aprimorar o serviço. Consulte nossos{' '}
+                {onNavigateToTerms && (
+                  <button
+                    type="button"
+                    onClick={onNavigateToTerms}
+                    className="underline font-semibold text-neutral-900 hover:text-emerald-700 cursor-pointer"
+                  >
+                    Termos de Uso
+                  </button>
+                )}{' '}
+                e{' '}
+                {onNavigateToPrivacy && (
+                  <button
+                    type="button"
+                    onClick={onNavigateToPrivacy}
+                    className="underline font-semibold text-neutral-900 hover:text-emerald-700 cursor-pointer"
+                  >
+                    Política de Privacidade
+                  </button>
+                )}
+                .
               </p>
             </div>
           </div>

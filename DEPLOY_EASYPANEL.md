@@ -46,15 +46,21 @@ Na aba **Environment**, adicione as seguintes chaves:
 
 | Variável | Valor Recomendado | Descrição |
 | :--- | :--- | :--- |
-| `NODE_ENV` | `production` | Ativa compressão e entrega estática de `dist/` |
+| `NODE_ENV` | `production` | Ativa entrega estática de `dist/`, HSTS e travas de segurança |
 | `PORT` | `3000` | Porta interna do contêiner |
-| `APP_URL` | `https://cardapio.seudominio.com.br` | URL pública da sua aplicação |
+| `APP_URL` | `https://aladay.com.br` | URL pública oficial da sua aplicação (usada nos links de WhatsApp e Webhooks) |
+| `DATABASE_URL` | `postgresql://postgres:SENHA@postgres:5432/aladay` | Conexão PostgreSQL no EasyPanel (cria e migra todas as 8 tabelas automaticamente) |
+| `PGSSLMODE` | `disable` (rede interna Docker) ou `require` | Modo SSL do PostgreSQL |
+| `JWT_SECRET` | *(gerar string aleatória de 64 caracteres)* | Segredo criptográfico para assinatura de sessões JWT Multi-Tenant |
+| `ADMIN_EMAIL` | `admin@aladay.com.br` | E-mail do Super Admin da plataforma |
+| `ADMIN_PASSWORD` | *(definir senha forte)* | Senha do Super Admin da plataforma |
+| `PIX_WEBHOOK_SECRET` | *(gerar token secreto)* | Segredo para autenticação de Webhooks Pix |
 | `EVOLUTION_API_URL` | `https://agencia-evolution-api.2eoc7n.easypanel.host` | URL da sua Evolution API |
-| `EVOLUTION_API_KEY` | `21C3D49F3F00-48FA-BFA2-2CD290850405` | Chave de API da sua Evolution API |
-| `N8N_WEBHOOK_URL` | `https://agencia-n8n.2eoc7n.easypanel.host/webhook-test/saas` | Webhook do seu n8n para automação |
-| `ASAAS_ENVIRONMENT` | `sandbox` (ou `production`) | Ambiente do gateway Asaas |
-| `ASAAS_API_KEY` | `$aact_...` | Chave de API do Asaas |
-| `ASAAS_WEBHOOK_TOKEN` | `tok_aladay_asaas_sec_2026` | Token secreto do Webhook Asaas |
+| `EVOLUTION_API_KEY` | `SUA_CHAVE_EVOLUTION` | Chave Global (`AUTHENTICATION_API_KEY`) da sua Evolution API |
+| `EVOLUTION_DEFAULT_INSTANCE` | `aladay` | Instância padrão para envio de códigos OTP de 6 dígitos via WhatsApp |
+| `ASAAS_ENVIRONMENT` | `production` | Ambiente do gateway Asaas (`production` para cobranças reais) |
+| `ASAAS_API_KEY` | `$aact_...` | Chave de API de Produção do Asaas |
+| `ASAAS_WEBHOOK_TOKEN` | *(token secreto configurado no Asaas)* | Token de segurança (`asaas-access-token`) para validar webhooks de assinatura |
 
 ### Passo 5: Clicar em Deploy
 - Clique no botão **"Deploy"**.
@@ -63,14 +69,15 @@ Na aba **Environment**, adicione as seguintes chaves:
 
 ---
 
-## 3. O que falta para a operação em escala (Checklist de Produção)
+## 3. Checklist Final de Produção (Status Atual)
 
-| Item | Status Atual | Próximo Passo Recomendado |
+| Item | Status Atual | Detalhes / Ação no EasyPanel |
 | :--- | :---: | :--- |
-| **Build & Docker** |  Pronto | Dockerfile multi-stage testado e validado |
-| **SSL / HTTPS** |  Pronto | Gerenciado automaticamente pelo Traefik do EasyPanel |
-| **Integração Evolution API** |  Conectada | Instância `aladay` pareada com QR Code e webhook |
-| **Gateway Asaas R$ 99/mês** |  Conectado | Testado em sandbox. Para faturar de verdade, basta colocar a chave de produção no Asaas |
-| **Banco de Dados Persistente** | ⚠️ Em memória (`server.ts`) | No EasyPanel, criar um serviço **PostgreSQL** com 1 clique e adicionar `DATABASE_URL` para não resetar dados ao reiniciar o container |
-| **Apontamento de DNS (Hostinger/Cloudflare)** | ⏳ Pendente de DNS | Criar registro tipo `A` apontando `cardapio.seudominio.com.br` para o IP da sua VPS Hostinger |
-| **Backups** | ⏳ Opcional | Habilitar a aba "Backups" do EasyPanel com destino para S3/Google Drive |
+| **Build, Docker & Healthcheck** | ✅ Pronto | `Dockerfile` multi-stage (`node:22-alpine`) + `/api/v1/health` |
+| **Banco de Dados PostgreSQL (Auto-Migration)** | ✅ Pronto | Auto-criação e sincronização de `tenants`, `categories`, `products`, `orders`, `subscriber_users`, `asaas_subscriptions`, `pix_transactions` e `outbox_events` ao definir `DATABASE_URL` |
+| **Segurança OWASP & Isolamento Multi-Tenant** | ✅ Pronto | Senhas com `scrypt` + `timingSafeEqual`, Rate Limiting por IP, Headers HSTS/XFO/CSP, bloqueio de simuladores em `NODE_ENV=production` |
+| **Assinaturas Asaas (Anual R$ 99/mês Cartão & Mensal R$ 129,90 + Trial 15 dias)** | ✅ Pronto | Bloqueio automático de inadimplentes/trial expirado + Webhook `/api/v1/asaas/webhook` |
+| **Pix Dinâmico EMV BACEN Direto p/ Lojista (0% Taxa)** | ✅ Pronto | Cada restaurante configura sua Chave Pix e Nome do Beneficiário na aba Pix Direto |
+| **SEO, Schema.org (JSON-LD) & LGPD** | ✅ Pronto | Meta tags OpenGraph, JSON-LD `SoftwareApplication`, Termos de Uso e Política de Privacidade no rodapé |
+| **Variáveis de Ambiente & DNS** | ⏳ Ação no Painel | Preencher variáveis na aba *Environment* do EasyPanel, apontar DNS Tipo `A` para o IP da VPS e cadastrar a URL de Webhook no painel do Asaas |
+

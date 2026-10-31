@@ -34,6 +34,7 @@ COPY --from=builder /app/dist ./dist
 # Copy backend server and essential source files
 COPY --chown=node:node server.ts ./
 COPY --chown=node:node src ./src
+COPY --chown=node:node database ./database
 COPY --chown=node:node tsconfig.json ./
 
 # Ensure non-root ownership and drop privileges

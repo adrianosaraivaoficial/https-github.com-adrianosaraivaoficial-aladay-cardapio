@@ -180,14 +180,30 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   const [newZoneFee, setNewZoneFee] = useState('8.00');
   const [newZoneMinutes, setNewZoneMinutes] = useState('40');
 
-  // Pix Key Editor state (Cada restaurante edita sua própria chave Pix direta)
-  const [isEditingPixKey, setIsEditingPixKey] = useState(false);
-  const [pixKey, setPixKey] = useState(tenant.pixConfig?.pixKey || tenant.phone || '');
-  const [pixKeyType, setPixKeyType] = useState<PixGatewayConfig['pixKeyType']>(tenant.pixConfig?.pixKeyType || 'phone');
-  const [pixMerchantName, setPixMerchantName] = useState(tenant.pixConfig?.merchantName || tenant.name || 'MEU RESTAURANTE');
-  const [pixMerchantCity, setPixMerchantCity] = useState(tenant.pixConfig?.merchantCity || 'SAO PAULO');
-  const [pixBankName, setPixBankName] = useState(tenant.pixConfig?.bankName || 'Conta PJ');
-  const [pixProvider, setPixProvider] = useState<PixGatewayConfig['provider']>(tenant.pixConfig?.provider || 'direct_bank');
+  // Pix Key & Beneficiary Name Editor state (Cada restaurante define sua própria Chave Pix e Nome do Beneficiário)
+  const [isEditingPixKey, setIsEditingPixKey] = useState(true);
+  const [pixKey, setPixKey] = useState(
+    tenant.pixKey || tenant.pixConfig?.pixKey || tenant.phone || ''
+  );
+  const [pixKeyType, setPixKeyType] = useState<PixGatewayConfig['pixKeyType']>(
+    tenant.pixConfig?.pixKeyType || 'phone'
+  );
+  const [pixMerchantName, setPixMerchantName] = useState(
+    tenant.pixBeneficiaryName ||
+      tenant.pixConfig?.beneficiaryName ||
+      tenant.pixConfig?.merchantName ||
+      tenant.name ||
+      'MEU RESTAURANTE'
+  );
+  const [pixMerchantCity, setPixMerchantCity] = useState(
+    tenant.pixConfig?.merchantCity || 'SAO PAULO'
+  );
+  const [pixBankName, setPixBankName] = useState(
+    tenant.pixConfig?.bankName || 'Conta Bancária do Proprietário'
+  );
+  const [pixProvider, setPixProvider] = useState<PixGatewayConfig['provider']>(
+    tenant.pixConfig?.provider || 'direct_bank'
+  );
   const [pixSaving, setPixSaving] = useState(false);
   const [pixSaveNotice, setPixSaveNotice] = useState<string | null>(null);
 
@@ -202,14 +218,19 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     setSettingsIsOpen(tenant.isOpen);
     setDeliveryZones(tenant.deliveryZones || []);
 
-    // Sync Pix Config when tenant switches
-    setPixKey(tenant.pixConfig?.pixKey || tenant.phone || '');
+    // Sync Pix Config when tenant switches or updates
+    setPixKey(tenant.pixKey || tenant.pixConfig?.pixKey || tenant.phone || '');
     setPixKeyType(tenant.pixConfig?.pixKeyType || 'phone');
-    setPixMerchantName(tenant.pixConfig?.merchantName || tenant.name || 'MEU RESTAURANTE');
+    setPixMerchantName(
+      tenant.pixBeneficiaryName ||
+        tenant.pixConfig?.beneficiaryName ||
+        tenant.pixConfig?.merchantName ||
+        tenant.name ||
+        'MEU RESTAURANTE'
+    );
     setPixMerchantCity(tenant.pixConfig?.merchantCity || 'SAO PAULO');
-    setPixBankName(tenant.pixConfig?.bankName || 'Conta PJ');
+    setPixBankName(tenant.pixConfig?.bankName || 'Conta Bancária do Proprietário');
     setPixProvider(tenant.pixConfig?.provider || 'direct_bank');
-    setIsEditingPixKey(false);
   }, [tenant]);
 
   // Group orders by KDS status
@@ -223,6 +244,120 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       cancelled: orders.filter((o) => o.status === 'cancelled'),
     };
   }, [orders]);
+
+  // Real-time KDS SLA Timer (updates every 15 seconds)
+  const [kdsNowMs, setKdsNowMs] = useState<number>(() => Date.now());
+  const kdsOrderFirstSeenRef = React.useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setKdsNowMs(Date.now());
+    }, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const getOrderKdsTimerVisuals = (order: Order) => {
+    const raw = (order.createdAt || '').trim();
+    let elapsedMinutes: number | null = null;
+
+    // 1. Check HH:MM or HH:MM:SS format (e.g., "19:42" or "20:15:30")
+    const timeMatch = raw.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (timeMatch && !raw.includes('-') && !raw.includes('/')) {
+      const hours = parseInt(timeMatch[1], 10);
+      const minutes = parseInt(timeMatch[2], 10);
+      const seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+      const orderDate = new Date(kdsNowMs);
+      orderDate.setHours(hours, minutes, seconds, 0);
+      let targetMs = orderDate.getTime();
+      // Handle midnight rollover if order was placed late yesterday
+      if (targetMs > kdsNowMs + 60000) {
+        targetMs -= 24 * 60 * 60 * 1000;
+      }
+      elapsedMinutes = Math.max(0, Math.floor((kdsNowMs - targetMs) / 60000));
+    }
+
+    // 2. Check ISO / full date string
+    if (elapsedMinutes === null && raw) {
+      const parsedMs = Date.parse(raw);
+      if (!isNaN(parsedMs)) {
+        elapsedMinutes = Math.max(0, Math.floor((kdsNowMs - parsedMs) / 60000));
+      }
+    }
+
+    // 3. Check relative string like "Há 12 min"
+    if (elapsedMinutes === null && raw) {
+      const relMatch = raw.match(/(\d+)\s*min/i);
+      if (relMatch) {
+        const baseMins = parseInt(relMatch[1], 10);
+        if (!kdsOrderFirstSeenRef.current[order.id]) {
+          kdsOrderFirstSeenRef.current[order.id] = Date.now() - baseMins * 60000;
+        }
+        elapsedMinutes = Math.max(
+          0,
+          Math.floor((kdsNowMs - kdsOrderFirstSeenRef.current[order.id]) / 60000)
+        );
+      }
+    }
+
+    // 4. Fallback to first-seen timestamp in session
+    if (elapsedMinutes === null) {
+      if (!kdsOrderFirstSeenRef.current[order.id]) {
+        kdsOrderFirstSeenRef.current[order.id] = Date.now();
+      }
+      elapsedMinutes = Math.max(
+        0,
+        Math.floor((kdsNowMs - kdsOrderFirstSeenRef.current[order.id]) / 60000)
+      );
+    }
+
+    const label =
+      elapsedMinutes === 0
+        ? 'Há < 1 min'
+        : elapsedMinutes === 1
+        ? 'Há 1 min'
+        : `Há ${elapsedMinutes} min`;
+
+    // Color tiers:
+    // 0-10 min (< 10): Verde (No prazo)
+    // 10-20 min (10 to 19): Amarelo (Atenção)
+    // 20+ min (>= 20): Vermelho (Crítico / Atrasado)
+    if (elapsedMinutes < 10) {
+      return {
+        elapsedMinutes,
+        label,
+        tier: 'green' as const,
+        tierLabel: '0-10 min',
+        cardBgClass: 'bg-emerald-50/90 border-emerald-300 hover:border-emerald-400',
+        dividerClass: 'border-emerald-200/80',
+        badgeClass: 'bg-emerald-600 text-white border-emerald-700',
+        dotClass: 'bg-emerald-200',
+      };
+    }
+
+    if (elapsedMinutes < 20) {
+      return {
+        elapsedMinutes,
+        label,
+        tier: 'yellow' as const,
+        tierLabel: '10-20 min',
+        cardBgClass: 'bg-amber-50/95 border-amber-300 hover:border-amber-400',
+        dividerClass: 'border-amber-200/80',
+        badgeClass: 'bg-amber-500 text-neutral-950 border-amber-600',
+        dotClass: 'bg-neutral-950',
+      };
+    }
+
+    return {
+      elapsedMinutes,
+      label,
+      tier: 'red' as const,
+      tierLabel: '20+ min',
+      cardBgClass: 'bg-rose-50/95 border-rose-300 hover:border-rose-400',
+      dividerClass: 'border-rose-200/80',
+      badgeClass: 'bg-rose-600 text-white border-rose-700 animate-pulse',
+      dotClass: 'bg-white',
+    };
+  };
 
   // Dashboard Metrics
   const dashboardMetrics = useMemo(() => {
@@ -1017,10 +1152,24 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     setIsImportMenuModalOpen(false);
   };
 
-  const handleSaveSettings = (e: React.FormEvent) => {
+  const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     const deliveryFeeCents = Math.round(parseFloat(settingsDeliveryFee.replace(',', '.')) * 100) || 0;
     const minOrderCents = Math.round(parseFloat(settingsMinOrder.replace(',', '.')) * 100) || 0;
+
+    const cleanPixKey = pixKey.trim() || settingsPhone.replace(/\D/g, '');
+    const cleanBeneficiary = (pixMerchantName.trim() || settingsName.trim() || 'MEU RESTAURANTE').slice(0, 60);
+
+    const updatedPixConfig: PixGatewayConfig = {
+      provider: 'direct_bank',
+      pixKey: cleanPixKey,
+      pixKeyType: pixKeyType,
+      beneficiaryName: cleanBeneficiary,
+      merchantName: cleanBeneficiary.slice(0, 25),
+      merchantCity: (pixMerchantCity.trim() || 'SAO PAULO').slice(0, 15).toUpperCase(),
+      bankName: pixBankName.trim() || 'Conta Bancária do Proprietário',
+      autoApproveWebhook: true,
+    };
 
     const updated: RestaurantTenant = {
       ...tenant,
@@ -1033,11 +1182,53 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       minOrderCents,
       isOpen: settingsIsOpen,
       deliveryZones,
+      pixKey: cleanPixKey,
+      pixBeneficiaryName: cleanBeneficiary,
+      pixConfig: updatedPixConfig,
     };
 
     onUpdateTenant(updated);
-    setSettingsSuccessNotice('Configurações atualizadas com sucesso! As alterações já estão no ar.');
-    setTimeout(() => setSettingsSuccessNotice(null), 3500);
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (authSession?.token) {
+        headers['Authorization'] = `Bearer ${authSession.token}`;
+      }
+      await Promise.all([
+        fetch(`/api/v1/tenants/${tenant.slug}/settings`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({
+            name: updated.name,
+            phone: updated.phone,
+            address: updated.address,
+            primaryColor: updated.primaryColor,
+            isOpen: updated.isOpen,
+            deliveryFeeCents: updated.deliveryFeeCents,
+            minOrderCents: updated.minOrderCents,
+            deliveryZones: updated.deliveryZones,
+            pixKey: cleanPixKey,
+            pixBeneficiaryName: cleanBeneficiary,
+            pixConfig: updatedPixConfig,
+          }),
+        }),
+        fetch(`/api/v1/tenants/${tenant.slug}/pix-config`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify(updatedPixConfig),
+        }),
+      ]);
+    } catch {
+      // Local state and localStorage are already updated
+    }
+
+    setSettingsSuccessNotice(
+      `Configurações e Chave Pix (${cleanPixKey} · Beneficiário: ${cleanBeneficiary}) salvas com sucesso no restaurante atual!`
+    );
+    triggerSyncNotice(
+      `Chave Pix (${cleanPixKey}) e Nome do Beneficiário (${cleanBeneficiary}) atualizados para o checkout de ${updated.name}!`
+    );
+    setTimeout(() => setSettingsSuccessNotice(null), 4500);
   };
 
   const handleSavePixConfig = async (e?: React.FormEvent) => {
@@ -1046,13 +1237,17 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
     setPixSaving(true);
     try {
+      const cleanPixKey = pixKey.trim();
+      const cleanBeneficiary = (pixMerchantName.trim() || tenant.name || 'MEU RESTAURANTE').slice(0, 60);
+
       const payload: PixGatewayConfig = {
         provider: 'direct_bank',
-        pixKey: pixKey.trim(),
+        pixKey: cleanPixKey,
         pixKeyType: pixKeyType,
-        merchantName: pixMerchantName.trim().slice(0, 25),
-        merchantCity: pixMerchantCity.trim().slice(0, 15).toUpperCase(),
-        bankName: pixBankName.trim() || 'Conta Bancária da Loja',
+        beneficiaryName: cleanBeneficiary,
+        merchantName: cleanBeneficiary.slice(0, 25),
+        merchantCity: (pixMerchantCity.trim() || 'SAO PAULO').slice(0, 15).toUpperCase(),
+        bankName: pixBankName.trim() || 'Conta Bancária do Proprietário',
         autoApproveWebhook: true,
       };
 
@@ -1069,13 +1264,21 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
       const updatedTenant: RestaurantTenant = {
         ...tenant,
+        pixKey: cleanPixKey,
+        pixBeneficiaryName: cleanBeneficiary,
         pixConfig: payload,
       };
 
       onUpdateTenant(updatedTenant);
-      setIsEditingPixKey(false);
-      setPixSaveNotice(`Chave Pix salva com sucesso para ${tenant.name}!`);
-      setStatusUpdateToast(`✅ Chave Pix de ${tenant.name} atualizada para "${pixKey.trim()}"!`);
+      setPixSaveNotice(
+        `Chave Pix "${cleanPixKey}" e Beneficiário "${cleanBeneficiary}" salvos com sucesso para ${tenant.name}!`
+      );
+      triggerSyncNotice(
+        `✅ Chave Pix ("${cleanPixKey}") e Nome do Beneficiário ("${cleanBeneficiary}") salvos! O QR Code Pix do checkout já utiliza esses dados.`
+      );
+      setStatusUpdateToast(
+        `✅ Chave Pix de ${tenant.name} atualizada para "${cleanPixKey}" (${cleanBeneficiary})!`
+      );
       setTimeout(() => {
         setPixSaveNotice(null);
         setStatusUpdateToast(null);
@@ -1424,6 +1627,110 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
         {/* ============================================================== */}
         {activeTab === 'menu' && (
           <div className="space-y-5">
+            {/* Quick Direct Pix Configuration Form Card (Chave Pix & Nome do Beneficiário) */}
+            <form
+              onSubmit={handleSavePixConfig}
+              className="bg-gradient-to-r from-emerald-50 via-white to-emerald-50/40 border border-emerald-200 rounded-xl p-4 sm:p-5 shadow-2xs space-y-3"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-emerald-100">
+                <div className="flex items-start gap-2.5">
+                  <div className="p-2 rounded-lg bg-emerald-600 text-white shrink-0 mt-0.5 shadow-2xs">
+                    <QrCode className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-bold text-neutral-900">
+                        Recebimento Pix Direto do Restaurante ({tenant.name})
+                      </h3>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        100% Direto na Conta do Proprietário
+                      </span>
+                    </div>
+                    <p className="text-xs text-neutral-600 mt-0.5">
+                      Defina a <strong>Chave Pix</strong> e o <strong>Nome do Beneficiário</strong> deste restaurante para gerar o QR Code Pix dinâmico no checkout do consumidor.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('settings')}
+                  className="text-[11px] font-semibold text-emerald-800 hover:text-emerald-950 underline shrink-0 self-start sm:self-center cursor-pointer"
+                >
+                  Configurações avançadas Pix &rarr;
+                </button>
+              </div>
+
+              {pixSaveNotice && (
+                <div className="p-2.5 bg-emerald-100/80 border border-emerald-300 rounded-lg text-xs text-emerald-900 font-semibold flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span>{pixSaveNotice}</span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                    Tipo de Chave
+                  </label>
+                  <select
+                    value={pixKeyType}
+                    onChange={(e) => setPixKeyType(e.target.value as PixGatewayConfig['pixKeyType'])}
+                    className="w-full p-2 text-xs border border-neutral-300 rounded-lg bg-white text-neutral-900 font-medium focus:border-emerald-600 outline-none"
+                  >
+                    <option value="cnpj">CNPJ</option>
+                    <option value="cpf">CPF</option>
+                    <option value="email">E-mail</option>
+                    <option value="phone">Celular (+55)</option>
+                    <option value="random">Aleatória (EVP)</option>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-4">
+                  <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                    Chave Pix
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={pixKey}
+                    onChange={(e) => setPixKey(e.target.value)}
+                    placeholder="Ex: 12.345.678/0001-90, email@loja.com ou +5511999999999"
+                    className="w-full p-2 text-xs border border-neutral-300 rounded-lg bg-white text-neutral-900 font-mono focus:border-emerald-600 outline-none"
+                  />
+                </div>
+
+                <div className="sm:col-span-4">
+                  <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                    Nome do Beneficiário
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={60}
+                    value={pixMerchantName}
+                    onChange={(e) => setPixMerchantName(e.target.value)}
+                    placeholder="Nome do Proprietário ou Razão Social"
+                    className="w-full p-2 text-xs border border-neutral-300 rounded-lg bg-white text-neutral-900 font-medium focus:border-emerald-600 outline-none"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <button
+                    type="submit"
+                    disabled={pixSaving}
+                    className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50 cursor-pointer"
+                  >
+                    {pixSaving ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Check className="w-3.5 h-3.5" />
+                    )}
+                    <span>{pixSaving ? 'Salvando...' : 'Salvar Pix'}</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+
             {/* Explanatory Banner & Interactive Architecture Guide: Como funciona a atualização dos dados por restaurante */}
             <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-2xs space-y-4">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-neutral-100">
@@ -2318,6 +2625,72 @@ ETag: "catalog_version_1729482930"`}
                 />
               </div>
 
+              {/* Direct Pix Credentials Section inside Settings Form */}
+              <div className="pt-4 border-t border-neutral-200 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
+                      <QrCode className="w-4 h-4 text-emerald-600" />
+                      <span>Dados de Recebimento Pix Direto do Restaurante (Checkout do Consumidor)</span>
+                    </h4>
+                    <p className="text-[11px] text-neutral-500 mt-0.5">
+                      Defina a <strong>Chave Pix</strong> e o <strong>Nome do Beneficiário</strong> deste restaurante. O QR Code Pix dinâmico gerado no checkout do consumidor utiliza essas chaves para que 100% do pagamento caia diretamente na conta do proprietário.
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 shrink-0">
+                    100% Direto na Conta do Proprietário
+                  </span>
+                </div>
+
+                <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl grid grid-cols-1 md:grid-cols-12 gap-3">
+                  <div className="md:col-span-3">
+                    <label className="block text-xs font-semibold text-neutral-800 mb-1">
+                      Tipo de Chave Pix
+                    </label>
+                    <select
+                      value={pixKeyType}
+                      onChange={(e) => setPixKeyType(e.target.value as PixGatewayConfig['pixKeyType'])}
+                      className="w-full p-2.5 text-xs border border-neutral-300 rounded-lg bg-white text-neutral-900 font-medium focus:border-emerald-600 outline-none"
+                    >
+                      <option value="cnpj">CNPJ</option>
+                      <option value="cpf">CPF</option>
+                      <option value="email">E-mail</option>
+                      <option value="phone">Celular / Telefone</option>
+                      <option value="random">Chave Aleatória (EVP)</option>
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-5">
+                    <label className="block text-xs font-semibold text-neutral-800 mb-1">
+                      Chave Pix
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={pixKey}
+                      onChange={(e) => setPixKey(e.target.value)}
+                      placeholder="Ex: 12.345.678/0001-90, email@loja.com ou +5511999999999"
+                      className="w-full p-2.5 text-xs border border-neutral-300 rounded-lg bg-white text-neutral-900 font-mono focus:border-emerald-600 outline-none"
+                    />
+                  </div>
+
+                  <div className="md:col-span-4">
+                    <label className="block text-xs font-semibold text-neutral-800 mb-1">
+                      Nome do Beneficiário
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={60}
+                      value={pixMerchantName}
+                      onChange={(e) => setPixMerchantName(e.target.value)}
+                      placeholder="Nome do Proprietário ou Razão Social"
+                      className="w-full p-2.5 text-xs border border-neutral-300 rounded-lg bg-white text-neutral-900 font-medium focus:border-emerald-600 outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
               {/* Delivery Zones by Neighborhood Section */}
               <div className="pt-4 border-t border-neutral-200 space-y-3">
                 <div className="flex items-center justify-between">
@@ -2519,20 +2892,27 @@ ETag: "catalog_version_1729482930"`}
                       : 'border-neutral-200 hover:border-emerald-300'
                   }`}
                 >
+                  {pixSaveNotice && (
+                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 font-semibold flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>{pixSaveNotice}</span>
+                    </div>
+                  )}
+
                   {!isEditingPixKey ? (
                     <>
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider block">
-                          Chave Pix da Loja
+                          Chave Pix &amp; Beneficiário da Loja
                         </span>
                         <button
                           type="button"
                           onClick={() => setIsEditingPixKey(true)}
                           className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded transition-colors flex items-center gap-1 cursor-pointer"
-                          title="Editar chave Pix deste restaurante"
+                          title="Editar Chave Pix e Nome do Beneficiário deste restaurante"
                         >
                           <Edit2 className="w-3 h-3" />
-                          <span>Editar Chave</span>
+                          <span>Editar Chave Pix</span>
                         </button>
                       </div>
 
@@ -2541,15 +2921,18 @@ ETag: "catalog_version_1729482930"`}
                           {tenant.pixConfig?.pixKeyType || 'telefone'}
                         </span>
                         <p className="font-mono font-bold text-neutral-900 text-xs truncate">
-                          {tenant.pixConfig?.pixKey || tenant.phone || '+5511987654321'}
+                          {tenant.pixKey || tenant.pixConfig?.pixKey || tenant.phone || '+5511987654321'}
                         </p>
                       </div>
 
                       <div className="flex items-center justify-between text-[10px] text-neutral-500 pt-1 border-t border-neutral-100">
                         <span className="truncate">
-                          Titular:{' '}
+                          Beneficiário:{' '}
                           <strong className="text-neutral-700">
-                            {tenant.pixConfig?.merchantName || tenant.name}
+                            {tenant.pixBeneficiaryName ||
+                              tenant.pixConfig?.beneficiaryName ||
+                              tenant.pixConfig?.merchantName ||
+                              tenant.name}
                           </strong>{' '}
                           · {tenant.pixConfig?.merchantCity || 'SAO PAULO'}
                         </span>
@@ -2565,11 +2948,11 @@ ETag: "catalog_version_1729482930"`}
                         <div className="flex items-center gap-1.5">
                           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                           <span className="font-bold text-neutral-900 text-xs">
-                            Configurar Chave Pix Direta &amp; Conta Bancária de {tenant.name}
+                            Formulário de Chave Pix &amp; Nome do Beneficiário ({tenant.name})
                           </span>
                         </div>
                         <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded">
-                          100% Direto na Sua Conta
+                          100% Direto na Conta do Proprietário
                         </span>
                       </div>
 
@@ -2593,7 +2976,7 @@ ETag: "catalog_version_1729482930"`}
 
                         <div>
                           <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                            Chave Pix do Restaurante
+                            Chave Pix
                           </label>
                           <input
                             type="text"
@@ -2617,13 +3000,13 @@ ETag: "catalog_version_1729482930"`}
 
                         <div>
                           <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                            Titular da Conta (máx. 25 car.)
+                            Nome do Beneficiário
                           </label>
                           <input
                             type="text"
                             required
-                            maxLength={25}
-                            placeholder="Nome / Razão Social"
+                            maxLength={60}
+                            placeholder="Nome do Proprietário / Razão Social"
                             value={pixMerchantName}
                             onChange={(e) => setPixMerchantName(e.target.value)}
                             className="w-full p-2 bg-neutral-50 border border-neutral-300 rounded text-xs text-neutral-900 font-medium focus:bg-white focus:border-emerald-500 outline-none"
@@ -2675,30 +3058,20 @@ ETag: "catalog_version_1729482930"`}
 
                       <div className="flex items-center justify-between pt-2 border-t border-neutral-200">
                         <span className="text-[10px] text-neutral-500">
-                          Ao salvar, os QR Codes de pedidos dos clientes apontarão direto para esta chave.
+                          Ao salvar, os QR Codes Pix dinâmicos gerados no checkout do consumidor utilizarão esta Chave Pix e Nome do Beneficiário.
                         </span>
                         <div className="flex items-center gap-2">
                           <button
-                            type="button"
-                            onClick={() => {
-                              setIsEditingPixKey(false);
-                              setPixKey(tenant.pixConfig?.pixKey || tenant.phone || '5511987654321');
-                            }}
-                            className="px-3 py-1.5 text-xs font-semibold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded transition-colors"
-                          >
-                            Cancelar
-                          </button>
-                          <button
                             type="submit"
                             disabled={pixSaving}
-                            className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded transition-colors flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+                            className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded transition-colors flex items-center gap-1.5 shadow-xs disabled:opacity-50 cursor-pointer"
                           >
                             {pixSaving ? (
                               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                             ) : (
                               <Check className="w-3.5 h-3.5" />
                             )}
-                            <span>{pixSaving ? 'Salvando...' : 'Salvar Chave Pix'}</span>
+                            <span>{pixSaving ? 'Salvando...' : 'Salvar Chave Pix & Beneficiário'}</span>
                           </button>
                         </div>
                       </div>
@@ -2792,30 +3165,54 @@ ETag: "catalog_version_1729482930"`}
               </div>
             )}
 
-            {/* Explanatory Header */}
-            <div className="bg-white border border-neutral-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
-              <div>
-                <h3 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
-                  <LayoutGrid className="w-4 h-4 text-orange-600" />
-                  <span>Quadro KDS em Tempo Real com Notificação WhatsApp</span>
-                </h3>
-                <p className="text-xs text-neutral-500 mt-0.5">
-                  Ao avançar o status no Kanban, o sistema dispara automaticamente uma mensagem formatada para o WhatsApp do cliente via Evolution API (instância <code className="font-mono text-neutral-800 font-bold">{tenant.evolutionInstanceId || 'aladay'}</code>).
-                </p>
+            {/* Explanatory Header & SLA Color Legend */}
+            <div className="bg-white border border-neutral-200 rounded-xl p-4 space-y-3 shadow-2xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
+                    <LayoutGrid className="w-4 h-4 text-orange-600" />
+                    <span>Quadro KDS em Tempo Real com Contador de Tempo &amp; Notificação WhatsApp</span>
+                  </h3>
+                  <p className="text-xs text-neutral-500 mt-0.5">
+                    Ao avançar o status no Kanban, o sistema dispara automaticamente uma mensagem formatada para o WhatsApp do cliente via Evolution API (instância <code className="font-mono text-neutral-800 font-bold">{tenant.evolutionInstanceId || 'aladay'}</code>).
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('whatsapp')}
+                    className="text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors"
+                    title="Configurar e testar textos das mensagens de notificação"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Ajustar Textos WhatsApp</span>
+                  </button>
+                  <span className="text-xs text-neutral-500 font-mono bg-neutral-100 px-2.5 py-1.5 rounded-lg">
+                    {orders.length} pedidos hoje
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('whatsapp')}
-                  className="text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors"
-                  title="Configurar e testar textos das mensagens de notificação"
-                >
-                  <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Ajustar Textos WhatsApp</span>
-                </button>
-                <span className="text-xs text-neutral-500 font-mono bg-neutral-100 px-2.5 py-1.5 rounded-lg">
-                  {orders.length} pedidos hoje
+
+              {/* SLA Visual Timer Legend */}
+              <div className="pt-2.5 border-t border-neutral-100 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <span className="font-semibold text-neutral-600 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>Indicador Visual de Tempo de Espera (SLA por Pedido):</span>
                 </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 border border-emerald-300 text-emerald-900 font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span>0–10 min (No Prazo)</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-50 border border-amber-300 text-amber-900 font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    <span>10–20 min (Atenção)</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-rose-50 border border-rose-300 text-rose-900 font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping" />
+                    <span>20+ min (Crítico)</span>
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -2831,80 +3228,92 @@ ETag: "catalog_version_1729482930"`}
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-                  {ordersByStatus.received.map((order) => (
-                    <div
-                      key={order.id}
-                      className="border border-amber-300 bg-amber-50/40 rounded-xl p-3 space-y-2 shadow-2xs hover:border-amber-400 transition-colors"
-                    >
-                      <div className="flex justify-between items-start">
-                        <span className="text-xs font-mono font-bold text-neutral-900">
-                          #{order.orderNumber}
-                        </span>
-                        <span className="text-[10px] text-neutral-500 font-mono">{order.createdAt}</span>
-                      </div>
-
-                      <div>
-                        <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
-                        <p className="text-[11px] text-neutral-600 font-mono">+{order.customerPhone}</p>
-                        <p className="text-[11px] text-neutral-600 mt-0.5">
-                          {order.type === 'delivery' ? '🛵 Entrega' : '🛍️ Retirada'} · {order.items.length} itens
-                        </p>
-                      </div>
-
-                      <div className="flex justify-between items-center text-xs font-mono font-bold text-neutral-900 pt-1">
-                        <span>{formatBRL(order.totalCents)}</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${
-                          order.paymentStatus === 'paid_online'
-                            ? 'bg-emerald-100 text-emerald-800 font-bold border border-emerald-200'
-                            : 'bg-amber-100 text-amber-900'
-                        }`}>
-                          {order.paymentStatus === 'paid_online' && <Zap className="w-2.5 h-2.5 text-emerald-600 fill-current" />}
-                          {order.paymentStatus === 'paid_online' ? '⚡ Pix Pago Online' : order.paymentMethod}
-                        </span>
-                      </div>
-
-                      {/* Card Action Buttons */}
-                      <div className="pt-2 border-t border-amber-200 flex flex-col gap-1.5">
-                        <div className="flex gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleKdsStatusChange(order, 'confirmed')}
-                            className="flex-1 py-1.5 px-2 text-[11px] font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs"
-                          >
-                            <Check className="w-3 h-3 text-emerald-400" />
-                            <span>Confirmar Pedido</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleKdsStatusChange(order, 'cancelled')}
-                            className="py-1.5 px-2 text-[11px] font-semibold text-rose-700 bg-rose-100 hover:bg-rose-200 rounded-lg transition-colors"
-                            title="Recusar pedido"
-                          >
-                            Recusar
-                          </button>
+                  {ordersByStatus.received.map((order) => {
+                    const timer = getOrderKdsTimerVisuals(order);
+                    return (
+                      <div
+                        key={order.id}
+                        className={`border rounded-xl p-3 space-y-2 shadow-2xs transition-colors ${timer.cardBgClass}`}
+                      >
+                        <div className="flex justify-between items-start gap-1.5">
+                          <span className="text-xs font-mono font-bold text-neutral-900">
+                            #{order.orderNumber}
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border shadow-2xs ${timer.badgeClass}`}
+                              title={`Recebido às ${order.createdAt} (${timer.label})`}
+                            >
+                              <Clock className="w-2.5 h-2.5 shrink-0" />
+                              <span>{timer.label}</span>
+                            </span>
+                            <span className="text-[10px] text-neutral-500 font-mono">{order.createdAt}</span>
+                          </div>
                         </div>
 
-                        <div className="flex gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setTrackingOrderModal(order)}
-                            className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-white border border-neutral-300 hover:bg-neutral-50 rounded flex items-center justify-center gap-1"
-                          >
-                            <Clock className="w-3 h-3 text-amber-600" />
-                            <span>Rastrear (Cliente)</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPrintingOrder(order)}
-                            className="p-1 text-neutral-600 bg-white border border-neutral-300 hover:bg-neutral-50 rounded"
-                            title="Imprimir comanda térmica"
-                          >
-                            <Printer className="w-3 h-3" />
-                          </button>
+                        <div>
+                          <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
+                          <p className="text-[11px] text-neutral-600 font-mono">+{order.customerPhone}</p>
+                          <p className="text-[11px] text-neutral-600 mt-0.5">
+                            {order.type === 'delivery' ? '🛵 Entrega' : '🛍️ Retirada'} · {order.items.length} itens
+                          </p>
+                        </div>
+
+                        <div className="flex justify-between items-center text-xs font-mono font-bold text-neutral-900 pt-1">
+                          <span>{formatBRL(order.totalCents)}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${
+                            order.paymentStatus === 'paid_online'
+                              ? 'bg-emerald-100 text-emerald-800 font-bold border border-emerald-200'
+                              : 'bg-white/80 text-neutral-800 border border-neutral-200'
+                          }`}>
+                            {order.paymentStatus === 'paid_online' && <Zap className="w-2.5 h-2.5 text-emerald-600 fill-current" />}
+                            {order.paymentStatus === 'paid_online' ? '⚡ Pix Pago Online' : order.paymentMethod}
+                          </span>
+                        </div>
+
+                        {/* Card Action Buttons */}
+                        <div className={`pt-2 border-t ${timer.dividerClass} flex flex-col gap-1.5`}>
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleKdsStatusChange(order, 'confirmed')}
+                              className="flex-1 py-1.5 px-2 text-[11px] font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs"
+                            >
+                              <Check className="w-3 h-3 text-emerald-400" />
+                              <span>Confirmar Pedido</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleKdsStatusChange(order, 'cancelled')}
+                              className="py-1.5 px-2 text-[11px] font-semibold text-rose-700 bg-rose-100 hover:bg-rose-200 rounded-lg transition-colors"
+                              title="Recusar pedido"
+                            >
+                              Recusar
+                            </button>
+                          </div>
+
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setTrackingOrderModal(order)}
+                              className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-white border border-neutral-300 hover:bg-neutral-50 rounded flex items-center justify-center gap-1"
+                            >
+                              <Clock className="w-3 h-3 text-amber-600" />
+                              <span>Rastrear (Cliente)</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPrintingOrder(order)}
+                              className="p-1 text-neutral-600 bg-white border border-neutral-300 hover:bg-neutral-50 rounded"
+                              title="Imprimir comanda térmica"
+                            >
+                              <Printer className="w-3 h-3" />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {ordersByStatus.received.length === 0 && (
                     <p className="text-xs text-neutral-400 text-center pt-10">Nenhum pedido pendente.</p>
                   )}
@@ -2922,60 +3331,72 @@ ETag: "catalog_version_1729482930"`}
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-                  {[...ordersByStatus.confirmed, ...ordersByStatus.preparing].map((order) => (
-                    <div
-                      key={order.id}
-                      className="border border-neutral-200 bg-white rounded-xl p-3 space-y-2 shadow-2xs hover:border-neutral-300 transition-colors"
-                    >
-                      <div className="flex justify-between items-start">
-                        <span className="text-xs font-mono font-bold text-neutral-900">
-                          #{order.orderNumber}
-                        </span>
-                        <span className="text-[10px] text-neutral-500 font-mono">{order.createdAt}</span>
-                      </div>
-
-                      <div>
-                        <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
-                        <div className="text-[11px] text-neutral-600 mt-1 space-y-0.5">
-                          {order.items.map((i, idx) => (
-                            <p key={idx} className="truncate">
-                              • {i.quantity}x {i.productName}
-                            </p>
-                          ))}
+                  {[...ordersByStatus.confirmed, ...ordersByStatus.preparing].map((order) => {
+                    const timer = getOrderKdsTimerVisuals(order);
+                    return (
+                      <div
+                        key={order.id}
+                        className={`border rounded-xl p-3 space-y-2 shadow-2xs transition-colors ${timer.cardBgClass}`}
+                      >
+                        <div className="flex justify-between items-start gap-1.5">
+                          <span className="text-xs font-mono font-bold text-neutral-900">
+                            #{order.orderNumber}
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border shadow-2xs ${timer.badgeClass}`}
+                              title={`Recebido às ${order.createdAt} (${timer.label})`}
+                            >
+                              <Clock className="w-2.5 h-2.5 shrink-0" />
+                              <span>{timer.label}</span>
+                            </span>
+                            <span className="text-[10px] text-neutral-500 font-mono">{order.createdAt}</span>
+                          </div>
                         </div>
-                      </div>
 
-                      <div className="pt-2 border-t border-neutral-100 flex flex-col gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleKdsStatusChange(order, 'ready')}
-                          className="w-full py-1.5 px-2 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs"
-                        >
-                          <Bike className="w-3 h-3" />
-                          <span>Pronto / Despachar</span>
-                        </button>
+                        <div>
+                          <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
+                          <div className="text-[11px] text-neutral-700 mt-1 space-y-0.5">
+                            {order.items.map((i, idx) => (
+                              <p key={idx} className="truncate">
+                                • {i.quantity}x {i.productName}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
 
-                        <div className="flex gap-1">
+                        <div className={`pt-2 border-t ${timer.dividerClass} flex flex-col gap-1.5`}>
                           <button
                             type="button"
-                            onClick={() => setTrackingOrderModal(order)}
-                            className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-neutral-50 hover:bg-neutral-100 rounded flex items-center justify-center gap-1 border border-neutral-200"
+                            onClick={() => handleKdsStatusChange(order, 'ready')}
+                            className="w-full py-1.5 px-2 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs"
                           >
-                            <Clock className="w-3 h-3 text-blue-600" />
-                            <span>Rastrear (Cliente)</span>
+                            <Bike className="w-3 h-3" />
+                            <span>Pronto / Despachar</span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => setPrintingOrder(order)}
-                            className="p-1 text-neutral-600 bg-neutral-50 hover:bg-neutral-100 rounded border border-neutral-200"
-                            title="Imprimir comanda térmica"
-                          >
-                            <Printer className="w-3 h-3" />
-                          </button>
+
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setTrackingOrderModal(order)}
+                              className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-white hover:bg-neutral-50 rounded flex items-center justify-center gap-1 border border-neutral-200"
+                            >
+                              <Clock className="w-3 h-3 text-blue-600" />
+                              <span>Rastrear (Cliente)</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPrintingOrder(order)}
+                              className="p-1 text-neutral-600 bg-white hover:bg-neutral-50 rounded border border-neutral-200"
+                              title="Imprimir comanda térmica"
+                            >
+                              <Printer className="w-3 h-3" />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {ordersByStatus.confirmed.length + ordersByStatus.preparing.length === 0 && (
                     <p className="text-xs text-neutral-400 text-center pt-10">Cozinha liberada.</p>
                   )}
@@ -2993,56 +3414,68 @@ ETag: "catalog_version_1729482930"`}
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-                  {ordersByStatus.ready.map((order) => (
-                    <div
-                      key={order.id}
-                      className="border border-purple-200 bg-purple-50/20 rounded-xl p-3 space-y-2 shadow-2xs hover:border-purple-300 transition-colors"
-                    >
-                      <div className="flex justify-between items-start">
-                        <span className="text-xs font-mono font-bold text-neutral-900">
-                          #{order.orderNumber}
-                        </span>
-                        <span className="text-[10px] text-neutral-500 font-mono">{order.createdAt}</span>
-                      </div>
+                  {ordersByStatus.ready.map((order) => {
+                    const timer = getOrderKdsTimerVisuals(order);
+                    return (
+                      <div
+                        key={order.id}
+                        className={`border rounded-xl p-3 space-y-2 shadow-2xs transition-colors ${timer.cardBgClass}`}
+                      >
+                        <div className="flex justify-between items-start gap-1.5">
+                          <span className="text-xs font-mono font-bold text-neutral-900">
+                            #{order.orderNumber}
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border shadow-2xs ${timer.badgeClass}`}
+                              title={`Recebido às ${order.createdAt} (${timer.label})`}
+                            >
+                              <Clock className="w-2.5 h-2.5 shrink-0" />
+                              <span>{timer.label}</span>
+                            </span>
+                            <span className="text-[10px] text-neutral-500 font-mono">{order.createdAt}</span>
+                          </div>
+                        </div>
 
-                      <div>
-                        <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
-                        <p className="text-[11px] text-neutral-600">
-                          {order.type === 'delivery' ? `🛵 ${order.deliveryAddress || 'Entrega'}` : '🛍️ Retirada no balcão'}
-                        </p>
-                      </div>
+                        <div>
+                          <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
+                          <p className="text-[11px] text-neutral-700">
+                            {order.type === 'delivery' ? `🛵 ${order.deliveryAddress || 'Entrega'}` : '🛍️ Retirada no balcão'}
+                          </p>
+                        </div>
 
-                      <div className="pt-2 border-t border-purple-100 flex flex-col gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleKdsStatusChange(order, 'delivered')}
-                          className="w-full py-1.5 px-2 text-[11px] font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs"
-                        >
-                          <PackageCheck className="w-3.5 h-3.5" />
-                          <span>Concluir e Entregar</span>
-                        </button>
-
-                        <div className="flex gap-1">
+                        <div className={`pt-2 border-t ${timer.dividerClass} flex flex-col gap-1.5`}>
                           <button
                             type="button"
-                            onClick={() => setTrackingOrderModal(order)}
-                            className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-white hover:bg-neutral-50 rounded flex items-center justify-center gap-1 border border-neutral-200"
+                            onClick={() => handleKdsStatusChange(order, 'delivered')}
+                            className="w-full py-1.5 px-2 text-[11px] font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs"
                           >
-                            <Clock className="w-3 h-3 text-purple-600" />
-                            <span>Rastrear (Cliente)</span>
+                            <PackageCheck className="w-3.5 h-3.5" />
+                            <span>Concluir e Entregar</span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => setPrintingOrder(order)}
-                            className="p-1 text-neutral-600 bg-white hover:bg-neutral-50 rounded border border-neutral-200"
-                            title="Imprimir comanda térmica"
-                          >
-                            <Printer className="w-3 h-3" />
-                          </button>
+
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setTrackingOrderModal(order)}
+                              className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-white hover:bg-neutral-50 rounded flex items-center justify-center gap-1 border border-neutral-200"
+                            >
+                              <Clock className="w-3 h-3 text-purple-600" />
+                              <span>Rastrear (Cliente)</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPrintingOrder(order)}
+                              className="p-1 text-neutral-600 bg-white hover:bg-neutral-50 rounded border border-neutral-200"
+                              title="Imprimir comanda térmica"
+                            >
+                              <Printer className="w-3 h-3" />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {ordersByStatus.ready.length === 0 && (
                     <p className="text-xs text-neutral-400 text-center pt-10">Nenhum pedido aguardando saída.</p>
                   )}
@@ -3060,37 +3493,47 @@ ETag: "catalog_version_1729482930"`}
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                  {ordersByStatus.delivered.map((order) => (
-                    <div
-                      key={order.id}
-                      className="border border-neutral-200 bg-neutral-50 rounded-xl p-2.5 text-xs text-neutral-600 space-y-1.5 hover:border-neutral-300 transition-colors"
-                    >
-                      <div className="flex justify-between items-center font-mono">
-                        <span className="font-bold text-neutral-900">#{order.orderNumber}</span>
-                        <span className="tabular-nums font-semibold">{formatBRL(order.totalCents)}</span>
-                      </div>
-                      <p className="text-[11px] truncate font-medium text-neutral-800">{order.customerName}</p>
+                  {ordersByStatus.delivered.map((order) => {
+                    const timer = getOrderKdsTimerVisuals(order);
+                    return (
+                      <div
+                        key={order.id}
+                        className={`border rounded-xl p-2.5 text-xs text-neutral-700 space-y-1.5 transition-colors ${timer.cardBgClass}`}
+                      >
+                        <div className="flex justify-between items-center font-mono gap-1">
+                          <span className="font-bold text-neutral-900">#{order.orderNumber}</span>
+                          <span
+                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${timer.badgeClass}`}
+                            title={`Recebido às ${order.createdAt} (${timer.label})`}
+                          >
+                            <Clock className="w-2.5 h-2.5 shrink-0" />
+                            <span>{timer.label}</span>
+                          </span>
+                          <span className="tabular-nums font-semibold text-neutral-900">{formatBRL(order.totalCents)}</span>
+                        </div>
+                        <p className="text-[11px] truncate font-medium text-neutral-800">{order.customerName}</p>
 
-                      <div className="flex gap-1 pt-1 border-t border-neutral-200">
-                        <button
-                          type="button"
-                          onClick={() => setTrackingOrderModal(order)}
-                          className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-white hover:bg-neutral-100 rounded flex items-center justify-center gap-1 border border-neutral-200"
-                        >
-                          <Clock className="w-3 h-3 text-emerald-600" />
-                          <span>Ver Rastreio</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPrintingOrder(order)}
-                          className="p-1 text-neutral-600 bg-white hover:bg-neutral-100 rounded border border-neutral-200"
-                          title="Reimprimir comanda"
-                        >
-                          <Printer className="w-3 h-3" />
-                        </button>
+                        <div className={`flex gap-1 pt-1 border-t ${timer.dividerClass}`}>
+                          <button
+                            type="button"
+                            onClick={() => setTrackingOrderModal(order)}
+                            className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-white hover:bg-neutral-100 rounded flex items-center justify-center gap-1 border border-neutral-200"
+                          >
+                            <Clock className="w-3 h-3 text-emerald-600" />
+                            <span>Ver Rastreio</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPrintingOrder(order)}
+                            className="p-1 text-neutral-600 bg-white hover:bg-neutral-100 rounded border border-neutral-200"
+                            title="Reimprimir comanda"
+                          >
+                            <Printer className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {ordersByStatus.delivered.length === 0 && (
                     <p className="text-xs text-neutral-400 text-center pt-10">Nenhum pedido finalizado ainda.</p>
                   )}

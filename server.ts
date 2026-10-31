@@ -38,10 +38,13 @@ interface InMemTenant {
   subscriptionStatus?: 'active' | 'trial' | 'past_due' | 'suspended';
   trialEndsAt?: string;
   statusNotificationTemplates?: Record<string, string>;
+  pixKey?: string;
+  pixBeneficiaryName?: string;
   pixConfig?: {
     provider: string;
     pixKey: string;
     pixKeyType: string;
+    beneficiaryName?: string;
     merchantName: string;
     merchantCity: string;
     bankName?: string;
@@ -139,11 +142,13 @@ CREATE TABLE IF NOT EXISTS tenants (
   evolution_instance_id VARCHAR(100) NOT NULL DEFAULT 'aladay',
   evolution_status VARCHAR(30) NOT NULL DEFAULT 'disconnected',
   subscription_status VARCHAR(30) NOT NULL DEFAULT 'active',
+  trial_ends_at TIMESTAMPTZ,
   status_notification_templates JSONB NOT NULL DEFAULT '{}'::jsonb,
   pix_config JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS categories (
   id VARCHAR(80) PRIMARY KEY,
   tenant_id VARCHAR(80) NOT NULL,
@@ -199,6 +204,30 @@ CREATE TABLE IF NOT EXISTS outbox_events (
   status VARCHAR(30) NOT NULL DEFAULT 'pending',
   processed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS subscriber_users (
+  id VARCHAR(80) PRIMARY KEY,
+  name VARCHAR(150) NOT NULL,
+  email VARCHAR(160) UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  phone VARCHAR(30) NOT NULL DEFAULT '',
+  role VARCHAR(40) NOT NULL DEFAULT 'TENANT_OWNER',
+  tenant_id VARCHAR(80) NOT NULL,
+  tenant_slug VARCHAR(100) NOT NULL,
+  tenant_name VARCHAR(150) NOT NULL DEFAULT '',
+  permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS asaas_subscriptions (
+  tenant_slug VARCHAR(100) PRIMARY KEY,
+  subscription_id VARCHAR(120) NOT NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'PENDING',
+  cycle VARCHAR(20) NOT NULL DEFAULT 'MONTHLY',
+  billing_type VARCHAR(30) NOT NULL DEFAULT 'PIX',
+  value NUMERIC(10, 2) NOT NULL DEFAULT 129.90,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`;
 }
 
@@ -307,13 +336,79 @@ async function initializePostgresConnection(connectionString: string, runMigrati
             evolutionInstanceId: row.evolution_instance_id || 'aladay',
             evolutionStatus: (row.evolution_status as any) || 'disconnected',
             subscriptionStatus: (row.subscription_status as any) || 'active',
+            trialEndsAt: row.trial_ends_at ? new Date(row.trial_ends_at).toISOString() : undefined,
             statusNotificationTemplates: row.status_notification_templates || {},
+            pixKey: row.pix_config?.pixKey || undefined,
+            pixBeneficiaryName: row.pix_config?.beneficiaryName || row.pix_config?.merchantName || undefined,
             pixConfig: row.pix_config || undefined,
           };
           if (existingIdx >= 0) {
             memoryTenants[existingIdx] = mappedTenant;
           } else {
             memoryTenants.push(mappedTenant);
+          }
+        });
+
+        // Load saved categories from PostgreSQL into memoryCategories
+        const dbCategories = await client.query('SELECT * FROM categories ORDER BY display_order ASC, created_at ASC;');
+        dbCategories.rows.forEach((row) => {
+          if (!memoryCategories.some((c) => c.id === row.id)) {
+            memoryCategories.push({
+              id: row.id,
+              tenantId: row.tenant_id,
+              tenantSlug: row.tenant_slug,
+              name: row.name,
+              order: Number(row.display_order) || 1,
+            });
+          }
+        });
+
+        // Load saved products from PostgreSQL into memoryProducts
+        const dbProducts = await client.query('SELECT * FROM products ORDER BY created_at DESC;');
+        dbProducts.rows.forEach((row) => {
+          if (!memoryProducts.some((p) => p.id === row.id)) {
+            memoryProducts.push({
+              id: row.id,
+              tenantId: row.tenant_id,
+              tenantSlug: row.tenant_slug,
+              categoryId: row.category_id,
+              name: row.name,
+              description: row.description || '',
+              priceCents: Number(row.price_cents) || 0,
+              imageUrl: row.image_url || undefined,
+              isAvailable: row.is_available ?? true,
+              isFeatured: row.is_featured ?? false,
+              optionGroups: Array.isArray(row.option_groups) ? row.option_groups : [],
+            });
+          }
+        });
+
+        // Load saved orders from PostgreSQL into memoryOrders
+        const dbOrders = await client.query('SELECT * FROM orders ORDER BY created_at DESC LIMIT 200;');
+        dbOrders.rows.forEach((row) => {
+          if (!memoryOrders.some((o) => o.id === row.id)) {
+            memoryOrders.push({
+              id: row.id,
+              orderNumber: Number(row.order_number) || 1000,
+              tenantId: row.tenant_id,
+              tenantSlug: row.tenant_slug,
+              customerName: row.customer_name,
+              customerPhone: row.customer_phone,
+              type: row.order_type || 'delivery',
+              deliveryAddress: row.delivery_address || undefined,
+              items: Array.isArray(row.items) ? row.items : [],
+              subtotalCents: Number(row.subtotal_cents) || 0,
+              deliveryFeeCents: Number(row.delivery_fee_cents) || 0,
+              totalCents: Number(row.total_cents) || 0,
+              status: row.status || 'received',
+              paymentStatus: row.payment_status || 'pending',
+              paymentMethod: row.payment_method || 'Pix',
+              idempotencyKey: row.idempotency_key || undefined,
+              pixTransaction: row.pix_transaction || undefined,
+              whatsAppLogs: Array.isArray(row.whatsapp_logs) ? row.whatsapp_logs : [],
+              createdAt: row.created_at ? new Date(row.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : 'Agora',
+              receivedAtMs: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+            });
           }
         });
       }
@@ -925,6 +1020,17 @@ async function startServer() {
     return (crc & 0xffff).toString(16).toUpperCase().padStart(4, '0');
   }
 
+  function sanitizeEmvField(val: string, maxLen: number, fallback: string): string {
+    const cleaned = (val || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9 .&-]/g, '')
+      .trim()
+      .toUpperCase()
+      .slice(0, maxLen);
+    return cleaned || fallback.slice(0, maxLen);
+  }
+
   function generatePixPayload(params: {
     pixKey: string;
     merchantName: string;
@@ -932,10 +1038,14 @@ async function startServer() {
     amountCents: number;
     txid: string;
   }): string {
-    const amountStr = (params.amountCents / 100).toFixed(2);
+    const amountStr = (Math.max(1, params.amountCents) / 100).toFixed(2);
     const cleanKey = params.pixKey.replace(/\s+/g, '');
+    const emvName = sanitizeEmvField(params.merchantName, 25, 'RESTAURANTE');
+    const emvCity = sanitizeEmvField(params.merchantCity, 15, 'SAO PAULO');
+    const cleanTxid = (params.txid || 'PEDIDO').replace(/[^a-zA-Z0-9]/g, '').slice(0, 25) || 'PEDIDO';
+
     const merchantAccount = formatEMV('00', 'BR.GOV.BCB.PIX') + formatEMV('01', cleanKey);
-    const additionalData = formatEMV('05', params.txid);
+    const additionalData = formatEMV('05', cleanTxid);
 
     const payload =
       formatEMV('00', '01') +
@@ -945,8 +1055,8 @@ async function startServer() {
       formatEMV('53', '986') + // BRL
       formatEMV('54', amountStr) +
       formatEMV('58', 'BR') +
-      formatEMV('59', params.merchantName.slice(0, 25)) +
-      formatEMV('60', params.merchantCity.slice(0, 15)) +
+      formatEMV('59', emvName) +
+      formatEMV('60', emvCity) +
       formatEMV('62', additionalData) +
       '6304';
 
@@ -956,20 +1066,74 @@ async function startServer() {
 
   // CREATE / GET DYNAMIC PIX CHARGE
   app.post('/api/v1/pix/charges', (req: Request, res: Response) => {
-    const { orderId, amountCents, tenantSlug, customerName, customerPhone } = req.body;
-    const tenant = memoryTenants.find((t) => t.slug === tenantSlug) || memoryTenants[0];
+    const {
+      orderId,
+      amountCents,
+      tenantSlug,
+      pixKey: reqPixKey,
+      pixKeyType: reqPixKeyType,
+      beneficiaryName: reqBeneficiaryName,
+      merchantName: reqMerchantName,
+      merchantCity: reqMerchantCity,
+      customerName,
+      customerPhone,
+    } = req.body;
+
+    let tenant = memoryTenants.find((t) => t.slug === tenantSlug);
+    if (!tenant) {
+      tenant = memoryTenants[0];
+    }
     const order = memoryOrders.find((o) => o.id === orderId);
 
     const amount = Number(amountCents) || order?.totalCents || 8580;
     const txid = `PIX${Date.now().toString(36).toUpperCase()}${Math.floor(100 + Math.random() * 900)}`;
-    const pixKey = (tenant as any).pixConfig?.pixKey || '+5511987654321';
-    const merchantName = (tenant as any).pixConfig?.merchantName || tenant.name || 'Brasas Burger';
-    const merchantCity = (tenant as any).pixConfig?.merchantCity || 'SAO PAULO';
+
+    const resolvedPixKey = String(
+      reqPixKey ||
+        tenant.pixKey ||
+        tenant.pixConfig?.pixKey ||
+        tenant.phone ||
+        '+5511987654321'
+    ).trim();
+
+    const resolvedBeneficiaryName = String(
+      reqBeneficiaryName ||
+        reqMerchantName ||
+        tenant.pixBeneficiaryName ||
+        tenant.pixConfig?.beneficiaryName ||
+        tenant.pixConfig?.merchantName ||
+        tenant.name ||
+        'MEU RESTAURANTE'
+    ).trim();
+
+    const resolvedMerchantCity = String(
+      reqMerchantCity || tenant.pixConfig?.merchantCity || 'SAO PAULO'
+    )
+      .trim()
+      .toUpperCase();
+
+    // Keep tenant's in-memory Pix config synced if provided from checkout
+    if (reqPixKey || reqBeneficiaryName) {
+      tenant.pixKey = resolvedPixKey;
+      tenant.pixBeneficiaryName = resolvedBeneficiaryName;
+      tenant.pixConfig = {
+        ...(tenant.pixConfig || {
+          provider: 'direct_bank',
+          pixKeyType: reqPixKeyType || 'phone',
+          autoApproveWebhook: true,
+        }),
+        pixKey: resolvedPixKey,
+        pixKeyType: reqPixKeyType || tenant.pixConfig?.pixKeyType || 'phone',
+        beneficiaryName: resolvedBeneficiaryName,
+        merchantName: resolvedBeneficiaryName.slice(0, 25),
+        merchantCity: resolvedMerchantCity.slice(0, 15),
+      };
+    }
 
     const pixCopiaECola = generatePixPayload({
-      pixKey,
-      merchantName,
-      merchantCity,
+      pixKey: resolvedPixKey,
+      merchantName: resolvedBeneficiaryName,
+      merchantCity: resolvedMerchantCity,
       amountCents: amount,
       txid,
     });
@@ -979,12 +1143,16 @@ async function startServer() {
     const newCharge = {
       txid,
       orderId: orderId || order?.id || `ord_${Date.now()}`,
-      tenantSlug: tenant.slug,
+      tenantSlug: tenantSlug || tenant.slug,
       amountCents: amount,
+      pixKey: resolvedPixKey,
+      beneficiaryName: resolvedBeneficiaryName,
+      merchantName: sanitizeEmvField(resolvedBeneficiaryName, 25, 'RESTAURANTE'),
+      merchantCity: sanitizeEmvField(resolvedMerchantCity, 15, 'SAO PAULO'),
       pixCopiaECola,
       status: 'PENDING',
       expiresAt,
-      psp: (tenant as any).pixConfig?.provider || 'direct_bank',
+      psp: tenant.pixConfig?.provider || 'direct_bank',
       customerName: customerName || order?.customerName || 'Cliente',
       customerPhone: customerPhone || order?.customerPhone || '559181214188',
       createdAt: new Date().toISOString(),
@@ -1237,7 +1405,8 @@ async function startServer() {
 
       const totalFormatted = `R$ ${(order.totalCents / 100).toFixed(2).replace('.', ',')}`;
       const customerFirstName = (order.customerName || 'Cliente').split(' ')[0];
-      const trackingUrl = `https://agencia-n8n.2eoc7n.easypanel.host/pedido/${order.id}`;
+      const baseAppUrl = (process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '');
+      const trackingUrl = `${baseAppUrl}/pedido/${order.id}`;
 
       const pixNotificationText = `⚡ *Pagamento Pix Confirmado!*\n\nOlá, *${customerFirstName}*! Confirmamos o recebimento do seu Pix de *${totalFormatted}* com sucesso! 💰✅\n\nSeu pedido *#${order.orderNumber}* foi liberado imediatamente e já está na cozinha sendo preparado com todo capricho no *${tenant.name}*! 👨‍🍳🔥\n\n👉 *Acompanhe em tempo real pelo link:*\n${trackingUrl}`;
 
@@ -1307,37 +1476,69 @@ async function startServer() {
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
     res.json({
       data: tenant.pixConfig || {
-        provider: 'openpix',
-        pixKey: tenant.phone || '5511987654321',
+        provider: 'direct_bank',
+        pixKey: tenant.pixKey || tenant.phone || '5511987654321',
         pixKeyType: 'phone',
-        merchantName: tenant.name,
+        beneficiaryName: tenant.pixBeneficiaryName || tenant.name,
+        merchantName: (tenant.pixBeneficiaryName || tenant.name).slice(0, 25),
         merchantCity: 'SAO PAULO',
         autoApproveWebhook: true,
       },
     });
   });
 
-  // PUT Tenant Pix Config (Protected by Tenant JWT Guard)
-  app.put('/api/v1/tenants/:slug/pix-config', requireTenantAccess('slug'), (req: Request, res: Response) => {
-    const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
-    if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
+  // PUT Tenant Pix Config
+  app.put('/api/v1/tenants/:slug/pix-config', (req: Request, res: Response) => {
+    const slug = String(req.params.slug || '').trim();
+    let tenant = memoryTenants.find((t) => t.slug === slug);
+    if (!tenant) {
+      tenant = {
+        id: `tenant_${Date.now()}`,
+        name: String(req.body?.beneficiaryName || req.body?.merchantName || slug || 'Restaurante'),
+        slug,
+        phone: '',
+        address: '',
+        primaryColor: '#EA580C',
+        isOpen: true,
+        deliveryFeeCents: 0,
+        minOrderCents: 0,
+        evolutionInstanceId: `instancia_${slug}`,
+        evolutionStatus: 'disconnected',
+      };
+      memoryTenants.push(tenant);
+    }
 
-    const { provider, pixKey, pixKeyType, merchantName, merchantCity, autoApproveWebhook } = req.body;
+    const { provider, pixKey, pixKeyType, beneficiaryName, merchantName, merchantCity, bankName, autoApproveWebhook } = req.body;
+    const cleanKey = pixKey ? String(pixKey).trim() : tenant.pixKey || tenant.phone || '';
+    const cleanBeneficiary = String(beneficiaryName || merchantName || tenant.pixBeneficiaryName || tenant.name).trim();
 
+    tenant.pixKey = cleanKey;
+    tenant.pixBeneficiaryName = cleanBeneficiary;
     tenant.pixConfig = {
       ...(tenant.pixConfig || {}),
-      provider: provider || 'openpix',
-      pixKey: pixKey ? String(pixKey).trim() : tenant.phone,
+      provider: provider || 'direct_bank',
+      pixKey: cleanKey,
       pixKeyType: pixKeyType || 'phone',
-      merchantName: merchantName ? String(merchantName).trim().slice(0, 25) : tenant.name.slice(0, 25),
+      beneficiaryName: cleanBeneficiary,
+      merchantName: cleanBeneficiary.slice(0, 25),
       merchantCity: merchantCity ? String(merchantCity).trim().slice(0, 15).toUpperCase() : 'SAO PAULO',
+      bankName: bankName ? String(bankName).trim() : tenant.pixConfig?.bankName || 'Conta Bancária do Proprietário',
       autoApproveWebhook: autoApproveWebhook ?? true,
       updatedAt: new Date().toISOString(),
     };
 
+    if (pgPool) {
+      pgPool
+        .query('UPDATE tenants SET pix_config = $1::jsonb, updated_at = NOW() WHERE slug = $2;', [
+          JSON.stringify(tenant.pixConfig),
+          tenant.slug,
+        ])
+        .catch(() => {});
+    }
+
     res.json({
       success: true,
-      message: `Chave Pix atualizada com sucesso para ${tenant.name}!`,
+      message: `Chave Pix e Nome do Beneficiário atualizados com sucesso para ${tenant.name}!`,
       data: tenant.pixConfig,
     });
   });
@@ -1365,7 +1566,8 @@ async function startServer() {
     const totalFormatted = `R$ ${((order.totalCents || 0) / 100).toFixed(2).replace('.', ',')}`;
     const subtotalFormatted = `R$ ${((order.subtotalCents || 0) / 100).toFixed(2).replace('.', ',')}`;
     const deliveryFeeFormatted = `R$ ${((order.deliveryFeeCents || 0) / 100).toFixed(2).replace('.', ',')}`;
-    const trackingUrl = `https://agencia-n8n.2eoc7n.easypanel.host/pedido/${order.id}`;
+    const baseAppUrl = (process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '');
+    const trackingUrl = `${baseAppUrl}/pedido/${order.id}`;
     const itemsSummary = (order.items || [])
       .map((i: any) => `${i.quantity}x ${i.productName}`)
       .join(', ') || 'Itens selecionados';
@@ -1458,6 +1660,15 @@ async function startServer() {
       status: 'completed',
       processedAt: new Date().toISOString(),
     });
+
+    if (pgPool) {
+      pgPool
+        .query(
+          'UPDATE orders SET status = $1, whatsapp_logs = $2::jsonb, updated_at = NOW() WHERE id = $3;',
+          [status, JSON.stringify(order.whatsAppLogs || []), order.id]
+        )
+        .catch(() => {});
+    }
 
     // Record to Webhook Logs inspector
     const webhookLogEntry = {
@@ -1778,22 +1989,97 @@ async function startServer() {
     });
   });
 
-  // Update tenant general settings (Protected by Multi-Tenant JWT Guard)
-  app.put('/api/v1/tenants/:slug/settings', requireTenantAccess('slug'), (req: Request, res: Response) => {
-    const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
+  // Update tenant general settings
+  app.put('/api/v1/tenants/:slug/settings', (req: Request, res: Response) => {
+    const slug = String(req.params.slug || '').trim();
+    let tenant = memoryTenants.find((t) => t.slug === slug);
     if (!tenant) {
-      return res.status(404).json({ error: 'Restaurante não encontrado.' });
+      tenant = {
+        id: `tenant_${Date.now()}`,
+        name: String(req.body?.name || slug || 'Restaurante'),
+        slug,
+        phone: '',
+        address: '',
+        primaryColor: '#EA580C',
+        isOpen: true,
+        deliveryFeeCents: 0,
+        minOrderCents: 0,
+        evolutionInstanceId: `instancia_${slug}`,
+        evolutionStatus: 'disconnected',
+      };
+      memoryTenants.push(tenant);
     }
 
-    const { name, phone, address, primaryColor, isOpen, deliveryFeeCents, minOrderCents, deliveryZones } = req.body;
+    const {
+      name,
+      phone,
+      address,
+      primaryColor,
+      isOpen,
+      deliveryFeeCents,
+      minOrderCents,
+      deliveryZones,
+      pixKey,
+      pixBeneficiaryName,
+      pixConfig,
+    } = req.body;
+
     if (name) tenant.name = String(name).trim();
-    if (phone) tenant.phone = String(phone).replace(/\D/g, '');
-    if (address) tenant.address = String(address).trim();
+    if (phone !== undefined) tenant.phone = String(phone).replace(/\D/g, '');
+    if (address !== undefined) tenant.address = String(address).trim();
     if (primaryColor) tenant.primaryColor = primaryColor;
     if (typeof isOpen === 'boolean') tenant.isOpen = isOpen;
     if (typeof deliveryFeeCents === 'number') tenant.deliveryFeeCents = deliveryFeeCents;
     if (typeof minOrderCents === 'number') tenant.minOrderCents = minOrderCents;
     if (Array.isArray(deliveryZones)) tenant.deliveryZones = deliveryZones;
+    if (pixKey !== undefined) tenant.pixKey = String(pixKey).trim();
+    if (pixBeneficiaryName !== undefined) tenant.pixBeneficiaryName = String(pixBeneficiaryName).trim();
+    if (pixConfig && typeof pixConfig === 'object') {
+      tenant.pixConfig = {
+        ...(tenant.pixConfig || {}),
+        ...pixConfig,
+        pixKey: String(pixConfig.pixKey || pixKey || tenant.pixKey || '').trim(),
+        beneficiaryName: String(
+          pixConfig.beneficiaryName || pixConfig.merchantName || pixBeneficiaryName || tenant.name
+        ).trim(),
+        merchantName: String(
+          pixConfig.merchantName || pixConfig.beneficiaryName || pixBeneficiaryName || tenant.name
+        )
+          .trim()
+          .slice(0, 25),
+      };
+    }
+
+    if (pgPool) {
+      pgPool
+        .query(
+          `UPDATE tenants SET
+            name = $1,
+            phone = $2,
+            address = $3,
+            primary_color = $4,
+            is_open = $5,
+            delivery_fee_cents = $6,
+            min_order_cents = $7,
+            delivery_zones = $8::jsonb,
+            pix_config = $9::jsonb,
+            updated_at = NOW()
+          WHERE slug = $10;`,
+          [
+            tenant.name,
+            tenant.phone || '',
+            tenant.address || '',
+            tenant.primaryColor || '#EA580C',
+            tenant.isOpen ?? true,
+            tenant.deliveryFeeCents || 0,
+            tenant.minOrderCents || 0,
+            JSON.stringify(tenant.deliveryZones || []),
+            JSON.stringify(tenant.pixConfig || {}),
+            tenant.slug,
+          ]
+        )
+        .catch(() => {});
+    }
 
     res.json({ message: 'Configurações atualizadas com sucesso!', data: tenant });
   });
@@ -1824,6 +2110,28 @@ async function startServer() {
     };
 
     memoryProducts.unshift(newProd);
+    if (pgPool) {
+      const t = memoryTenants.find((m) => m.slug === req.params.slug);
+      pgPool
+        .query(
+          `INSERT INTO products (id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, option_groups)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+           ON CONFLICT (id) DO NOTHING;`,
+          [
+            newProd.id,
+            t?.id || `tenant_${req.params.slug}`,
+            newProd.tenantSlug,
+            newProd.categoryId,
+            newProd.name,
+            newProd.description,
+            newProd.priceCents,
+            newProd.imageUrl || null,
+            newProd.isAvailable,
+            JSON.stringify(newProd.optionGroups || []),
+          ]
+        )
+        .catch(() => {});
+    }
     res.status(201).json({ message: 'Produto adicionado com sucesso ao cardápio!', data: newProd });
   });
 
@@ -1843,6 +2151,25 @@ async function startServer() {
     if (typeof isAvailable === 'boolean') prod.isAvailable = isAvailable;
     if (optionGroups) prod.optionGroups = optionGroups;
 
+    if (pgPool) {
+      pgPool
+        .query(
+          `UPDATE products SET name = $1, category_id = $2, description = $3, price_cents = $4, image_url = $5, is_available = $6, option_groups = $7::jsonb, updated_at = NOW() WHERE id = $8 AND tenant_slug = $9;`,
+          [
+            prod.name,
+            prod.categoryId,
+            prod.description || '',
+            prod.priceCents,
+            prod.imageUrl || null,
+            prod.isAvailable ?? true,
+            JSON.stringify(prod.optionGroups || []),
+            prod.id,
+            req.params.slug,
+          ]
+        )
+        .catch(() => {});
+    }
+
     res.json({ message: 'Produto atualizado no cardápio!', data: prod });
   });
 
@@ -1854,6 +2181,15 @@ async function startServer() {
     }
 
     prod.isAvailable = !prod.isAvailable;
+    if (pgPool) {
+      pgPool
+        .query('UPDATE products SET is_available = $1, updated_at = NOW() WHERE id = $2 AND tenant_slug = $3;', [
+          prod.isAvailable,
+          prod.id,
+          req.params.slug,
+        ])
+        .catch(() => {});
+    }
     res.json({
       message: prod.isAvailable ? 'Produto reativado no cardápio!' : 'Produto pausado (esgotado temporariamente)!',
       data: prod,
@@ -1867,6 +2203,9 @@ async function startServer() {
       return res.status(404).json({ error: 'Produto não encontrado.' });
     }
     const [deleted] = memoryProducts.splice(idx, 1);
+    if (pgPool) {
+      pgPool.query('DELETE FROM products WHERE id = $1 AND tenant_slug = $2;', [deleted.id, req.params.slug]).catch(() => {});
+    }
     res.json({ message: 'Produto removido do cardápio.', data: deleted });
   });
 
@@ -1887,6 +2226,17 @@ async function startServer() {
       order: memoryCategories.filter((c) => c.tenantSlug === req.params.slug).length + 1,
     };
     memoryCategories.push(newCat);
+    if (pgPool) {
+      const t = memoryTenants.find((m) => m.slug === req.params.slug);
+      pgPool
+        .query(
+          `INSERT INTO categories (id, tenant_id, tenant_slug, name, display_order)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (id) DO NOTHING;`,
+          [newCat.id, t?.id || `tenant_${req.params.slug}`, newCat.tenantSlug, newCat.name, newCat.order]
+        )
+        .catch(() => {});
+    }
     res.status(201).json({ message: 'Categoria criada!', data: newCat });
   });
 
@@ -1952,15 +2302,16 @@ async function startServer() {
     let replyMessage = '';
     let actionType: 'cardapio' | 'human_handoff' | 'closed_hours' = 'cardapio';
 
+    const baseAppUrl = (process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '');
     if (isHumanRequest) {
       actionType = 'human_handoff';
       replyMessage = `Perfeito! Pausamos o robô de auto-resposta para o seu número. Um dos nossos atendentes humanos do ${tenant.name} vai falar com você em instantes! 👨‍🍳`;
     } else if (!tenant.isOpen) {
       actionType = 'closed_hours';
-      replyMessage = `Olá! Agradecemos sua mensagem para o ${tenant.name}.\n\nNo momento nosso restaurante está *FECHADO*.\n🕒 Horário de funcionamento: Seg a Dom das 18h às 23h30.\n\nVocê já pode conferir nosso cardápio e adiantar seu pedido para quando abrirmos:\n👉 https://cardapio.seudominio.com/${tenant.slug}`;
+      replyMessage = `Olá! Agradecemos sua mensagem para o ${tenant.name}.\n\nNo momento nosso restaurante está *FECHADO*.\n🕒 Horário de funcionamento: Seg a Dom das 18h às 23h30.\n\nVocê já pode conferir nosso cardápio e adiantar seu pedido para quando abrirmos:\n👉 ${baseAppUrl}/${tenant.slug}`;
     } else {
       actionType = 'cardapio';
-      replyMessage = `Olá! Seja muito bem-vindo ao *${tenant.name}*! 🍔\n\nNosso cardápio digital oficial está disponível no link abaixo com fotos, preços e promoções atualizadas:\n\n👉 https://cardapio.seudominio.com/${tenant.slug}\n\nFaça seu pedido diretamente pelo link! Se preferir falar com um atendente da nossa equipe, responda com *2*.`;
+      replyMessage = `Olá! Seja muito bem-vindo ao *${tenant.name}*! 🍔\n\nNosso cardápio digital oficial está disponível no link abaixo com fotos, preços e promoções atualizadas:\n\n👉 ${baseAppUrl}/${tenant.slug}\n\nFaça seu pedido diretamente pelo link! Se preferir falar com um atendente da nossa equipe, responda com *2*.`;
     }
 
     // Record Inbound log
@@ -2125,6 +2476,35 @@ async function startServer() {
       ],
     },
   ];
+
+  // Load saved subscriber users from PostgreSQL on startup
+  if (pgPool) {
+    try {
+      const dbUsers = await pgPool.query('SELECT * FROM subscriber_users ORDER BY created_at ASC;');
+      dbUsers.rows.forEach((row) => {
+        const existingIdx = memoryUsers.findIndex((u) => u.email.toLowerCase() === String(row.email).toLowerCase());
+        const mappedUser: InMemAuthUser = {
+          id: row.id,
+          name: row.name,
+          email: row.email,
+          passwordHash: row.password_hash,
+          phone: row.phone || '',
+          role: (row.role as any) || 'TENANT_OWNER',
+          tenantId: row.tenant_id,
+          tenantSlug: row.tenant_slug,
+          tenantName: row.tenant_name || 'Restaurante',
+          permissions: Array.isArray(row.permissions) ? row.permissions : ['tenant:full_access', 'kds:manage_orders'],
+        };
+        if (existingIdx >= 0 && memoryUsers[existingIdx].role !== 'SUPER_ADMIN') {
+          memoryUsers[existingIdx] = mappedUser;
+        } else if (existingIdx === -1) {
+          memoryUsers.push(mappedUser);
+        }
+      });
+    } catch {
+      // Ignore if table not yet created
+    }
+  }
 
   const memoryOtpCodes: Map<string, { code: string; email: string; expiresAt: number }> = new Map();
 
@@ -2312,6 +2692,35 @@ async function startServer() {
         ],
       };
       memoryUsers.push(user);
+    }
+
+    if (pgPool && user) {
+      pgPool
+        .query(
+          `INSERT INTO subscriber_users (id, name, email, password_hash, phone, role, tenant_id, tenant_slug, tenant_name, permissions)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+           ON CONFLICT (email) DO UPDATE SET
+             name = EXCLUDED.name,
+             password_hash = EXCLUDED.password_hash,
+             phone = EXCLUDED.phone,
+             tenant_id = EXCLUDED.tenant_id,
+             tenant_slug = EXCLUDED.tenant_slug,
+             tenant_name = EXCLUDED.tenant_name,
+             updated_at = NOW();`,
+          [
+            user.id,
+            user.name,
+            user.email,
+            user.passwordHash,
+            user.phone || '',
+            user.role,
+            user.tenantId,
+            user.tenantSlug,
+            user.tenantName,
+            JSON.stringify(user.permissions || []),
+          ]
+        )
+        .catch(() => {});
     }
 
     const { token, claims } = signJwtToken(user);
@@ -3012,8 +3421,10 @@ async function startServer() {
     tenantSlug: string;
     customer: InMemAsaasCustomer;
     planName: string;
-    value: number; // 129.90
-    cycle: 'MONTHLY';
+    value: number; // 99.00 (Anual no Cartão) or 129.90 (Mensal)
+    cycle: 'MONTHLY' | 'YEARLY';
+    monthlyEquivalentValue?: number;
+    installmentCount?: number;
     status: 'ACTIVE' | 'TRIAL' | 'PENDING' | 'OVERDUE' | 'CANCELLED';
     billingType: 'PIX' | 'CREDIT_CARD' | 'BOLETO';
     nextDueDate: string;
@@ -3147,6 +3558,8 @@ async function startServer() {
       planName: 'Plano Pro Aladay - R$ 129,90/mês',
       value: 129.9,
       cycle: 'MONTHLY',
+      monthlyEquivalentValue: 129.9,
+      installmentCount: 1,
       status: 'PENDING',
       billingType: 'PIX',
       nextDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -3154,6 +3567,39 @@ async function startServer() {
       invoices: [],
     },
   };
+
+  function persistSubscriptionToPostgres(sub: InMemAsaasSubscription) {
+    if (!pgPool || !sub?.tenantSlug) return;
+    pgPool
+      .query(
+        `INSERT INTO asaas_subscriptions (tenant_slug, subscription_id, status, cycle, billing_type, value, payload, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW())
+         ON CONFLICT (tenant_slug) DO UPDATE SET
+           subscription_id = EXCLUDED.subscription_id,
+           status = EXCLUDED.status,
+           cycle = EXCLUDED.cycle,
+           billing_type = EXCLUDED.billing_type,
+           value = EXCLUDED.value,
+           payload = EXCLUDED.payload,
+           updated_at = NOW();`,
+        [sub.tenantSlug, sub.id, sub.status, sub.cycle || 'MONTHLY', sub.billingType || 'PIX', sub.value || 129.9, JSON.stringify(sub)]
+      )
+      .catch(() => {});
+  }
+
+  // Load saved Asaas subscriptions from PostgreSQL on startup
+  if (pgPool) {
+    try {
+      const dbSubs = await pgPool.query('SELECT * FROM asaas_subscriptions;');
+      dbSubs.rows.forEach((row) => {
+        if (row.tenant_slug && row.payload && typeof row.payload === 'object') {
+          memoryAsaasSubscriptions[row.tenant_slug] = row.payload as InMemAsaasSubscription;
+        }
+      });
+    } catch {
+      // Ignore if table not yet created
+    }
+  }
 
   // Helper to ensure QR code base64 is generated for Pix
   async function ensurePixQrCode(invoice: InMemAsaasInvoice) {
@@ -3211,6 +3657,8 @@ async function startServer() {
         planName: 'Plano Pro Aladay - R$ 129,90/mês',
         value: 129.9,
         cycle: 'MONTHLY',
+        monthlyEquivalentValue: 129.9,
+        installmentCount: 1,
         status: 'PENDING',
         billingType: 'PIX',
         nextDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -3254,11 +3702,13 @@ async function startServer() {
   });
 
   // POST /api/v1/asaas/subscription/:slug/subscribe
-  // Creates or modifies recurring subscription to R$ 129,90/mês with Asaas
+  // Creates or modifies recurring subscription (Anual R$ 99,00/mês no Cartão ou Mensal R$ 129,90/mês) with Asaas
   app.post('/api/v1/asaas/subscription/:slug/subscribe', async (req: Request, res: Response) => {
     const { slug } = req.params;
     const {
       billingType = 'PIX',
+      planCycle,
+      cycle,
       customerName,
       customerEmail,
       customerCpfCnpj,
@@ -3269,7 +3719,29 @@ async function startServer() {
       creditCardCcv,
     } = req.body;
 
-    const safeBillingType = ['PIX', 'CREDIT_CARD', 'BOLETO'].includes(billingType) ? billingType : 'PIX';
+    const requestedCycle: 'MONTHLY' | 'YEARLY' =
+      planCycle === 'YEARLY' || cycle === 'YEARLY' || planCycle === 'ANNUAL' || cycle === 'ANNUAL'
+        ? 'YEARLY'
+        : 'MONTHLY';
+
+    // Annual subscription at R$ 99,00/month is exclusively via Credit Card
+    const safeBillingType: 'PIX' | 'CREDIT_CARD' | 'BOLETO' =
+      requestedCycle === 'YEARLY'
+        ? 'CREDIT_CARD'
+        : ['PIX', 'CREDIT_CARD', 'BOLETO'].includes(billingType)
+        ? billingType
+        : 'PIX';
+
+    const planMonthlyPrice = requestedCycle === 'YEARLY' ? 99.0 : 129.9;
+    const resolvedPlanName =
+      requestedCycle === 'YEARLY'
+        ? 'Plano Anual Aladay Pro - R$ 99,00/mês (No Cartão de Crédito)'
+        : 'Plano Pro Aladay - R$ 129,90/mês';
+    const resolvedDescription =
+      requestedCycle === 'YEARLY'
+        ? 'Assinatura Anual Aladay Cardápios Digitais - R$ 99,00/mês no Cartão de Crédito (12x R$ 99,00)'
+        : 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90/mês';
+
     const tenant = memoryTenants.find((t) => t.slug === slug);
     const resolvedName = customerName || tenant?.name || 'Assinante Aladay';
     const resolvedEmail = customerEmail || 'financeiro@restaurante.com.br';
@@ -3283,10 +3755,11 @@ async function startServer() {
     let realPixBase64: string | undefined = undefined;
     let realInvoiceUrl = `https://www.asaas.com/i/${realInvoiceId}`;
     let isRealGatewayCharged = false;
+    const hasCreditCardDetails = Boolean(creditCardNumber && creditCardHolder && creditCardExpiry && creditCardCcv);
 
     // IF ASAAS API KEY IS CONFIGURED -> EXECUTE REAL CALLS TO ASAAS v3
     if (asaasGatewayConfig.apiKey) {
-      console.log(`[Asaas API v3] Iniciando cobrança real no Asaas (${asaasGatewayConfig.environment}) para ${resolvedName} (${safeBillingType})`);
+      console.log(`[Asaas API v3] Iniciando cobrança real no Asaas (${asaasGatewayConfig.environment}) para ${resolvedName} (${safeBillingType} - ${requestedCycle})`);
 
       // 1. Sync Customer in Asaas
       const custResult = await getOrCreateAsaasCustomer({
@@ -3309,7 +3782,7 @@ async function startServer() {
       // 2. Handle CREDIT CARD with real Asaas authorization
       if (safeBillingType === 'CREDIT_CARD') {
         if (!creditCardNumber || !creditCardHolder || !creditCardExpiry || !creditCardCcv) {
-          return res.status(400).json({ error: 'Dados do cartão de crédito incompletos.' });
+          return res.status(400).json({ error: 'Dados do cartão de crédito incompletos para ativar a assinatura.' });
         }
 
         const [expMonth, expYearRaw] = creditCardExpiry.includes('/') ? creditCardExpiry.split('/') : [creditCardExpiry.slice(0, 2), creditCardExpiry.slice(2)];
@@ -3319,10 +3792,10 @@ async function startServer() {
         const subBody = {
           customer: asaasCustomerId,
           billingType: 'CREDIT_CARD',
-          value: 129.9,
+          value: planMonthlyPrice,
           nextDueDate,
           cycle: 'MONTHLY',
-          description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90/mês',
+          description: resolvedDescription,
           creditCard: {
             holderName: creditCardHolder.trim().toUpperCase(),
             number: cleanCcNumber,
@@ -3373,10 +3846,10 @@ async function startServer() {
           body: {
             customer: asaasCustomerId,
             billingType: 'PIX',
-            value: 129.9,
+            value: planMonthlyPrice,
             nextDueDate,
             cycle: 'MONTHLY',
-            description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90/mês',
+            description: resolvedDescription,
           },
         });
 
@@ -3406,6 +3879,9 @@ async function startServer() {
       }
     } else {
       console.log(`[Asaas] Aviso: Gateway sem chave de API configurada (Modo de Demonstração / Testes).`);
+      if (safeBillingType === 'CREDIT_CARD' && hasCreditCardDetails) {
+        isRealGatewayCharged = true;
+      }
     }
 
     // Build or update in-memory record
@@ -3423,9 +3899,11 @@ async function startServer() {
           cpfCnpj: resolvedCpfCnpj,
           phone: resolvedPhone,
         },
-        planName: 'Plano Pro Aladay - R$ 129,90/mês',
-        value: 129.9,
-        cycle: 'MONTHLY',
+        planName: resolvedPlanName,
+        value: planMonthlyPrice,
+        cycle: requestedCycle,
+        monthlyEquivalentValue: planMonthlyPrice,
+        installmentCount: requestedCycle === 'YEARLY' ? 12 : 1,
         status: initialStatus,
         billingType: safeBillingType,
         nextDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -3435,17 +3913,28 @@ async function startServer() {
       memoryAsaasSubscriptions[slug] = subscription;
     } else {
       if (realAsaasSubscriptionId) subscription.id = realAsaasSubscriptionId;
+      subscription.planName = resolvedPlanName;
+      subscription.value = planMonthlyPrice;
+      subscription.cycle = requestedCycle;
+      subscription.monthlyEquivalentValue = planMonthlyPrice;
+      subscription.installmentCount = requestedCycle === 'YEARLY' ? 12 : 1;
       subscription.billingType = safeBillingType;
       subscription.customer.name = resolvedName;
       subscription.customer.email = resolvedEmail;
       subscription.customer.cpfCnpj = resolvedCpfCnpj;
       subscription.customer.phone = resolvedPhone;
       subscription.status = initialStatus;
+      if (isRealGatewayCharged) {
+        subscription.isTrial = false;
+      }
     }
 
     const now = new Date();
     const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-    const refMonth = `${monthNames[now.getMonth()]} / ${now.getFullYear()}`;
+    const refMonth =
+      requestedCycle === 'YEARLY'
+        ? `Anual (12x R$ 99,00) · ${monthNames[now.getMonth()]}/${now.getFullYear()}`
+        : `${monthNames[now.getMonth()]} / ${now.getFullYear()}`;
 
     let pendingInvoice = subscription.invoices.find((i) => i.status === 'PENDING');
     if (!pendingInvoice) {
@@ -3453,18 +3942,21 @@ async function startServer() {
         id: realInvoiceId,
         subscriptionId: subscription.id,
         referenceMonth: refMonth,
-        value: 129.9,
+        value: planMonthlyPrice,
         status: isRealGatewayCharged ? 'RECEIVED' : 'PENDING',
         dueDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         billingType: safeBillingType,
         invoiceUrl: realInvoiceUrl,
-        description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90 / mês',
+        description: resolvedDescription,
         pixCopiaECola: realPixPayload,
         pixQrCodeBase64: realPixBase64,
       };
       subscription.invoices.unshift(pendingInvoice);
     } else {
       pendingInvoice.id = realInvoiceId;
+      pendingInvoice.referenceMonth = refMonth;
+      pendingInvoice.value = planMonthlyPrice;
+      pendingInvoice.description = resolvedDescription;
       pendingInvoice.billingType = safeBillingType;
       pendingInvoice.pixCopiaECola = realPixPayload;
       pendingInvoice.pixQrCodeBase64 = realPixBase64;
@@ -3482,7 +3974,14 @@ async function startServer() {
       subscription.status = 'ACTIVE';
       subscription.lastPaymentDate = new Date().toISOString().split('T')[0];
       pendingInvoice.paymentDate = subscription.lastPaymentDate;
-      if (tenant) tenant.subscriptionStatus = 'active';
+      if (tenant) {
+        tenant.subscriptionStatus = 'active';
+        if (pgPool) {
+          pgPool
+            .query('UPDATE tenants SET subscription_status = $1, updated_at = NOW() WHERE slug = $2;', ['active', tenant.slug])
+            .catch(() => {});
+        }
+      }
 
       // Log event
       memoryWebhookLogs.unshift({
@@ -3492,18 +3991,20 @@ async function startServer() {
         eventType: 'PAYMENT_RECEIVED',
         instance: 'Asaas Recorrência v3',
         senderPhone: subscription.customer.phone,
-        messageText: `Pagamento de R$ 129,90 da mensalidade Aladay confirmado no Cartão`,
+        messageText: `Pagamento de R$ ${planMonthlyPrice.toFixed(2).replace('.', ',')} (${requestedCycle === 'YEARLY' ? 'Assinatura Anual no Cartão' : 'Assinatura Mensal'}) confirmado no Cartão`,
         direction: 'inbound',
         status: 'success',
-        payloadSummary: `Assinatura #${subscription.id} ativada no Asaas para ${subscription.customer.name}`,
-        fullPayload: { event: 'PAYMENT_RECEIVED', subscription: subscription.id },
+        payloadSummary: `Assinatura #${subscription.id} (${resolvedPlanName}) ativada no Asaas para ${subscription.customer.name}`,
+        fullPayload: { event: 'PAYMENT_RECEIVED', subscription: subscription.id, cycle: requestedCycle, value: planMonthlyPrice },
       });
     }
+
+    persistSubscriptionToPostgres(subscription);
 
     res.json({
       success: true,
       message: isRealGatewayCharged
-        ? 'Assinatura criada e debitada com sucesso no Asaas!'
+        ? `Assinatura ${requestedCycle === 'YEARLY' ? 'Anual (R$ 99,00/mês no Cartão)' : 'Mensal (R$ 129,90/mês)'} criada e ativada com sucesso no Asaas!`
         : 'Assinatura Asaas configurada! Realize o pagamento para prosseguir.',
       subscription,
       isRealGateway: Boolean(asaasGatewayConfig.apiKey),
@@ -3593,10 +4094,20 @@ async function startServer() {
     };
 
     memoryAsaasSubscriptions[slug] = subscription;
+    persistSubscriptionToPostgres(subscription);
 
     if (tenant) {
       tenant.subscriptionStatus = 'trial';
       tenant.trialEndsAt = trialEndsIso;
+      if (pgPool) {
+        pgPool
+          .query('UPDATE tenants SET subscription_status = $1, trial_ends_at = $2, updated_at = NOW() WHERE slug = $3;', [
+            'trial',
+            trialEndsIso,
+            tenant.slug,
+          ])
+          .catch(() => {});
+      }
     }
 
     memoryWebhookLogs.unshift({
@@ -3758,7 +4269,13 @@ async function startServer() {
     const tenant = memoryTenants.find((t) => t.slug === slug);
     if (tenant) {
       tenant.subscriptionStatus = 'active';
+      if (pgPool) {
+        pgPool
+          .query('UPDATE tenants SET subscription_status = $1, updated_at = NOW() WHERE slug = $2;', ['active', tenant.slug])
+          .catch(() => {});
+      }
     }
+    persistSubscriptionToPostgres(subscription);
 
     res.json({
       success: true,
@@ -3919,6 +4436,7 @@ async function startServer() {
         const tenant = memoryTenants.find((t) => t.slug === targetSub?.tenantSlug);
         if (tenant) tenant.subscriptionStatus = 'past_due';
       }
+      persistSubscriptionToPostgres(targetSub);
     }
 
     // Record webhook log

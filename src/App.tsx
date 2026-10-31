@@ -21,6 +21,7 @@ import { LogIn, Lock, ShieldAlert, X, ArrowRight, Menu, Share2, Copy, Check, Mes
 import { WhatsAppAutomationView } from './components/WhatsAppAutomationView';
 import { AuthPortalView } from './components/AuthPortalView';
 import { LandingPageView } from './components/LandingPageView';
+import { LegalComplianceView } from './components/LegalComplianceView';
 
 export default function App() {
   const sharedLojaParam = React.useMemo(() => {
@@ -28,7 +29,7 @@ export default function App() {
     return new URLSearchParams(window.location.search).get('loja');
   }, []);
 
-  const [currentView, setCurrentView] = useState<'home' | 'kickoff' | 'consumer' | 'admin' | 'calculator' | 'diagrams' | 'tracking' | 'whatsapp' | 'auth'>(() =>
+  const [currentView, setCurrentView] = useState<'home' | 'kickoff' | 'consumer' | 'admin' | 'calculator' | 'diagrams' | 'tracking' | 'whatsapp' | 'auth' | 'terms' | 'privacy'>(() =>
     sharedLojaParam ? 'consumer' : 'home'
   );
   const [selectedTrackingOrder, setSelectedTrackingOrder] = useState<Order | null>(null);
@@ -234,59 +235,273 @@ export default function App() {
       .catch(() => {});
   }, [authSession?.token]);
 
-  // Active subscription validation logic:
-  // - Super Admin has platform-wide access
-  // - Tenant owner / kitchen staff has access ONLY IF authenticated AND their tenant has an active subscription
-  //   (either tenant.asaasSubscription?.status === 'ACTIVE' or tenant.subscriptionStatus === 'active')
-  // - Unsubscribed visitors / clients can ONLY access the home page ('home')
-  //   (with 'kickoff' allowed for subscription checkout, and 'auth' for logging in)
+  // ===========================================================================
+  // SCRIPT DE VERIFICAÇÃO: EXPIRAÇÃO DOS 15 DIAS DE TESTE GRÁTIS & ASSINATURA ASAAS
+  // Bloqueia o acesso aos painéis de Admin e Cardápio Digital de qualquer tenant
+  // que tenha expirado os 15 dias de teste grátis e ainda não possua assinatura ativa no Asaas.
+  // ===========================================================================
+  const TRIAL_DURATION_MS = 15 * 24 * 60 * 60 * 1000;
+  const [verificationClockMs, setVerificationClockMs] = useState<number>(() => Date.now());
+
+  // Revalida o relógio de expiração periodicamente em tempo de execução
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setVerificationClockMs(Date.now());
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Sincroniza o status real da assinatura do tenant junto à API do Asaas no backend
+  React.useEffect(() => {
+    if (!tenant?.slug) return;
+    let isMounted = true;
+
+    fetch(`/api/v1/asaas/subscription/${encodeURIComponent(tenant.slug)}`)
+      .then((res) => (res && res.ok ? res.json() : null))
+      .then((data) => {
+        if (!isMounted || !data?.subscription) return;
+        const remoteSub = data.subscription;
+        setTenant((prev) => {
+          if (prev.slug !== tenant.slug) return prev;
+          const prevStatus = prev.asaasSubscription?.status;
+          const prevTrialEnds = prev.asaasSubscription?.trialEndsAt;
+          if (
+            prevStatus === remoteSub.status &&
+            prevTrialEnds === remoteSub.trialEndsAt &&
+            prev.asaasSubscription?.id === remoteSub.id
+          ) {
+            return prev;
+          }
+          const updated: RestaurantTenant = {
+            ...prev,
+            asaasSubscription: remoteSub,
+            trialEndsAt: remoteSub.trialEndsAt || prev.trialEndsAt,
+            subscriptionStatus:
+              remoteSub.status === 'ACTIVE'
+                ? 'active'
+                : remoteSub.status === 'TRIAL'
+                ? 'trial'
+                : remoteSub.status === 'OVERDUE' || remoteSub.status === 'CANCELLED'
+                ? 'past_due'
+                : prev.subscriptionStatus,
+          };
+          setTenantsList((list) =>
+            list.map((t) => (t.slug === updated.slug ? updated : t))
+          );
+          return updated;
+        });
+      })
+      .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
+  }, [tenant?.slug]);
+
+  const verifyTenantTrialAndAsaasSubscription = React.useCallback(
+    (targetTenant: RestaurantTenant | null | undefined, nowMs: number) => {
+      if (!targetTenant) {
+        return {
+          hasActiveAsaasSubscription: false,
+          isTenantOnTrial: false,
+          isTrialActiveAndValid: false,
+          isTrialExpired: true,
+          isTrialExpiredWithoutAsaas: true,
+          trialDaysLeft: 0,
+          trialEndsIso: undefined as string | undefined,
+          blockReason: 'missing_tenant' as const,
+        };
+      }
+
+      const asaasSub = targetTenant.asaasSubscription;
+
+      // 1. Verifica se possui assinatura paga e ativa no Asaas
+      const hasPaidAsaasInvoice = Boolean(
+        asaasSub?.invoices?.some(
+          (inv) => inv.status === 'RECEIVED' || inv.status === 'CONFIRMED'
+        )
+      );
+      const hasActiveAsaasSubscription = Boolean(
+        (asaasSub?.status === 'ACTIVE' && !asaasSub?.isTrial) ||
+          (asaasSub?.status === 'ACTIVE' && hasPaidAsaasInvoice) ||
+          (targetTenant.subscriptionStatus === 'active' &&
+            asaasSub?.status === 'ACTIVE' &&
+            !asaasSub?.isTrial)
+      );
+
+      // 2. Calcula a data limite dos 15 dias de teste grátis
+      const rawTrialEndsIso = asaasSub?.trialEndsAt || targetTenant.trialEndsAt;
+      const rawTrialStartIso = asaasSub?.trialStartedAt || asaasSub?.createdAt;
+
+      let resolvedTrialEndsMs: number | null = null;
+      if (rawTrialEndsIso) {
+        const parsedEnd = new Date(rawTrialEndsIso).getTime();
+        if (!Number.isNaN(parsedEnd)) {
+          resolvedTrialEndsMs = parsedEnd;
+        }
+      } else if (rawTrialStartIso) {
+        const parsedStart = new Date(rawTrialStartIso).getTime();
+        if (!Number.isNaN(parsedStart)) {
+          resolvedTrialEndsMs = parsedStart + TRIAL_DURATION_MS;
+        }
+      }
+
+      const isTenantOnTrial = Boolean(
+        asaasSub?.status === 'TRIAL' ||
+          asaasSub?.isTrial ||
+          targetTenant.subscriptionStatus === 'trial' ||
+          Boolean(rawTrialEndsIso)
+      );
+
+      // Se a data de término do trial já passou (>= 15 dias), o período gratuito expirou
+      const hasTrialDatePassed =
+        resolvedTrialEndsMs !== null ? nowMs >= resolvedTrialEndsMs : false;
+
+      const trialDaysLeft =
+        isTenantOnTrial && resolvedTrialEndsMs !== null
+          ? Math.max(0, Math.ceil((resolvedTrialEndsMs - nowMs) / (1000 * 60 * 60 * 24)))
+          : isTenantOnTrial && !hasTrialDatePassed
+          ? 15
+          : 0;
+
+      const isExplicitlyOverdueOrSuspended = Boolean(
+        targetTenant.subscriptionStatus === 'past_due' ||
+          targetTenant.subscriptionStatus === 'suspended' ||
+          asaasSub?.status === 'OVERDUE' ||
+          asaasSub?.status === 'CANCELLED'
+      );
+
+      const isTrialExpired = Boolean(
+        (isTenantOnTrial && (hasTrialDatePassed || trialDaysLeft <= 0)) ||
+          isExplicitlyOverdueOrSuspended
+      );
+
+      const isTrialActiveAndValid = Boolean(
+        isTenantOnTrial && !isTrialExpired && trialDaysLeft > 0
+      );
+
+      // Bloqueia qualquer tenant que tenha expirado os 15 dias de teste grátis
+      // e ainda não possua uma assinatura ativa no Asaas
+      const isTrialExpiredWithoutAsaas = Boolean(
+        isTrialExpired && !hasActiveAsaasSubscription
+      );
+
+      return {
+        hasActiveAsaasSubscription,
+        isTenantOnTrial,
+        isTrialActiveAndValid,
+        isTrialExpired,
+        isTrialExpiredWithoutAsaas,
+        trialDaysLeft,
+        trialEndsIso:
+          rawTrialEndsIso ||
+          (resolvedTrialEndsMs ? new Date(resolvedTrialEndsMs).toISOString() : undefined),
+        blockReason: isTrialExpiredWithoutAsaas
+          ? ('trial_expired_no_asaas' as const)
+          : !hasActiveAsaasSubscription && !isTrialActiveAndValid
+          ? ('no_active_subscription' as const)
+          : null,
+      };
+    },
+    [TRIAL_DURATION_MS]
+  );
+
+  const tenantVerification = React.useMemo(
+    () => verifyTenantTrialAndAsaasSubscription(tenant, verificationClockMs),
+    [tenant, verificationClockMs, verifyTenantTrialAndAsaasSubscription]
+  );
+
+  // Atualiza automaticamente o status do tenant para 'past_due' / 'OVERDUE' caso os 15 dias tenham expirado sem Asaas ativo
+  React.useEffect(() => {
+    if (
+      tenant &&
+      tenantVerification.isTrialExpiredWithoutAsaas &&
+      (tenant.subscriptionStatus === 'trial' ||
+        tenant.asaasSubscription?.status === 'TRIAL')
+    ) {
+      setTenant((prev) => {
+        const updated: RestaurantTenant = {
+          ...prev,
+          subscriptionStatus: 'past_due',
+          asaasSubscription: prev.asaasSubscription
+            ? { ...prev.asaasSubscription, status: 'OVERDUE' }
+            : prev.asaasSubscription,
+        };
+        setTenantsList((list) =>
+          list.map((t) => (t.slug === updated.slug ? updated : t))
+        );
+        return updated;
+      });
+    }
+  }, [tenant, tenantVerification.isTrialExpiredWithoutAsaas]);
+
   const isSuperAdmin = authSession?.user?.role === 'SUPER_ADMIN';
   const isTenantStaffOrOwner =
     authSession?.user?.role === 'TENANT_OWNER' ||
     authSession?.user?.role === 'KITCHEN_STAFF';
 
-  const trialEndsIso = tenant?.asaasSubscription?.trialEndsAt || tenant?.trialEndsAt;
-  const isTenantOnTrial = Boolean(
-    tenant?.asaasSubscription?.status === 'TRIAL' ||
-    tenant?.asaasSubscription?.isTrial ||
-    tenant?.subscriptionStatus === 'trial'
-  );
-  const trialDaysLeft = isTenantOnTrial
-    ? trialEndsIso
-      ? Math.max(0, Math.ceil((new Date(trialEndsIso).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
-      : 15
-    : 0;
-  const isTrialActiveAndValid = isTenantOnTrial && trialDaysLeft > 0;
+  const trialDaysLeft = tenantVerification.trialDaysLeft;
+  const isTrialActiveAndValid = tenantVerification.isTrialActiveAndValid;
+  const isTrialExpiredWithoutAsaas = tenantVerification.isTrialExpiredWithoutAsaas;
 
+  // O tenant só é considerado habilitado se NÃO estiver com o teste de 15 dias expirado sem Asaas ativo,
+  // e possuir assinatura ativa no Asaas ou período de teste grátis de 15 dias vigente
   const isTenantSubscribed = Boolean(
-    tenant?.asaasSubscription?.status === 'ACTIVE' ||
-    tenant?.subscriptionStatus === 'active' ||
-    isTrialActiveAndValid
+    !isTrialExpiredWithoutAsaas &&
+      (tenantVerification.hasActiveAsaasSubscription || isTrialActiveAndValid)
   );
 
   const hasActiveSubscription = Boolean(
-    isSuperAdmin || (Boolean(authSession) && isTenantStaffOrOwner && isTenantSubscribed)
+    !isTrialExpiredWithoutAsaas &&
+      (isSuperAdmin || (Boolean(authSession) && isTenantStaffOrOwner && isTenantSubscribed))
   );
 
-  // Enforce access boundary: unsubscribed clients CAN ONLY access 'home', 'kickoff' (to buy), or 'auth' (to login),
-  // OR 'consumer' / 'tracking' when accessing a restaurant's shared menu link (?loja=...)
+  // Verifica se a visualização atual é um painel bloqueável (Admin, WhatsApp, Cardápio Digital ou Tracking)
+  const isProtectedAdminOrMenuPanel =
+    currentView === 'admin' ||
+    currentView === 'whatsapp' ||
+    currentView === 'consumer' ||
+    currentView === 'tracking' ||
+    currentView === 'calculator' ||
+    currentView === 'diagrams';
+
+  // O acesso público ao cardápio (?loja=slug) também é BLOQUEADO caso o tenant tenha expirado os 15 dias de teste
+  // grátis e ainda não possua assinatura ativa no Asaas
+  const isAllowedPublicStoreView = Boolean(
+    sharedLojaParam &&
+      (currentView === 'consumer' || currentView === 'tracking') &&
+      isTenantSubscribed &&
+      !isTrialExpiredWithoutAsaas
+  );
+
   React.useEffect(() => {
-    const isAllowedPublicStoreView =
-      Boolean(sharedLojaParam) && (currentView === 'consumer' || currentView === 'tracking');
     if (
-      !hasActiveSubscription &&
-      !isAllowedPublicStoreView &&
-      currentView !== 'home' &&
-      currentView !== 'kickoff' &&
-      currentView !== 'auth'
+      (isTrialExpiredWithoutAsaas || (!hasActiveSubscription && !isAllowedPublicStoreView)) &&
+      isProtectedAdminOrMenuPanel
     ) {
       setCurrentView('home');
       setShowSubscriptionNoticeModal(true);
     }
-  }, [hasActiveSubscription, currentView, sharedLojaParam]);
+  }, [
+    isTrialExpiredWithoutAsaas,
+    hasActiveSubscription,
+    isAllowedPublicStoreView,
+    isProtectedAdminOrMenuPanel,
+  ]);
 
   const handleNavigateSafely = (targetView: typeof currentView) => {
-    if (!hasActiveSubscription && targetView !== 'home' && targetView !== 'kickoff' && targetView !== 'auth') {
+    const isTargetProtected =
+      targetView === 'admin' ||
+      targetView === 'whatsapp' ||
+      targetView === 'consumer' ||
+      targetView === 'tracking' ||
+      targetView === 'calculator' ||
+      targetView === 'diagrams';
+
+    if (
+      isTargetProtected &&
+      (isTrialExpiredWithoutAsaas || !hasActiveSubscription)
+    ) {
       setCurrentView('home');
       setShowSubscriptionNoticeModal(true);
       return;
@@ -672,7 +887,7 @@ export default function App() {
                   }}
                   className="hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0"
                 >
-                  Planos &amp; Preço (R$ 129,90)
+                  Planos (a partir de R$ 99,00/mês)
                 </a>
                 <a
                   href="#calculadora"
@@ -878,7 +1093,7 @@ export default function App() {
                 }}
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-100 transition-colors"
               >
-                Planos (R$ 129,90)
+                Planos (R$ 99/mês Anual)
               </a>
               <a
                 href="#calculadora"
@@ -1007,7 +1222,7 @@ export default function App() {
                     }}
                     className="block w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold text-neutral-700 hover:bg-neutral-100 transition-colors"
                   >
-                    Planos &amp; Preço (R$ 129,90/mês)
+                    Planos &amp; Preço (R$ 99,00/mês Anual no Cartão ou R$ 129,90/mês)
                   </a>
                   <a
                     href="#calculadora"
@@ -1036,18 +1251,39 @@ export default function App() {
             onNavigateToSetup={() => handleNavigateSafely('kickoff')}
             onNavigateToDemoMenu={() => handleNavigateSafely('consumer')}
             onNavigateToAdmin={() => handleNavigateSafely('admin')}
+            onNavigateToTerms={() => {
+              setCurrentView('terms');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            onNavigateToPrivacy={() => {
+              setCurrentView('privacy');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+          />
+        )}
+
+        {(currentView === 'terms' || currentView === 'privacy') && (
+          <LegalComplianceView
+            initialTab={currentView === 'privacy' ? 'privacy' : 'terms'}
+            onTabChange={(tab) => setCurrentView(tab)}
+            onBackToHome={() => {
+              setCurrentView('home');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
           />
         )}
 
         {currentView === 'kickoff' && (
           <ProjectKickoffView
             onTenantCreated={handleTenantCreated}
-            onNavigateToView={(view) => setCurrentView(view)}
+            onNavigateToView={(view) => handleNavigateSafely(view)}
             onSessionAuthenticated={handleSessionAuthenticated}
           />
         )}
 
-        {currentView === 'consumer' && (
+        {currentView === 'consumer' &&
+          !isTrialExpiredWithoutAsaas &&
+          (hasActiveSubscription || isAllowedPublicStoreView) && (
           <div className="py-2 space-y-4">
             {/* Share Digital Menu Banner at top of Digital Menu Page */}
             <div className="max-w-md mx-auto bg-white border border-neutral-200 rounded-2xl p-3.5 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1124,18 +1360,20 @@ export default function App() {
               onOrderCreated={handleOrderCreated}
               onViewTracking={(order) => {
                 setSelectedTrackingOrder(order);
-                setCurrentView('tracking');
+                handleNavigateSafely('tracking');
               }}
             />
           </div>
         )}
 
-        {currentView === 'tracking' && (
+        {currentView === 'tracking' &&
+          !isTrialExpiredWithoutAsaas &&
+          (hasActiveSubscription || isAllowedPublicStoreView) && (
           <OrderTrackingView
             order={selectedTrackingOrder || orders[0] || INITIAL_ORDERS[0]}
             tenant={tenant}
             onUpdateOrderStatus={handleUpdateOrderStatus}
-            onBackToMenu={() => setCurrentView('consumer')}
+            onBackToMenu={() => handleNavigateSafely('consumer')}
           />
         )}
 
@@ -1144,11 +1382,11 @@ export default function App() {
             currentSession={authSession}
             onSessionAuthenticated={handleSessionAuthenticated}
             onLogout={handleLogout}
-            onNavigateToAdmin={() => setCurrentView('admin')}
+            onNavigateToAdmin={() => handleNavigateSafely('admin')}
           />
         )}
 
-        {currentView === 'admin' && (
+        {currentView === 'admin' && !isTrialExpiredWithoutAsaas && hasActiveSubscription && (
           <RestaurantAdminView
             tenant={tenant}
             orders={orders}
@@ -1167,10 +1405,10 @@ export default function App() {
             onImportCatalog={handleImportCatalog}
             onSimulateEvolutionReconnect={handleSimulateEvolutionReconnect}
             authSession={authSession}
-            onOpenAuthPortal={() => setCurrentView('auth')}
+            onOpenAuthPortal={() => handleNavigateSafely('auth')}
           />
         )}
-        {currentView === 'whatsapp' && (
+        {currentView === 'whatsapp' && !isTrialExpiredWithoutAsaas && hasActiveSubscription && (
           <WhatsAppAutomationView
             tenant={tenant}
             orders={orders}
@@ -1181,26 +1419,44 @@ export default function App() {
           />
         )}
 
-        {currentView === 'calculator' && <FinancialCalculator />}
+        {currentView === 'calculator' && !isTrialExpiredWithoutAsaas && hasActiveSubscription && (
+          <FinancialCalculator />
+        )}
 
-        {currentView === 'diagrams' && <TechDiagramsView />}
+        {currentView === 'diagrams' && !isTrialExpiredWithoutAsaas && hasActiveSubscription && (
+          <TechDiagramsView />
+        )}
       </div>
 
-      {/* Modal de Proteção / Aviso de Assinatura para Clientes Não-Assinantes */}
+      {/* Modal de Bloqueio de Acesso (Teste de 15 Dias Expirado sem Assinatura Asaas ou Sem Assinatura Ativa) */}
       {showSubscriptionNoticeModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 space-y-5 shadow-2xl border border-neutral-200 relative animate-in fade-in duration-150">
             <div className="flex items-start justify-between border-b border-neutral-100 pb-3">
               <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700 shrink-0">
-                  <Lock className="w-5 h-5" />
+                <div
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                    isTrialExpiredWithoutAsaas
+                      ? 'bg-rose-50 border-rose-200 text-rose-700'
+                      : 'bg-amber-50 border-amber-200 text-amber-700'
+                  }`}
+                >
+                  {isTrialExpiredWithoutAsaas ? (
+                    <ShieldAlert className="w-5 h-5" />
+                  ) : (
+                    <Lock className="w-5 h-5" />
+                  )}
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-neutral-950">
-                    Acesso Exclusivo para Assinantes
+                    {isTrialExpiredWithoutAsaas
+                      ? 'Teste Grátis de 15 Dias Expirado'
+                      : 'Acesso Exclusivo para Assinantes'}
                   </h3>
                   <p className="text-xs text-neutral-500">
-                    Plano Aladay Pro &middot; R$ 129,90/mês
+                    {isTrialExpiredWithoutAsaas
+                      ? `${tenant.name} · Assinatura Asaas Pendente`
+                      : 'Plano Anual R$ 99,00/mês (Cartão) ou Mensal R$ 129,90/mês'}
                   </p>
                 </div>
               </div>
@@ -1213,20 +1469,41 @@ export default function App() {
               </button>
             </div>
 
-            <div className="space-y-3 text-xs text-neutral-600 leading-relaxed">
-              <p>
-                O <strong>Cardápio Digital personalizado</strong> e o <strong>Painel de Gestão da Loja (KDS &amp; WhatsApp)</strong> são liberados imediatamente ao iniciar seu <strong>Período de Teste Grátis de 15 Dias</strong> ou assinar o plano Aladay Pro.
-              </p>
-              <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 space-y-1.5">
-                <div className="flex items-center gap-1.5 text-neutral-900 font-semibold">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  <span>Teste Grátis por 15 Dias:</span>
-                </div>
-                <p className="text-[11px] text-neutral-500 pl-3.5">
-                  Experimente todos os recursos da plataforma por 15 dias sem nenhuma cobrança hoje (R$ 0,00).
+            {isTrialExpiredWithoutAsaas ? (
+              <div className="space-y-3 text-xs text-neutral-600 leading-relaxed">
+                <p>
+                  O período de <strong>15 dias de teste grátis</strong> do restaurante{' '}
+                  <strong>{tenant.name}</strong> encerrou e ainda não identificamos uma{' '}
+                  <strong>assinatura ativa no Asaas</strong>.
                 </p>
+                <div className="p-3 bg-rose-50 rounded-xl border border-rose-200 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-rose-900 font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-rose-600" />
+                    <span>Painel Admin e Cardápio Digital Bloqueados:</span>
+                  </div>
+                  <p className="text-[11px] text-rose-700 pl-3.5">
+                    Para liberar imediatamente o Cardápio Digital da sua loja e o Painel de Gestão (KDS &amp; WhatsApp), ative a <strong>Assinatura Anual por R$ 99,00/mês no Cartão de Crédito</strong> ou a assinatura mensal de R$ 129,90 no Asaas.
+                  </p>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="space-y-3 text-xs text-neutral-600 leading-relaxed">
+                <p>
+                  O <strong>Cardápio Digital personalizado</strong> e o{' '}
+                  <strong>Painel de Gestão da Loja (KDS &amp; WhatsApp)</strong> são liberados imediatamente ao iniciar seu{' '}
+                  <strong>Período de Teste Grátis de 15 Dias</strong> ou assinar o plano Aladay Pro (<strong>R$ 99,00/mês no Plano Anual no Cartão</strong> ou R$ 129,90/mês no Mensal).
+                </p>
+                <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-neutral-900 font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span>Teste Grátis por 15 Dias:</span>
+                  </div>
+                  <p className="text-[11px] text-neutral-500 pl-3.5">
+                    Experimente todos os recursos da plataforma por 15 dias sem nenhuma cobrança hoje (R$ 0,00).
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="pt-2 space-y-2">
               <button
@@ -1237,7 +1514,11 @@ export default function App() {
                 }}
                 className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs"
               >
-                <span>Começar Teste Grátis de 15 Dias (R$ 0,00)</span>
+                <span>
+                  {isTrialExpiredWithoutAsaas
+                    ? 'Ativar Assinatura (A partir de R$ 99,00/mês no Cartão)'
+                    : 'Começar Teste Grátis de 15 Dias (R$ 0,00)'}
+                </span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
@@ -1256,17 +1537,60 @@ export default function App() {
         </div>
       )}
 
-      {/* Clean quiet footer */}
-      <footer className="border-t border-neutral-200 bg-white py-4 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-neutral-500">
-          <div className="flex items-center gap-2">
-            <span>Aladay cardápios digitais &amp; WhatsApp Evolution API</span>
+      {/* Clean quiet footer with Terms of Use and Privacy Policy links */}
+      <footer className="border-t border-neutral-200 bg-white py-5 mt-auto">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col md:flex-row items-center justify-between gap-3 text-xs text-neutral-500">
+          <div className="flex flex-wrap items-center justify-center md:justify-start gap-2">
+            <span className="font-semibold text-neutral-800">Aladay Cardápios Digitais</span>
             <span aria-hidden="true">·</span>
-            <span>Mensalidade R$ 129,90</span>
+            <span>WhatsApp Evolution API &amp; Pix Direto</span>
             <span aria-hidden="true">·</span>
-            <span>PostgreSQL RLS &amp; Outbox</span>
+            <span>Anual R$ 99,00/mês (Cartão) ou Mensal R$ 129,90</span>
           </div>
-          <span>Arquitetura de Alta Disponibilidade para Restaurantes</span>
+
+          <div className="flex flex-wrap items-center justify-center gap-4">
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentView('terms');
+                if (typeof window !== 'undefined') {
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+              }}
+              className={`transition-colors cursor-pointer font-medium ${
+                currentView === 'terms'
+                  ? 'text-emerald-700 font-bold underline underline-offset-4'
+                  : 'text-neutral-600 hover:text-neutral-950 hover:underline underline-offset-4'
+              }`}
+            >
+              Termos de Uso
+            </button>
+            <span aria-hidden="true" className="text-neutral-300">
+              ·
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentView('privacy');
+                if (typeof window !== 'undefined') {
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+              }}
+              className={`transition-colors cursor-pointer font-medium ${
+                currentView === 'privacy'
+                  ? 'text-emerald-700 font-bold underline underline-offset-4'
+                  : 'text-neutral-600 hover:text-neutral-950 hover:underline underline-offset-4'
+              }`}
+            >
+              Política de Privacidade (LGPD)
+            </button>
+            <span aria-hidden="true" className="hidden sm:inline text-neutral-300">
+              ·
+            </span>
+            <span className="hidden sm:inline text-neutral-400">
+              © {new Date().getFullYear()} Aladay
+            </span>
+          </div>
         </div>
       </footer>
     </div>

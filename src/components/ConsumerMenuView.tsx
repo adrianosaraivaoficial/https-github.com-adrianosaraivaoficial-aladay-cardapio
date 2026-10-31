@@ -3,6 +3,7 @@ import { ShoppingBag, Clock, MapPin, Plus, Minus, Check, ArrowRight, MessageSqua
 import { Category, DeliveryZone, OptionGroup, OptionItem, Order, OrderItem, OrderItemOption, Product, RestaurantTenant } from '../types';
 import { ThermalTicketModal } from './ThermalTicketModal';
 import { PixPaymentModal } from './PixPaymentModal';
+import { resolveTenantPixCredentials } from '../utils/pixPayloadGenerator';
 import QRCode from 'qrcode';
 
 interface ConsumerMenuViewProps {
@@ -56,6 +57,7 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
 
   // Pix payment modal state
   const [activePixOrder, setActivePixOrder] = useState<Order | null>(null);
+  const tenantPix = useMemo(() => resolveTenantPixCredentials(tenant), [tenant]);
 
   // Confirmation view state
   const [lastPlacedOrder, setLastPlacedOrder] = useState<Order | null>(null);
@@ -841,6 +843,28 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
                     <option value="Cartão de Débito">Cartão de Débito</option>
                     <option value="Dinheiro">Dinheiro (especificar troco nas observações)</option>
                   </select>
+
+                  {paymentMethod.includes('Pix') && (
+                    <div className="mt-2 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-900 space-y-1">
+                      <div className="flex items-center justify-between font-bold">
+                        <span className="flex items-center gap-1">
+                          <QrCode className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>QR Code Pix Direto do Restaurante</span>
+                        </span>
+                        <span className="text-[10px] font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200 text-emerald-700">
+                          Conta do Proprietário
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-emerald-800 flex flex-wrap items-center justify-between gap-1 pt-1 border-t border-emerald-200/60">
+                        <span>
+                          Beneficiário: <strong>{tenantPix.beneficiaryName}</strong>
+                        </span>
+                        <span className="font-mono">
+                          Chave: <strong>{tenantPix.pixKey}</strong>
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 

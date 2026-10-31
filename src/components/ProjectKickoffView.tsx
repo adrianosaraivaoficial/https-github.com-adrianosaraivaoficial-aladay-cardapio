@@ -13,10 +13,7 @@ import {
   AlertCircle,
   KeyRound,
   UserCheck,
-  Sliders,
   RefreshCw,
-  AlertTriangle,
-  Zap,
 } from 'lucide-react';
 import { AsaasBillingType, AsaasSubscriptionData, AuthSession, RestaurantTenant } from '../types';
 
@@ -34,26 +31,9 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
   // Onboarding Gate State: Step 1 (Subscription or 15-Day Free Trial Signup) -> Step 2 (Create Restaurant & Menu)
   const [activeStep, setActiveStep] = useState<'subscription' | 'restaurant'>('subscription');
   const [signupMode, setSignupMode] = useState<'trial_15_days' | 'paid_direct'>('trial_15_days');
+  const [selectedPlanCycle, setSelectedPlanCycle] = useState<'YEARLY' | 'MONTHLY'>('YEARLY');
   const [subscriptionConfirmed, setSubscriptionConfirmed] = useState(false);
   const [lockedStepWarning, setLockedStepWarning] = useState(false);
-
-  // Gateway Asaas Configuration State
-  const [gatewayConfig, setGatewayConfig] = useState<{
-    configured: boolean;
-    environment: 'sandbox' | 'production';
-    apiKeyMasked: string;
-    apiUrl: string;
-  }>({
-    configured: false,
-    environment: 'sandbox',
-    apiKeyMasked: '',
-    apiUrl: 'https://sandbox.asaas.com/v3',
-  });
-  const [showConfigModal, setShowConfigModal] = useState(false);
-  const [configApiKeyInput, setConfigApiKeyInput] = useState('');
-  const [configEnvInput, setConfigEnvInput] = useState<'sandbox' | 'production'>('production');
-  const [isSavingConfig, setIsSavingConfig] = useState(false);
-  const [configSaveNotice, setConfigSaveNotice] = useState<string | null>(null);
 
   // Step 1: Subscriber Account & Asaas Plan State
   const [subscriberName, setSubscriberName] = useState('');
@@ -61,7 +41,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
   const [subscriberEmail, setSubscriberEmail] = useState('');
   const [subscriberPassword, setSubscriberPassword] = useState('');
   const [subscriberPhone, setSubscriberPhone] = useState('');
-  const [billingType, setBillingType] = useState<AsaasBillingType>('PIX');
+  const [billingType, setBillingType] = useState<AsaasBillingType>('CREDIT_CARD');
 
   // Credit Card fields
   const [ccNumber, setCcNumber] = useState('');
@@ -95,26 +75,6 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
   const [tenantError, setTenantError] = useState<string | null>(null);
 
   const onboardingTempSlug = `assinante_${subscriberCpfCnpj.replace(/\D/g, '') || 'novo'}`;
-
-  // Fetch Gateway Configuration on load
-  const fetchGatewayConfig = async () => {
-    try {
-      const res = await fetch('/api/v1/asaas/config');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.config) {
-          setGatewayConfig(data.config);
-          setConfigEnvInput(data.config.environment);
-        }
-      }
-    } catch {
-      // Ignored fallback
-    }
-  };
-
-  useEffect(() => {
-    fetchGatewayConfig();
-  }, []);
 
   // Automated live polling to detect when Pix invoice is paid
   useEffect(() => {
@@ -200,7 +160,10 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
       return;
     }
 
-    if (billingType === 'CREDIT_CARD') {
+    const effectiveBillingType: AsaasBillingType =
+      selectedPlanCycle === 'YEARLY' ? 'CREDIT_CARD' : billingType;
+
+    if (effectiveBillingType === 'CREDIT_CARD') {
       if (!ccNumber.trim() || !ccHolder.trim() || !ccExpiry.trim() || !ccCvv.trim()) {
         setSubError('Preencha todos os dados do cartão de crédito para ativar a assinatura.');
         return;
@@ -214,15 +177,16 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          billingType,
+          billingType: effectiveBillingType,
+          planCycle: selectedPlanCycle,
           customerName: subscriberName.trim(),
           customerEmail: subscriberEmail.trim(),
           customerCpfCnpj: subscriberCpfCnpj.trim(),
           customerPhone: subscriberPhone.replace(/\D/g, ''),
-          creditCardNumber: billingType === 'CREDIT_CARD' ? ccNumber : undefined,
-          creditCardHolder: billingType === 'CREDIT_CARD' ? ccHolder : undefined,
-          creditCardExpiry: billingType === 'CREDIT_CARD' ? ccExpiry : undefined,
-          creditCardCcv: billingType === 'CREDIT_CARD' ? ccCvv : undefined,
+          creditCardNumber: effectiveBillingType === 'CREDIT_CARD' ? ccNumber : undefined,
+          creditCardHolder: effectiveBillingType === 'CREDIT_CARD' ? ccHolder : undefined,
+          creditCardExpiry: effectiveBillingType === 'CREDIT_CARD' ? ccExpiry : undefined,
+          creditCardCcv: effectiveBillingType === 'CREDIT_CARD' ? ccCvv : undefined,
         }),
       });
 
@@ -235,13 +199,13 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
 
       setSubscriptionData(data.subscription);
 
-      if (billingType === 'CREDIT_CARD') {
+      if (effectiveBillingType === 'CREDIT_CARD') {
         // Credit card is authorized immediately -> unlock Step 2 and advance
         setSubscriptionConfirmed(true);
         setLockedStepWarning(false);
         if (!phone) setPhone(subscriberPhone);
         setActiveStep('restaurant');
-      } else if (billingType === 'PIX') {
+      } else if (effectiveBillingType === 'PIX') {
         // Generate Pix QR Code for the R$ 129,90 invoice
         const pixRes = await fetch(`/api/v1/asaas/subscription/${onboardingTempSlug}/generate-pix`, {
           method: 'POST',
@@ -287,39 +251,6 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
       setSubError('Erro ao comunicar com o servidor para confirmar pagamento.');
     } finally {
       setIsProcessingSub(false);
-    }
-  };
-
-  // Save Gateway Credentials directly from onboarding
-  const handleSaveAsaasConfig = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!configApiKeyInput.trim()) {
-      setConfigSaveNotice('Informe a chave da API do Asaas ($aact_...).');
-      return;
-    }
-    setIsSavingConfig(true);
-    setConfigSaveNotice(null);
-    try {
-      const res = await fetch('/api/v1/asaas/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          environment: configEnvInput,
-          apiKey: configApiKeyInput.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.config) {
-        setGatewayConfig(data.config);
-        setShowConfigModal(false);
-        setConfigApiKeyInput('');
-      } else {
-        setConfigSaveNotice(data.error || 'Erro ao salvar credenciais.');
-      }
-    } catch {
-      setConfigSaveNotice('Erro ao comunicar com o servidor.');
-    } finally {
-      setIsSavingConfig(false);
     }
   };
 
@@ -389,11 +320,14 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
         }
       } else {
         // Bind the active paid Asaas subscription to the newly created restaurant slug
+        const effectiveBillingType: AsaasBillingType =
+          selectedPlanCycle === 'YEARLY' ? 'CREDIT_CARD' : billingType;
         await fetch(`/api/v1/asaas/subscription/${slug}/subscribe`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            billingType,
+            billingType: effectiveBillingType,
+            planCycle: selectedPlanCycle,
             customerName: subscriberName.trim() || name,
             customerEmail: subscriberEmail.trim(),
             customerCpfCnpj: subscriberCpfCnpj.trim(),
@@ -495,13 +429,17 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
               {activeStep === 'subscription'
                 ? signupMode === 'trial_15_days'
                   ? '1. Cadastro para Período de Teste Grátis (15 Dias)'
-                  : '1. Cadastro da Assinatura do Plano (R$ 129,90/mês)'
+                  : selectedPlanCycle === 'YEARLY'
+                  ? '1. Assinatura Anual no Cartão (R$ 99,00/mês)'
+                  : '1. Assinatura Mensal do Plano (R$ 129,90/mês)'
                 : '2. Criar Restaurante & Gerar Cardápio Digital'}
             </h1>
             <p className="text-xs text-neutral-600 mt-1 max-w-2xl">
               {activeStep === 'subscription'
                 ? signupMode === 'trial_15_days'
                   ? 'Cadastre seus dados abaixo para liberar 15 dias de teste grátis com todos os recursos (Cardápio Digital, Pix Direto, KDS e WhatsApp Automático) sem cobrança hoje.'
+                  : selectedPlanCycle === 'YEARLY'
+                  ? 'Conclua o cadastro da sua assinatura anual por R$ 99,00/mês no cartão de crédito (12x R$ 99,00) para liberar imediatamente a criação do seu restaurante e cardápio digital.'
                   : 'Conclua o cadastro da sua assinatura mensal fixa de R$ 129,90/mês para liberar imediatamente a criação do seu restaurante e cardápio digital.'
                 : subscriptionData?.isTrial
                 ? 'Seu Período de Teste Grátis de 15 Dias está ativo! Agora preencha os dados do seu restaurante para colocar seu cardápio digital no ar.'
@@ -523,6 +461,8 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                   <span>
                     {subscriptionData?.isTrial
                       ? 'Teste Grátis de 15 Dias Ativo'
+                      : subscriptionData?.cycle === 'YEARLY' || selectedPlanCycle === 'YEARLY'
+                      ? 'Assinatura Anual Ativa (R$ 99,00/mês)'
                       : 'Assinatura Ativa (R$ 129,90/mês)'}
                   </span>
                 </>
@@ -661,66 +601,13 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Left Column: Subscriber Registration & Payment Method */}
           <div className="lg:col-span-7 bg-white border border-neutral-200 rounded-2xl p-6 space-y-6">
-            {/* Gateway Status Banner (Transparent & Actionable) */}
-            <div
-              className={`p-4 rounded-xl border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                gatewayConfig.configured
-                  ? 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
-                  : 'bg-amber-50/90 border-amber-200 text-amber-950'
-              }`}
-            >
-              <div className="flex items-start gap-3">
-                {gatewayConfig.configured ? (
-                  <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-                ) : (
-                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                )}
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold">
-                      {gatewayConfig.configured
-                        ? `Gateway Asaas Conectado (${gatewayConfig.environment.toUpperCase()})`
-                        : 'Atenção: Gateway Asaas em Modo Demonstração'}
-                    </span>
-                    <span
-                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold ${
-                        gatewayConfig.configured
-                          ? 'bg-emerald-200 text-emerald-900'
-                          : 'bg-amber-200 text-amber-900'
-                      }`}
-                    >
-                      {gatewayConfig.configured ? 'Cobrança Real Ativa' : 'Sem Débito no Banco/Cartão'}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-neutral-600 mt-1 leading-relaxed">
-                    {gatewayConfig.configured
-                      ? `Todas as assinaturas de R$ 129,90/mês geram cobranças reais diretamente na sua conta Asaas oficial (Chave ${gatewayConfig.apiKeyMasked}).`
-                      : 'Nenhuma chave de produção (ASAAS_API_KEY) está configurada no arquivo de ambiente (.env). Por esse motivo, os testes de criação não debitam dinheiro real da sua conta bancária ou cartão.'}
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setShowConfigModal(true)}
-                className={`px-3 py-1.5 rounded-lg font-semibold text-xs shrink-0 flex items-center gap-1.5 transition-colors cursor-pointer self-start sm:self-center ${
-                  gatewayConfig.configured
-                    ? 'bg-emerald-700 hover:bg-emerald-800 text-white'
-                    : 'bg-amber-700 hover:bg-amber-800 text-white'
-                }`}
-              >
-                <Sliders className="w-3.5 h-3.5" />
-                <span>{gatewayConfig.configured ? 'Alterar Chave Asaas' : 'Configurar Chave Asaas'}</span>
-              </button>
-            </div>
-
             <div className="pb-3 border-b border-neutral-200 flex items-center justify-between">
               <h2 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
                 <UserCheck className="w-4 h-4 text-emerald-600" />
                 <span>Dados do Assinante &amp; Conta de Acesso</span>
               </h2>
               <span className="text-[11px] font-mono text-neutral-500">
-                {gatewayConfig.configured ? 'Asaas v3 Produção' : 'Asaas Modo Demonstração'}
+                Checkout Seguro Asaas
               </span>
             </div>
 
@@ -807,17 +694,18 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                 />
               </div>
 
-              {/* Mode Selector: 15-Day Free Trial vs Direct Paid Subscription */}
+              {/* Mode Selector: 15-Day Free Trial vs Annual R$ 99,00/mês (Cartão) vs Monthly R$ 129,90/mês */}
               <div className="pt-2 border-t border-neutral-200 space-y-4">
                 <label className="block text-xs font-bold text-neutral-900">
-                  Escolha como deseja começar na Aladay:
+                  Escolha seu plano ou comece pelo período de teste grátis:
                 </label>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Option 1: 15-Day Free Trial */}
                   <button
                     type="button"
                     onClick={() => setSignupMode('trial_15_days')}
-                    className={`p-4 rounded-xl border text-left transition-all cursor-pointer relative ${
+                    className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer relative ${
                       signupMode === 'trial_15_days'
                         ? 'bg-emerald-50/90 border-2 border-emerald-600 text-emerald-950 shadow-xs'
                         : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
@@ -827,36 +715,68 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                       <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-600 text-white">
                         15 Dias Grátis
                       </span>
-                      <span className="font-mono text-xs font-black text-emerald-700">R$ 0,00 hoje</span>
+                      <span className="font-mono text-xs font-black text-emerald-700">R$ 0,00</span>
                     </div>
                     <p className="text-xs font-bold text-neutral-950 mt-1">
-                      Período de Teste Grátis (15 Dias)
+                      Teste Grátis (15 Dias)
                     </p>
                     <p className="text-[11px] text-neutral-600 mt-0.5 leading-snug">
-                      Liberação imediata sem cobrança hoje. Teste todos os recursos por 15 dias completos.
+                      Liberação imediata sem cobrança hoje. Teste tudo por 15 dias.
                     </p>
                   </button>
 
+                  {/* Option 2: Annual Subscription R$ 99,00/mês on Credit Card */}
                   <button
                     type="button"
-                    onClick={() => setSignupMode('paid_direct')}
-                    className={`p-4 rounded-xl border text-left transition-all cursor-pointer relative ${
-                      signupMode === 'paid_direct'
+                    onClick={() => {
+                      setSignupMode('paid_direct');
+                      setSelectedPlanCycle('YEARLY');
+                      setBillingType('CREDIT_CARD');
+                    }}
+                    className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer relative ${
+                      signupMode === 'paid_direct' && selectedPlanCycle === 'YEARLY'
+                        ? 'bg-emerald-50/90 border-2 border-emerald-600 text-emerald-950 shadow-xs'
+                        : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-neutral-900 text-emerald-400">
+                        Anual &middot; -24%
+                      </span>
+                      <span className="font-mono text-xs font-black text-emerald-700">R$ 99,00/mês</span>
+                    </div>
+                    <p className="text-xs font-bold text-neutral-950 mt-1">
+                      Assinatura Anual
+                    </p>
+                    <p className="text-[11px] text-neutral-600 mt-0.5 leading-snug">
+                      Exclusivo no Cartão de Crédito (12x de R$ 99,00). Economize R$ 370,80/ano.
+                    </p>
+                  </button>
+
+                  {/* Option 3: Monthly Subscription R$ 129,90/mês */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSignupMode('paid_direct');
+                      setSelectedPlanCycle('MONTHLY');
+                    }}
+                    className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer relative ${
+                      signupMode === 'paid_direct' && selectedPlanCycle === 'MONTHLY'
                         ? 'bg-emerald-50/90 border-2 border-emerald-600 text-emerald-950 shadow-xs'
                         : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-neutral-200 text-neutral-800">
-                        Assinatura Direta
+                        Mensal
                       </span>
                       <span className="font-mono text-xs font-bold text-neutral-900">R$ 129,90/mês</span>
                     </div>
                     <p className="text-xs font-bold text-neutral-950 mt-1">
-                      Ativação Definitiva Plano Pro
+                      Assinatura Mensal
                     </p>
                     <p className="text-[11px] text-neutral-600 mt-0.5 leading-snug">
-                      Pagamento imediato via Pix, Cartão de Crédito ou Boleto Asaas.
+                      Sem fidelidade. Pague via Pix, Cartão de Crédito ou Boleto Asaas.
                     </p>
                   </button>
                 </div>
@@ -889,59 +809,104 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                       </div>
                     </div>
                     <p className="text-[11px] text-neutral-600 leading-relaxed">
-                      Você terá acesso integral ao Cardápio Digital, Pix 100% direto na sua conta, Painel KDS e WhatsApp Automático. Após os 15 dias, caso decida continuar, a mensalidade fixa é de <strong>R$ 129,90/mês</strong> (sem fidelidade).
+                      Você terá acesso integral ao Cardápio Digital, Pix 100% direto na sua conta, Painel KDS e WhatsApp Automático. Após os 15 dias, você pode escolher entre a <strong>Assinatura Anual por R$ 99,00/mês no Cartão de Crédito</strong> ou a <strong>Assinatura Mensal por R$ 129,90/mês</strong>.
                     </p>
                   </div>
                 ) : (
                   <div className="space-y-4 pt-2">
-                    <label className="block text-xs font-bold text-neutral-900">
-                      Escolha a Forma de Pagamento da Assinatura (R$ 129,90/mês)
-                    </label>
+                    {selectedPlanCycle === 'YEARLY' ? (
+                      <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-3 text-xs">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                            <CreditCard className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <p className="font-bold text-emerald-950">
+                              Assinatura Anual por R$ 99,00 / mês (Exclusivo no Cartão de Crédito)
+                            </p>
+                            <p className="text-[11px] text-emerald-800">
+                              Cobrança em 12x de R$ 99,00 no cartão de crédito &middot; Economia de R$ 370,80/ano vs plano mensal.
+                            </p>
+                          </div>
+                        </div>
+                        <span className="font-mono text-sm font-black text-emerald-800 shrink-0">
+                          R$ 99,00/mês
+                        </span>
+                      </div>
+                    ) : (
+                      <>
+                        <label className="block text-xs font-bold text-neutral-900">
+                          Escolha a Forma de Pagamento da Assinatura Mensal (R$ 129,90/mês)
+                        </label>
 
-                    <div className="grid grid-cols-3 gap-2.5">
-                      <button
-                        type="button"
-                        onClick={() => setBillingType('PIX')}
-                        className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
-                          billingType === 'PIX'
-                            ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
-                            : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
-                        }`}
-                      >
-                        <QrCode className="w-4 h-4 text-emerald-600" />
-                        <span>Pix Imediato</span>
-                      </button>
+                        <div className="grid grid-cols-3 gap-2.5">
+                          <button
+                            type="button"
+                            onClick={() => setBillingType('PIX')}
+                            className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
+                              billingType === 'PIX'
+                                ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
+                                : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                            }`}
+                          >
+                            <QrCode className="w-4 h-4 text-emerald-600" />
+                            <span>Pix Imediato</span>
+                          </button>
 
-                      <button
-                        type="button"
-                        onClick={() => setBillingType('CREDIT_CARD')}
-                        className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
-                          billingType === 'CREDIT_CARD'
-                            ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
-                            : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
-                        }`}
-                      >
-                        <CreditCard className="w-4 h-4 text-emerald-600" />
-                        <span>Cartão de Crédito</span>
-                      </button>
+                          <button
+                            type="button"
+                            onClick={() => setBillingType('CREDIT_CARD')}
+                            className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
+                              billingType === 'CREDIT_CARD'
+                                ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
+                                : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                            }`}
+                          >
+                            <CreditCard className="w-4 h-4 text-emerald-600" />
+                            <span>Cartão de Crédito</span>
+                          </button>
 
-                      <button
-                        type="button"
-                        onClick={() => setBillingType('BOLETO')}
-                        className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
-                          billingType === 'BOLETO'
-                            ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
-                            : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
-                        }`}
-                      >
-                        <FileText className="w-4 h-4 text-emerald-600" />
-                        <span>Boleto Asaas</span>
-                      </button>
-                    </div>
+                          <button
+                            type="button"
+                            onClick={() => setBillingType('BOLETO')}
+                            className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
+                              billingType === 'BOLETO'
+                                ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
+                                : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                            }`}
+                          >
+                            <FileText className="w-4 h-4 text-emerald-600" />
+                            <span>Boleto Asaas</span>
+                          </button>
+                        </div>
+                      </>
+                    )}
 
-                    {/* Credit Card Form Fields */}
-                    {billingType === 'CREDIT_CARD' && (
+                    {/* Credit Card Form Fields (Always shown for Annual R$ 99,00/mês or when CREDIT_CARD is selected in Monthly) */}
+                    {(selectedPlanCycle === 'YEARLY' || billingType === 'CREDIT_CARD') && (
                       <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-xl space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
+                            <CreditCard className="w-4 h-4 text-emerald-600" />
+                            <span>
+                              {selectedPlanCycle === 'YEARLY'
+                                ? 'Dados do Cartão de Crédito (Plano Anual R$ 99,00/mês)'
+                                : 'Dados do Cartão de Crédito (Plano Mensal R$ 129,90/mês)'}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCcNumber('4532 9988 7766 4242');
+                              setCcHolder((subscriberName || 'RESTAURANTE LTDA').toUpperCase());
+                              setCcExpiry('10/29');
+                              setCcCvv('888');
+                            }}
+                            className="text-[11px] font-semibold text-emerald-700 hover:underline cursor-pointer"
+                          >
+                            Preencher Cartão Teste
+                          </button>
+                        </div>
                         <div>
                           <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
                             Número do Cartão de Crédito
@@ -1016,11 +981,13 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                       : 'Processando Assinatura no Asaas...'
                     : signupMode === 'trial_15_days'
                     ? 'Ativar Meus 15 Dias Grátis e Criar Cardápio Digital'
+                    : selectedPlanCycle === 'YEARLY'
+                    ? 'Assinar Plano Anual por R$ 99,00/mês no Cartão e Liberar Cardápio'
                     : billingType === 'CREDIT_CARD'
-                    ? 'Assinar Plano por R$ 129,90/mês e Liberar Criação do Cardápio'
+                    ? 'Assinar Plano Mensal por R$ 129,90/mês no Cartão e Liberar Cardápio'
                     : billingType === 'PIX'
-                    ? 'Gerar QR Code Pix da Assinatura (R$ 129,90)'
-                    : 'Gerar Boleto da Assinatura (R$ 129,90)'}
+                    ? 'Gerar QR Code Pix da Assinatura Mensal (R$ 129,90)'
+                    : 'Gerar Boleto da Assinatura Mensal (R$ 129,90)'}
                 </span>
                 <ArrowRight className="w-4 h-4" />
               </button>
@@ -1033,7 +1000,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                   <div>
                     <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded flex items-center gap-1.5 w-fit">
                       <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                      <span>{gatewayConfig.configured ? 'Cobrança Oficial Asaas Gerada' : 'Cobrança em Modo Demonstração'}</span>
+                      <span>Cobrança Asaas Gerada</span>
                     </span>
                     <h3 className="text-sm font-bold text-neutral-950 mt-1">
                       Efetue o pagamento de R$ 129,90 para desbloquear a criação do seu restaurante
@@ -1052,7 +1019,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                           className="w-36 h-36 rounded-lg border border-neutral-200 p-1"
                         />
                         <span className="text-[10px] text-neutral-400 font-mono">
-                          {gatewayConfig.configured ? 'Pix BACEN Oficial' : 'Simulação Local'}
+                          Pix BACEN Oficial
                         </span>
                       </div>
                     )}
@@ -1081,9 +1048,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                       <div className="flex items-center gap-2 text-[11px] text-neutral-600 bg-neutral-50 p-2 rounded-lg border border-neutral-100">
                         <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isAutoCheckingPayment ? 'animate-spin' : ''}`} />
                         <span>
-                          {gatewayConfig.configured
-                            ? 'O sistema consulta o Asaas a cada 3s e liberará o restaurante assim que você pagar no app do banco.'
-                            : 'Modo demonstração: o sistema aguarda confirmação manual sem debitar sua conta bancária.'}
+                          O sistema verifica automaticamente o pagamento e liberará o restaurante assim que for confirmado.
                         </span>
                       </div>
                     </div>
@@ -1101,17 +1066,9 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                     <span>
                       {isProcessingSub
                         ? 'Consultando Asaas...'
-                        : gatewayConfig.configured
-                        ? 'Verificar Pagamento no Asaas e Liberar Restaurante &rarr;'
-                        : 'Simular Confirmação do Pagamento (Modo Demonstração) &rarr;'}
+                        : 'Verificar Pagamento e Liberar Restaurante \u2192'}
                     </span>
                   </button>
-
-                  {!gatewayConfig.configured && (
-                    <p className="text-[10px] text-center text-amber-800">
-                      ℹ️ Nenhuma chave ASAAS_API_KEY configurada. O clique acima simulará a aprovação sem realizar cobrança bancária.
-                    </p>
-                  )}
                 </div>
               </div>
             )}
@@ -1122,11 +1079,22 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
             <div className="flex items-baseline justify-between border-b border-neutral-800 pb-4">
               <div>
                 <p className="text-xs text-emerald-400 font-medium">Resumo do Plano</p>
-                <h3 className="text-lg font-bold text-white mt-0.5">Aladay Pro &middot; Multi-Tenant</h3>
+                <h3 className="text-lg font-bold text-white mt-0.5">
+                  {signupMode === 'paid_direct' && selectedPlanCycle === 'YEARLY'
+                    ? 'Aladay Anual (Cartão)'
+                    : 'Aladay Pro · Multi-Tenant'}
+                </h3>
               </div>
               <div className="text-right">
-                <span className="text-2xl font-bold font-mono text-white">R$ 129,90</span>
+                <span className="text-2xl font-bold font-mono text-white">
+                  {signupMode === 'paid_direct' && selectedPlanCycle === 'YEARLY'
+                    ? 'R$ 99,00'
+                    : 'R$ 129,90'}
+                </span>
                 <span className="text-xs text-neutral-400">/mês</span>
+                {signupMode === 'paid_direct' && selectedPlanCycle === 'YEARLY' && (
+                  <p className="text-[10px] text-emerald-400 font-mono">12x no Cartão de Crédito</p>
+                )}
               </div>
             </div>
 
@@ -1321,7 +1289,11 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
               <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-900 flex items-center justify-between">
                 <span>Status da Assinatura:</span>
                 <span className="font-bold text-emerald-800">
-                  Plano Aladay Pro Ativo &bull; R$ 129,90/mês ({subscriberEmail})
+                  {subscriptionData?.isTrial
+                    ? `Teste Grátis 15 Dias Ativo (${subscriberEmail})`
+                    : subscriptionData?.cycle === 'YEARLY' || selectedPlanCycle === 'YEARLY'
+                    ? `Plano Aladay Anual Ativo • R$ 99,00/mês no Cartão (${subscriberEmail})`
+                    : `Plano Aladay Pro Ativo • R$ 129,90/mês (${subscriberEmail})`}
                 </span>
               </div>
 
@@ -1397,93 +1369,6 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                 </p>
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* Asaas API Key Configuration Modal */}
-      {showConfigModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-neutral-200 space-y-4 animate-scaleUp">
-            <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
-              <div className="flex items-center gap-2">
-                <Sliders className="w-5 h-5 text-emerald-600" />
-                <h3 className="text-sm font-bold text-neutral-900">
-                  Configurar Credenciais Asaas
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowConfigModal(false);
-                  setConfigSaveNotice(null);
-                }}
-                className="text-neutral-400 hover:text-neutral-700 text-lg leading-none cursor-pointer"
-              >
-                &times;
-              </button>
-            </div>
-
-            <p className="text-xs text-neutral-600 leading-relaxed">
-              Informe sua chave de API para que as assinaturas mensais de <strong>R$ 129,90/mês</strong> debitem de verdade na sua conta Asaas.
-            </p>
-
-            {configSaveNotice && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800">
-                {configSaveNotice}
-              </div>
-            )}
-
-            <form onSubmit={handleSaveAsaasConfig} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-neutral-700 mb-1">
-                  Ambiente Asaas
-                </label>
-                <select
-                  value={configEnvInput}
-                  onChange={(e) => setConfigEnvInput(e.target.value as 'sandbox' | 'production')}
-                  className="w-full p-2.5 text-xs border border-neutral-200 rounded-xl bg-white text-neutral-900"
-                >
-                  <option value="production">Produção Oficial (api.asaas.com - Cobranças Reais)</option>
-                  <option value="sandbox">Sandbox / Homologação (sandbox.asaas.com)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-neutral-700 mb-1">
-                  Chave de API do Asaas (API Key)
-                </label>
-                <input
-                  type="password"
-                  required
-                  placeholder="$aact_YTU5YTE0M2M6N2ZlYjcyZDI..."
-                  value={configApiKeyInput}
-                  onChange={(e) => setConfigApiKeyInput(e.target.value)}
-                  className="w-full p-2.5 text-xs font-mono border border-neutral-200 rounded-xl text-neutral-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
-                />
-                <p className="text-[10px] text-neutral-400 mt-1">
-                  No Asaas: <strong>Menu &gt; Configurações do Sistema &gt; Integrações &gt; Gerar Chave de API</strong>.
-                </p>
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2 border-t border-neutral-100">
-                <button
-                  type="button"
-                  onClick={() => setShowConfigModal(false)}
-                  className="px-4 py-2 text-xs font-medium text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-xl transition-colors cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSavingConfig}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
-                >
-                  {isSavingConfig ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
-                  <span>{isSavingConfig ? 'Salvando...' : 'Salvar e Conectar'}</span>
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS tenants (
   evolution_instance_id VARCHAR(100) NOT NULL DEFAULT 'aladay',
   evolution_status VARCHAR(30) NOT NULL DEFAULT 'disconnected',
   subscription_status VARCHAR(30) NOT NULL DEFAULT 'active',
+  trial_ends_at TIMESTAMPTZ,
   status_notification_templates JSONB NOT NULL DEFAULT '{}'::jsonb,
   pix_config JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -37,7 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_tenants_slug ON tenants(slug);
 -- 2. TABELA DE CATEGORIAS DO CARDÁPIO (ISOLADA POR TENANT)
 CREATE TABLE IF NOT EXISTS categories (
   id VARCHAR(80) PRIMARY KEY,
-  tenant_id VARCHAR(80) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  tenant_id VARCHAR(80) NOT NULL,
   tenant_slug VARCHAR(100) NOT NULL,
   name VARCHAR(120) NOT NULL,
   display_order INTEGER NOT NULL DEFAULT 1,
@@ -49,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_categories_tenant_slug ON categories(tenant_slug)
 -- 3. TABELA DE PRODUTOS E ADICIONAIS (ISOLADA POR TENANT)
 CREATE TABLE IF NOT EXISTS products (
   id VARCHAR(80) PRIMARY KEY,
-  tenant_id VARCHAR(80) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  tenant_id VARCHAR(80) NOT NULL,
   tenant_slug VARCHAR(100) NOT NULL,
   category_id VARCHAR(80) NOT NULL,
   name VARCHAR(150) NOT NULL,
@@ -70,7 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id);
 CREATE TABLE IF NOT EXISTS orders (
   id VARCHAR(80) PRIMARY KEY,
   order_number INTEGER NOT NULL,
-  tenant_id VARCHAR(80) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  tenant_id VARCHAR(80) NOT NULL,
   tenant_slug VARCHAR(100) NOT NULL,
   customer_name VARCHAR(120) NOT NULL,
   customer_phone VARCHAR(30) NOT NULL,
@@ -85,7 +86,7 @@ CREATE TABLE IF NOT EXISTS orders (
   status VARCHAR(30) NOT NULL DEFAULT 'received',
   payment_status VARCHAR(30) NOT NULL DEFAULT 'pending',
   payment_method VARCHAR(60) NOT NULL DEFAULT 'Pix',
-  idempotency_key VARCHAR(120) UNIQUE,
+  idempotency_key VARCHAR(120),
   pix_transaction JSONB,
   whatsapp_logs JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -128,3 +129,35 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox_events(status);
+
+-- 7. TABELA DE USUÁRIOS ASSINANTES (AUTENTICAÇÃO RBAC MULTI-TENANT)
+CREATE TABLE IF NOT EXISTS subscriber_users (
+  id VARCHAR(80) PRIMARY KEY,
+  name VARCHAR(150) NOT NULL,
+  email VARCHAR(160) UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  phone VARCHAR(30) NOT NULL DEFAULT '',
+  role VARCHAR(40) NOT NULL DEFAULT 'TENANT_OWNER',
+  tenant_id VARCHAR(80) NOT NULL,
+  tenant_slug VARCHAR(100) NOT NULL,
+  tenant_name VARCHAR(150) NOT NULL DEFAULT '',
+  permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscriber_users_email ON subscriber_users(email);
+CREATE INDEX IF NOT EXISTS idx_subscriber_users_tenant_slug ON subscriber_users(tenant_slug);
+
+-- 8. TABELA DE ASSINATURAS SAAS ASAAS (MENSAL R$ 129,90 / ANUAL R$ 99,00 / TESTE 15 DIAS)
+CREATE TABLE IF NOT EXISTS asaas_subscriptions (
+  tenant_slug VARCHAR(100) PRIMARY KEY,
+  subscription_id VARCHAR(120) NOT NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'PENDING',
+  cycle VARCHAR(20) NOT NULL DEFAULT 'MONTHLY',
+  billing_type VARCHAR(30) NOT NULL DEFAULT 'PIX',
+  value NUMERIC(10, 2) NOT NULL DEFAULT 129.90,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
