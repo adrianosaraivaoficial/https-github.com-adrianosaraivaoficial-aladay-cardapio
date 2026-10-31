@@ -148,29 +148,29 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
 
   return (
     <div className="max-w-lg mx-auto py-8 space-y-6">
-      <div className="bg-white border border-neutral-200 rounded-2xl p-6 sm:p-8 shadow-2xs space-y-6">
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 shadow-2xs space-y-6">
         <div className="space-y-1.5 text-center">
-          <div className="w-11 h-11 rounded-xl bg-neutral-900 text-white flex items-center justify-center mx-auto mb-3">
-            <ShieldCheck className="w-6 h-6 text-emerald-400" />
+          <div className="w-11 h-11 rounded-xl bg-blue-600 text-white flex items-center justify-center mx-auto mb-3 shadow-sm shadow-blue-600/25">
+            <ShieldCheck className="w-6 h-6 text-white" />
           </div>
-          <h1 className="text-xl font-bold text-neutral-900">Acesso ao Painel do Restaurante</h1>
-          <p className="text-xs text-neutral-500">
+          <h1 className="text-xl font-bold text-slate-950">Acesso ao Painel do Restaurante</h1>
+          <p className="text-xs text-slate-500">
             Entre com suas credenciais ou receba um código de acesso diretamente no seu WhatsApp.
           </p>
         </div>
 
         {/* Method Tabs */}
-        <div className="bg-neutral-100 p-1 rounded-xl flex gap-1">
+        <div className="bg-slate-100 p-1 rounded-xl flex gap-1">
           <button
             type="button"
             onClick={() => {
               setAuthTab('password');
               setFeedback(null);
             }}
-            className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-colors ${
+            className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer ${
               authTab === 'password'
-                ? 'bg-white text-neutral-900 shadow-2xs'
-                : 'text-neutral-600 hover:text-neutral-900'
+                ? 'bg-white text-blue-600 shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <KeyRound className="w-3.5 h-3.5" />
@@ -182,13 +182,13 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
               setAuthTab('whatsapp_otp');
               setFeedback(null);
             }}
-            className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-colors ${
+            className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer ${
               authTab === 'whatsapp_otp'
-                ? 'bg-white text-neutral-900 shadow-2xs'
-                : 'text-neutral-600 hover:text-neutral-900'
+                ? 'bg-white text-blue-600 shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
+            <Smartphone className="w-3.5 h-3.5 text-blue-600" />
             <span>Código via WhatsApp</span>
           </button>
         </div>
@@ -197,14 +197,14 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
           <div
             className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 ${
               feedback.type === 'success'
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                : 'bg-red-50 border-red-200 text-red-800'
+                ? 'bg-blue-50 border-blue-200 text-blue-900'
+                : 'bg-rose-50 border-rose-200 text-rose-800'
             }`}
           >
             {feedback.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
             ) : (
-              <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
             )}
             <p className="font-medium">{feedback.message}</p>
           </div>
@@ -213,28 +213,28 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
         {authTab === 'password' ? (
           <form onSubmit={handlePasswordLogin} className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-neutral-700 mb-1.5">
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 E-mail de Acesso
               </label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full p-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
                 placeholder="seuemail@restaurante.com.br"
                 required
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-neutral-700 mb-1.5">
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 Senha
               </label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full p-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
                 placeholder="••••••••"
                 required
               />
@@ -243,7 +243,7 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs shadow-blue-600/20"
             >
               <Lock className="w-3.5 h-3.5" />
               <span>{loading ? 'Entrando...' : 'Entrar no Painel'}</span>
@@ -252,28 +252,28 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
         ) : (
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-neutral-700 mb-1.5">
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 Seu E-mail Cadastrado
               </label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full p-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
                 placeholder="seuemail@restaurante.com.br"
                 required
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-neutral-700 mb-1.5">
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 Seu WhatsApp (Com DDD)
               </label>
               <input
                 type="text"
                 value={whatsappPhone}
                 onChange={(e) => setWhatsappPhone(e.target.value)}
-                className="w-full p-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
                 placeholder="5511999999999"
                 required
               />
@@ -284,15 +284,15 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
                 type="button"
                 onClick={handleRequestWhatsappOtp}
                 disabled={loading}
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs shadow-blue-600/20"
               >
                 <Smartphone className="w-4 h-4" />
                 <span>{loading ? 'Enviando código...' : 'Receber Código de 6 Dígitos no WhatsApp'}</span>
               </button>
             ) : (
-              <form onSubmit={handleVerifyWhatsappOtp} className="space-y-3 pt-2 border-t border-neutral-100">
+              <form onSubmit={handleVerifyWhatsappOtp} className="space-y-3 pt-2 border-t border-slate-100">
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-800 mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-800 mb-1.5">
                     Digite o código de 6 dígitos enviado para seu WhatsApp
                   </label>
                   <input
@@ -300,7 +300,7 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
                     maxLength={6}
                     value={otpCodeInput}
                     onChange={(e) => setOtpCodeInput(e.target.value)}
-                    className="w-full p-3 bg-white border-2 border-emerald-500 rounded-xl text-base font-mono font-bold tracking-widest text-center"
+                    className="w-full p-3 bg-white border-2 border-blue-600 rounded-xl text-base font-mono font-bold tracking-widest text-center"
                     placeholder="000000"
                     required
                   />
@@ -308,7 +308,7 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full py-3 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+                  className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
                 >
                   Confirmar Código e Entrar
                 </button>
@@ -319,16 +319,16 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
 
         {/* Current active session shortcut */}
         {currentSession?.user && (
-          <div className="pt-4 border-t border-neutral-100 flex items-center justify-between text-xs">
-            <div className="text-neutral-500">
-              Conectado como <strong className="text-neutral-800">{currentSession.user.name}</strong> ({currentSession.user.role})
+          <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs">
+            <div className="text-slate-500">
+              Conectado como <strong className="text-slate-800">{currentSession.user.name}</strong> ({currentSession.user.role})
             </div>
             <div className="flex items-center gap-3">
               {onLogout && (
                 <button
                   type="button"
                   onClick={onLogout}
-                  className="text-red-600 hover:text-red-700 font-medium cursor-pointer"
+                  className="text-rose-600 hover:text-rose-700 font-medium cursor-pointer"
                 >
                   Sair
                 </button>
@@ -336,7 +336,7 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
               <button
                 type="button"
                 onClick={onNavigateToAdmin}
-                className="text-emerald-700 hover:text-emerald-800 font-semibold flex items-center gap-1 cursor-pointer"
+                className="text-blue-600 hover:text-blue-700 font-semibold flex items-center gap-1 cursor-pointer"
               >
                 <span>Ir para o Painel</span>
                 <ArrowRight className="w-3.5 h-3.5" />

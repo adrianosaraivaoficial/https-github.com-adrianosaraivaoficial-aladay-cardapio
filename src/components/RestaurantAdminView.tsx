@@ -1338,9 +1338,9 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   };
 
   return (
-    <div className="bg-neutral-50 border border-neutral-200 rounded-xl overflow-hidden min-h-[720px] flex flex-col">
+    <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden min-h-[720px] flex flex-col shadow-xs">
       {/* Top Header of the Restaurant Member Area */}
-      <div className="bg-white border-b border-neutral-200 px-6 py-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      <div className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <div
             className="w-10 h-10 rounded-lg text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0"
@@ -1349,23 +1349,23 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
             {tenant.name.slice(0, 2).toUpperCase()}
           </div>
           <div>
-            <div className="flex items-center gap-2 text-xs text-neutral-500">
-              <span className="font-bold text-neutral-900">{tenant.name}</span>
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span className="font-bold text-slate-900">{tenant.name}</span>
               <span aria-hidden="true">·</span>
               <span className="font-mono text-[11px]">slug: {tenant.slug}</span>
               <span aria-hidden="true">·</span>
-              <span className="text-emerald-700 font-medium">Assinatura R$ 129,90/mês (Ativa)</span>
+              <span className="text-blue-700 font-medium">Assinatura Ativa</span>
             </div>
             <div className="flex flex-wrap items-center gap-2 mt-1">
-              <span className="text-[11px] text-neutral-500 font-medium">Perfil RBAC:</span>
-              <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-100 p-0.5 text-[11px]">
+              <span className="text-[11px] text-slate-500 font-medium">Perfil RBAC:</span>
+              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-[11px]">
                 <button
                   type="button"
                   onClick={() => setUserRole('owner')}
                   className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
                     userRole === 'owner'
-                      ? 'bg-white text-neutral-900 shadow-2xs font-semibold'
-                      : 'text-neutral-600 hover:text-neutral-900'
+                      ? 'bg-white text-blue-700 shadow-2xs font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   👑 Proprietário (Total)
@@ -1375,8 +1375,8 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                   onClick={() => setUserRole('manager')}
                   className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
                     userRole === 'manager'
-                      ? 'bg-white text-neutral-900 shadow-2xs font-semibold'
-                      : 'text-neutral-600 hover:text-neutral-900'
+                      ? 'bg-white text-blue-700 shadow-2xs font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   📋 Gerente
@@ -1389,8 +1389,8 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                   }}
                   className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
                     userRole === 'kitchen'
-                      ? 'bg-white text-neutral-900 shadow-2xs font-semibold'
-                      : 'text-neutral-600 hover:text-neutral-900'
+                      ? 'bg-white text-blue-700 shadow-2xs font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   🍳 Cozinha (KDS)
@@ -1403,8 +1403,8 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
         {/* Tenant selector and WhatsApp Status */}
         <div className="flex flex-wrap items-center gap-3">
           {authSession && authSession.user.role !== 'SUPER_ADMIN' ? (
-            <div className="flex items-center gap-2 px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded-md text-xs text-emerald-900">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+            <div className="flex items-center gap-2 px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-md text-xs text-blue-900">
+              <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
               <span>
                 RLS Isolado: <strong>{tenant.name}</strong> ({authSession.user.role})
               </span>
@@ -1412,7 +1412,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                 <button
                   type="button"
                   onClick={onOpenAuthPortal}
-                  className="underline font-bold text-emerald-800 hover:text-emerald-950 ml-1"
+                  className="underline font-bold text-blue-800 hover:text-blue-950 ml-1"
                 >
                   Trocar Sessão JWT
                 </button>
@@ -1423,14 +1423,14 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
             allTenants.length > 1 &&
             onSelectTenant && (
               <div className="flex items-center gap-1.5 text-xs">
-                <span className="text-neutral-500">Trocar Loja (Super Admin):</span>
+                <span className="text-slate-500">Trocar Loja (Super Admin):</span>
                 <select
                   value={tenant.slug}
                   onChange={(e) => {
                     const found = allTenants.find((t) => t.slug === e.target.value);
                     if (found) onSelectTenant(found);
                   }}
-                  className="bg-neutral-100 border border-neutral-200 text-neutral-800 text-xs rounded-md px-2 py-1 font-medium"
+                  className="bg-slate-100 border border-slate-200 text-slate-800 text-xs rounded-md px-2 py-1 font-medium"
                 >
                   {allTenants.map((t) => (
                     <option key={t.slug} value={t.slug}>
@@ -1445,18 +1445,18 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
           <button
             type="button"
             onClick={() => setIsQrPairingModalOpen(true)}
-            className="flex items-center gap-2 px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200/80 rounded-lg text-xs cursor-pointer transition-colors shadow-2xs group"
+            className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200/80 rounded-lg text-xs cursor-pointer transition-colors shadow-2xs group"
             title="Clique para abrir o Pareamento com Evolution API via QR Code na tela"
           >
             <span
               className={`w-2 h-2 rounded-full ${
-                tenant.evolutionStatus === 'connected' ? 'bg-emerald-500 ring-2 ring-emerald-200' : 'bg-rose-500 ring-2 ring-rose-200 animate-pulse'
+                tenant.evolutionStatus === 'connected' ? 'bg-blue-500 ring-2 ring-blue-200' : 'bg-rose-500 ring-2 ring-rose-200 animate-pulse'
               }`}
             />
-            <span className="text-neutral-700 font-medium group-hover:text-neutral-900">
+            <span className="text-slate-700 font-medium group-hover:text-slate-900">
               WhatsApp {tenant.evolutionStatus === 'connected' ? 'Conectado' : 'Desconectado'}
             </span>
-            <QrCode className="w-3.5 h-3.5 text-neutral-400 group-hover:text-neutral-700 ml-0.5" />
+            <QrCode className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-700 ml-0.5" />
           </button>
 
           <a
@@ -1475,9 +1475,9 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
       {/* Real-time Synchronization Notice */}
       {liveSyncNotice && (
-        <div className="bg-emerald-600 text-white px-6 py-2.5 text-xs font-medium flex items-center justify-between shadow-xs transition-all">
+        <div className="bg-blue-600 text-white px-6 py-2.5 text-xs font-medium flex items-center justify-between shadow-xs transition-all">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-200" />
+            <CheckCircle2 className="w-4 h-4 shrink-0 text-sky-200" />
             <span>{liveSyncNotice}</span>
           </div>
           <button
@@ -1508,18 +1508,18 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       )}
 
       {/* Tabs navigation */}
-      <div className="bg-white border-b border-neutral-200 px-4 sm:px-6 flex gap-4 sm:gap-6 text-xs font-medium overflow-x-auto">
+      <div className="bg-white border-b border-slate-200 px-4 sm:px-6 flex gap-4 sm:gap-6 text-xs font-medium overflow-x-auto">
         <button
           onClick={() => setActiveTab('menu')}
           className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'menu'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
+              ? 'border-blue-600 text-blue-600 font-semibold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
           <Utensils className="w-4 h-4 shrink-0" />
           <span>Cardápio &amp; Produtos</span>
-          <span className="bg-neutral-100 text-neutral-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono">
+          <span className="bg-blue-50 text-blue-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">
             {products.length}
           </span>
         </button>
@@ -1528,8 +1528,8 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
           onClick={() => setActiveTab('categories')}
           className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'categories'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
+              ? 'border-blue-600 text-blue-600 font-semibold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
           <span>Categorias &amp; Grupos</span>
@@ -1539,14 +1539,14 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
           onClick={() => setActiveTab('kds')}
           className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'kds'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
+              ? 'border-blue-600 text-blue-600 font-semibold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
           <LayoutGrid className="w-4 h-4 shrink-0" />
           <span>Gestão de Pedidos (KDS)</span>
           {ordersByStatus.received.length > 0 && (
-            <span className="bg-orange-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-mono">
+            <span className="bg-blue-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-mono">
               {ordersByStatus.received.length}
             </span>
           )}
@@ -1556,8 +1556,8 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
           onClick={() => setActiveTab('settings')}
           className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'settings'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
+              ? 'border-blue-600 text-blue-600 font-semibold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
           <Settings className="w-4 h-4 shrink-0" />
@@ -1568,20 +1568,20 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
           onClick={() => setActiveTab('billing')}
           className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'billing'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
+              ? 'border-blue-600 text-blue-600 font-semibold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
           <CreditCard className="w-4 h-4 shrink-0" />
-          <span>Assinatura (R$ 129,90/mês)</span>
+          <span>Assinatura (Anual R$ 99 / Mensal)</span>
         </button>
 
         <button
           onClick={() => setActiveTab('whatsapp')}
           className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'whatsapp'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
+              ? 'border-blue-600 text-blue-600 font-semibold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
           <MessageSquare className="w-4 h-4 shrink-0" />
@@ -1592,13 +1592,13 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
           onClick={() => setActiveTab('crm')}
           className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'crm'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
+              ? 'border-blue-600 text-blue-600 font-semibold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
           <Users className="w-4 h-4 shrink-0" />
           <span>CRM &amp; Clientes</span>
-          <span className="bg-neutral-100 text-neutral-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono">
+          <span className="bg-slate-100 text-slate-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono">
             {customers.length}
           </span>
         </button>
@@ -1607,13 +1607,13 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
           onClick={() => setActiveTab('reports')}
           className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'reports'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
+              ? 'border-blue-600 text-blue-600 font-semibold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
           <BarChart3 className="w-4 h-4 shrink-0" />
           <span>Dashboard &amp; Vendas</span>
-          <span className="bg-emerald-100 text-emerald-800 text-[9px] px-1.5 py-0.2 rounded font-semibold uppercase tracking-wider">
+          <span className="bg-blue-100 text-blue-800 text-[9px] px-1.5 py-0.2 rounded font-semibold uppercase tracking-wider">
             Auditado
           </span>
         </button>
@@ -1629,23 +1629,23 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
             {/* Quick Direct Pix Configuration Form Card (Chave Pix & Nome do Beneficiário) */}
             <form
               onSubmit={handleSavePixConfig}
-              className="bg-gradient-to-r from-emerald-50 via-white to-emerald-50/40 border border-emerald-200 rounded-xl p-4 sm:p-5 shadow-2xs space-y-3"
+              className="bg-gradient-to-r from-blue-50 via-white to-blue-50/40 border border-blue-200 rounded-xl p-4 sm:p-5 shadow-2xs space-y-3"
             >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-emerald-100">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-blue-100">
                 <div className="flex items-start gap-2.5">
-                  <div className="p-2 rounded-lg bg-emerald-600 text-white shrink-0 mt-0.5 shadow-2xs">
+                  <div className="p-2 rounded-lg bg-blue-600 text-white shrink-0 mt-0.5 shadow-2xs">
                     <QrCode className="w-4 h-4" />
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-sm font-bold text-neutral-900">
+                      <h3 className="text-sm font-bold text-slate-900">
                         Recebimento Pix Direto do Restaurante ({tenant.name})
                       </h3>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
                         100% Direto na Conta do Proprietário
                       </span>
                     </div>
-                    <p className="text-xs text-neutral-600 mt-0.5">
+                    <p className="text-xs text-slate-600 mt-0.5">
                       Defina a <strong>Chave Pix</strong> e o <strong>Nome do Beneficiário</strong> deste restaurante para gerar o QR Code Pix dinâmico no checkout do consumidor.
                     </p>
                   </div>
@@ -1653,28 +1653,28 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setActiveTab('settings')}
-                  className="text-[11px] font-semibold text-emerald-800 hover:text-emerald-950 underline shrink-0 self-start sm:self-center cursor-pointer"
+                  className="text-[11px] font-semibold text-blue-700 hover:text-blue-950 underline shrink-0 self-start sm:self-center cursor-pointer"
                 >
                   Configurações avançadas Pix &rarr;
                 </button>
               </div>
 
               {pixSaveNotice && (
-                <div className="p-2.5 bg-emerald-100/80 border border-emerald-300 rounded-lg text-xs text-emerald-900 font-semibold flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                <div className="p-2.5 bg-blue-100/80 border border-blue-300 rounded-lg text-xs text-blue-900 font-semibold flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-blue-700 shrink-0" />
                   <span>{pixSaveNotice}</span>
                 </div>
               )}
 
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
                 <div className="sm:col-span-2">
-                  <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                     Tipo de Chave
                   </label>
                   <select
                     value={pixKeyType}
                     onChange={(e) => setPixKeyType(e.target.value as PixGatewayConfig['pixKeyType'])}
-                    className="w-full p-2 text-xs border border-neutral-300 rounded-lg bg-white text-neutral-900 font-medium focus:border-emerald-600 outline-none"
+                    className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-900 font-medium focus:border-blue-600 outline-none"
                   >
                     <option value="cnpj">CNPJ</option>
                     <option value="cpf">CPF</option>
@@ -1685,7 +1685,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                 </div>
 
                 <div className="sm:col-span-4">
-                  <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                     Chave Pix
                   </label>
                   <input
@@ -1694,12 +1694,12 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                     value={pixKey}
                     onChange={(e) => setPixKey(e.target.value)}
                     placeholder="Ex: 12.345.678/0001-90, email@loja.com ou +5511999999999"
-                    className="w-full p-2 text-xs border border-neutral-300 rounded-lg bg-white text-neutral-900 font-mono focus:border-emerald-600 outline-none"
+                    className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-900 font-mono focus:border-blue-600 outline-none"
                   />
                 </div>
 
                 <div className="sm:col-span-4">
-                  <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                     Nome do Beneficiário
                   </label>
                   <input
@@ -1709,7 +1709,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                     value={pixMerchantName}
                     onChange={(e) => setPixMerchantName(e.target.value)}
                     placeholder="Nome do Proprietário ou Razão Social"
-                    className="w-full p-2 text-xs border border-neutral-300 rounded-lg bg-white text-neutral-900 font-medium focus:border-emerald-600 outline-none"
+                    className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-900 font-medium focus:border-blue-600 outline-none"
                   />
                 </div>
 
@@ -1717,7 +1717,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                   <button
                     type="submit"
                     disabled={pixSaving}
-                    className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50 cursor-pointer"
+                    className="w-full py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50 cursor-pointer"
                   >
                     {pixSaving ? (
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -1735,23 +1735,23 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
               {/* Left Column: Product Management */}
               <div className={showLivePreviewSplit ? 'xl:col-span-7 space-y-4' : 'space-y-4'}>
                 {/* Search & Actions Toolbar */}
-                <div className="bg-white border border-neutral-200 rounded-lg p-3.5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="bg-white border border-slate-200 rounded-lg p-3.5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-2">
                     <div className="relative flex-1">
-                      <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                       <input
                         type="text"
                         placeholder="Buscar por prato ou ingrediente..."
                         value={productSearchQuery}
                         onChange={(e) => setProductSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-3 py-1.5 bg-neutral-50 border border-neutral-200 rounded-lg text-xs focus:bg-white focus:outline-neutral-900"
+                        className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:bg-white focus:outline-blue-600"
                       />
                     </div>
 
                     <select
                       value={selectedCategoryFilter}
                       onChange={(e) => setSelectedCategoryFilter(e.target.value)}
-                      className="bg-neutral-50 border border-neutral-200 text-neutral-800 text-xs rounded-lg px-2.5 py-1.5 font-medium"
+                      className="bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-lg px-2.5 py-1.5 font-medium"
                     >
                       <option value="all">Todas as Categorias ({products.length})</option>
                       {sortedCategories.map((c, idx) => (
@@ -1768,8 +1768,8 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                       onClick={() => setShowLivePreviewSplit(!showLivePreviewSplit)}
                       className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
                         showLivePreviewSplit
-                          ? 'bg-neutral-900 text-white'
-                          : 'bg-orange-50 text-orange-900 hover:bg-orange-100 border border-orange-200'
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-blue-50 text-blue-900 hover:bg-blue-100 border border-blue-200'
                       }`}
                     >
                       <Smartphone className="w-3.5 h-3.5" />
@@ -1779,36 +1779,36 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                     <button
                       type="button"
                       onClick={() => setSpreadsheetModalTab('export')}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors"
                       title="Exportar categorias e produtos para planilha Excel / CSV ou baixar planilha modelo"
                     >
-                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-blue-700" />
                       <span>Exportar Planilha</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setIsImportMenuModalOpen(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-800 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 rounded-lg transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg transition-colors"
                       title="Abrir modal de Importação de Cardápio com upload de arquivo e pré-visualização da tabela"
                     >
-                      <Upload className="w-3.5 h-3.5 text-neutral-600" />
+                      <Upload className="w-3.5 h-3.5 text-slate-600" />
                       <span>Importação de Cardápio</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setIsBulkAdjustOpen(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
                       title="Aplicar aumento ou desconto percentual em massa"
                     >
-                      <Percent className="w-3.5 h-3.5 text-neutral-500" />
+                      <Percent className="w-3.5 h-3.5 text-slate-500" />
                       <span>Reajuste em Lote</span>
                     </button>
 
                     <button
                       onClick={() => handleOpenAddProduct()}
-                      className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors shadow-xs"
+                      className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs"
                     >
                       <Plus className="w-4 h-4" />
                       <span>Novo Produto</span>
@@ -1823,8 +1823,8 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                     onClick={() => setSelectedCategoryFilter('all')}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors border ${
                       selectedCategoryFilter === 'all'
-                        ? 'bg-neutral-900 text-white border-neutral-900'
-                        : 'bg-white text-neutral-600 border-neutral-200 hover:border-neutral-300'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
                     }`}
                   >
                     Todas as Categorias ({sortedCategories.length})

@@ -69,7 +69,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [pixKey, setPixKey] = useState('');
-  const [primaryColor, setPrimaryColor] = useState('#059669');
+  const [primaryColor, setPrimaryColor] = useState('#2563EB');
   const [isCreating, setIsCreating] = useState(false);
   const [createdTenant, setCreatedTenant] = useState<RestaurantTenant | null>(null);
   const [tenantError, setTenantError] = useState<string | null>(null);
@@ -348,7 +348,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
         phone,
         address,
         primaryColor,
-        backgroundColor: '#FAFAFA',
+        backgroundColor: '#F8FAFC',
         fontFamily: 'Plus Jakarta Sans',
         isOpen: true,
         openingHoursText: 'Segunda a Domingo: 18:00 às 23:45',
@@ -417,15 +417,15 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
   return (
     <div className="space-y-6 pb-12">
       {/* Top Header & 2-Step Onboarding Progress Bar */}
-      <div className="bg-white border border-neutral-200 rounded-2xl p-6 space-y-5">
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-5 shadow-2xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 text-xs font-medium text-emerald-700 mb-1">
+            <div className="flex items-center gap-2 text-xs font-semibold text-blue-600 mb-1">
               <span>Aladay Cardápios Digitais</span>
               <span aria-hidden="true">&middot;</span>
               <span>Teste Grátis 15 Dias ou Assinatura Oficial</span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-neutral-950">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-950">
               {activeStep === 'subscription'
                 ? signupMode === 'trial_15_days'
                   ? '1. Cadastro para Período de Teste Grátis (15 Dias)'
@@ -434,7 +434,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                   : '1. Assinatura Mensal do Plano (R$ 129,90/mês)'
                 : '2. Criar Restaurante & Gerar Cardápio Digital'}
             </h1>
-            <p className="text-xs text-neutral-600 mt-1 max-w-2xl">
+            <p className="text-xs text-slate-600 mt-1 max-w-2xl">
               {activeStep === 'subscription'
                 ? signupMode === 'trial_15_days'
                   ? 'Cadastre seus dados abaixo para liberar 15 dias de teste grátis com todos os recursos (Cardápio Digital, Pix Direto, KDS e WhatsApp Automático) sem cobrança hoje.'
@@ -451,13 +451,13 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
             <span
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border ${
                 subscriptionConfirmed
-                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  ? 'bg-blue-50 text-blue-800 border-blue-200'
                   : 'bg-amber-50 text-amber-800 border-amber-200'
               }`}
             >
               {subscriptionConfirmed ? (
                 <>
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <CheckCircle2 className="w-4 h-4 text-blue-600" />
                   <span>
                     {subscriptionData?.isTrial
                       ? 'Teste Grátis de 15 Dias Ativo'
@@ -481,26 +481,26 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
         </div>
 
         {/* 2-Step Gated Navigation Tabs */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-neutral-100">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
           <button
             type="button"
             onClick={() => setActiveStep('subscription')}
             className={`p-3.5 rounded-xl border text-left transition-all flex items-center justify-between cursor-pointer ${
               activeStep === 'subscription'
-                ? 'bg-neutral-900 text-white border-neutral-900'
+                ? 'bg-slate-950 text-white border-slate-950'
                 : subscriptionConfirmed
-                ? 'bg-emerald-50/70 text-emerald-950 border-emerald-200 hover:bg-emerald-50'
-                : 'bg-neutral-50 text-neutral-700 border-neutral-200'
+                ? 'bg-blue-50/70 text-blue-950 border-blue-200 hover:bg-blue-50'
+                : 'bg-slate-50 text-slate-700 border-slate-200'
             }`}
           >
             <div className="flex items-center gap-3">
               <div
                 className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold ${
                   activeStep === 'subscription'
-                    ? 'bg-emerald-500 text-neutral-950'
+                    ? 'bg-blue-600 text-white'
                     : subscriptionConfirmed
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-neutral-200 text-neutral-700'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-200 text-slate-700'
                 }`}
               >
                 {subscriptionConfirmed ? <Check className="w-4 h-4" /> : '1'}
@@ -509,15 +509,15 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                 <p className="text-xs font-bold">Passo 1: Assinatura do Plano</p>
                 <p
                   className={`text-[11px] ${
-                    activeStep === 'subscription' ? 'text-neutral-300' : 'text-neutral-500'
+                    activeStep === 'subscription' ? 'text-slate-300' : 'text-slate-500'
                   }`}
                 >
-                  Cadastro do assinante e ativação R$ 129,90/mês
+                  Cadastro do assinante e ativação do plano
                 </p>
               </div>
             </div>
             {subscriptionConfirmed && (
-              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
+              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-500/20 text-sky-400">
                 Concluído
               </span>
             )}
@@ -535,20 +535,20 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
             }}
             className={`p-3.5 rounded-xl border text-left transition-all flex items-center justify-between cursor-pointer ${
               activeStep === 'restaurant'
-                ? 'bg-neutral-900 text-white border-neutral-900'
+                ? 'bg-slate-950 text-white border-slate-950'
                 : subscriptionConfirmed
-                ? 'bg-white text-neutral-900 border-neutral-200 hover:border-neutral-300'
-                : 'bg-neutral-100 text-neutral-400 border-neutral-200 opacity-80'
+                ? 'bg-white text-slate-900 border-slate-200 hover:border-blue-300'
+                : 'bg-slate-100 text-slate-400 border-slate-200 opacity-80'
             }`}
           >
             <div className="flex items-center gap-3">
               <div
                 className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold ${
                   activeStep === 'restaurant'
-                    ? 'bg-emerald-500 text-neutral-950'
+                    ? 'bg-blue-600 text-white'
                     : subscriptionConfirmed
-                    ? 'bg-neutral-900 text-white'
-                    : 'bg-neutral-200 text-neutral-500'
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-200 text-slate-500'
                 }`}
               >
                 {subscriptionConfirmed ? '2' : <Lock className="w-3.5 h-3.5" />}
@@ -557,7 +557,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                 <p className="text-xs font-bold">Passo 2: Criar Restaurante &amp; Cardápio</p>
                 <p
                   className={`text-[11px] ${
-                    activeStep === 'restaurant' ? 'text-neutral-300' : 'text-neutral-500'
+                    activeStep === 'restaurant' ? 'text-slate-300' : 'text-slate-500'
                   }`}
                 >
                   {subscriptionConfirmed
@@ -567,7 +567,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
               </div>
             </div>
             {!subscriptionConfirmed && (
-              <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-neutral-200 text-neutral-600 flex items-center gap-1">
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-200 text-slate-600 flex items-center gap-1">
                 <Lock className="w-3 h-3" />
                 <span>Requer Assinatura</span>
               </span>
@@ -580,7 +580,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
               <span>
-                <strong>Atenção:</strong> Só é possível cadastrar o restaurante e criar o cardápio digital após concluir a assinatura do plano de <strong>R$ 129,90/mês</strong> abaixo.
+                <strong>Atenção:</strong> Só é possível cadastrar o restaurante e criar o cardápio digital após concluir o cadastro do teste grátis ou assinatura abaixo.
               </span>
             </div>
             <button
@@ -595,25 +595,25 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
       </div>
 
       {/* ================================================================== */}
-      {/* STEP 1: SUBSCRIPTION SIGNUP & PAYMENT (ASAAS R$ 129,90/MÊS)        */}
+      {/* STEP 1: SUBSCRIPTION SIGNUP & PAYMENT                              */}
       {/* ================================================================== */}
       {activeStep === 'subscription' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Left Column: Subscriber Registration & Payment Method */}
-          <div className="lg:col-span-7 bg-white border border-neutral-200 rounded-2xl p-6 space-y-6">
-            <div className="pb-3 border-b border-neutral-200 flex items-center justify-between">
-              <h2 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
-                <UserCheck className="w-4 h-4 text-emerald-600" />
+          <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-6 space-y-6 shadow-2xs">
+            <div className="pb-3 border-b border-slate-200 flex items-center justify-between">
+              <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <UserCheck className="w-4 h-4 text-blue-600" />
                 <span>Dados do Assinante &amp; Conta de Acesso</span>
               </h2>
-              <span className="text-[11px] font-mono text-neutral-500">
+              <span className="text-[11px] font-mono text-slate-500">
                 Checkout Seguro Asaas
               </span>
             </div>
 
             {subError && (
-              <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
                 <span>{subError}</span>
               </div>
             )}
@@ -621,7 +621,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
             <form onSubmit={handleSubscribeSubmit} className="space-y-5">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Nome Completo ou Razão Social
                   </label>
                   <input
@@ -630,12 +630,12 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                     value={subscriberName}
                     onChange={(e) => setSubscriberName(e.target.value)}
                     placeholder="Ex: Carlos Eduardo Mendes"
-                    className="w-full p-2.5 text-xs border border-neutral-200 rounded-xl text-neutral-900 focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                    className="w-full p-2.5 text-xs border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 transition-all"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     CPF ou CNPJ do Assinante
                   </label>
                   <input
@@ -644,14 +644,14 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                     value={subscriberCpfCnpj}
                     onChange={(e) => setSubscriberCpfCnpj(e.target.value)}
                     placeholder="00.000.000/0001-00 ou CPF"
-                    className="w-full p-2.5 text-xs border border-neutral-200 rounded-xl text-neutral-900 font-mono focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                    className="w-full p-2.5 text-xs border border-slate-200 rounded-xl text-slate-900 font-mono focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 transition-all"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     E-mail de Acesso ao Painel
                   </label>
                   <input
@@ -660,12 +660,12 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                     value={subscriberEmail}
                     onChange={(e) => setSubscriberEmail(e.target.value)}
                     placeholder="contato@seurestaurante.com.br"
-                    className="w-full p-2.5 text-xs border border-neutral-200 rounded-xl text-neutral-900 focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                    className="w-full p-2.5 text-xs border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 transition-all"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Crie sua Senha de Acesso
                   </label>
                   <input
@@ -675,13 +675,13 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                     value={subscriberPassword}
                     onChange={(e) => setSubscriberPassword(e.target.value)}
                     placeholder="Mínimo 6 caracteres"
-                    className="w-full p-2.5 text-xs border border-neutral-200 rounded-xl text-neutral-900 focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                    className="w-full p-2.5 text-xs border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 transition-all"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   WhatsApp do Responsável (com DDD)
                 </label>
                 <input
@@ -690,13 +690,13 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                   value={subscriberPhone}
                   onChange={(e) => setSubscriberPhone(e.target.value)}
                   placeholder="Ex: 11987654321"
-                  className="w-full p-2.5 text-xs border border-neutral-200 rounded-xl text-neutral-900 font-mono focus:outline-none focus:ring-2 focus:ring-neutral-900"
+                  className="w-full p-2.5 text-xs border border-slate-200 rounded-xl text-slate-900 font-mono focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 transition-all"
                 />
               </div>
 
               {/* Mode Selector: 15-Day Free Trial vs Annual R$ 99,00/mês (Cartão) vs Monthly R$ 129,90/mês */}
-              <div className="pt-2 border-t border-neutral-200 space-y-4">
-                <label className="block text-xs font-bold text-neutral-900">
+              <div className="pt-2 border-t border-slate-200 space-y-4">
+                <label className="block text-xs font-bold text-slate-900">
                   Escolha seu plano ou comece pelo período de teste grátis:
                 </label>
 
@@ -707,20 +707,20 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                     onClick={() => setSignupMode('trial_15_days')}
                     className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer relative ${
                       signupMode === 'trial_15_days'
-                        ? 'bg-emerald-50/90 border-2 border-emerald-600 text-emerald-950 shadow-xs'
-                        : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                        ? 'bg-blue-50/90 border-2 border-blue-600 text-blue-950 shadow-xs'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-600 text-white">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-600 text-white">
                         15 Dias Grátis
                       </span>
-                      <span className="font-mono text-xs font-black text-emerald-700">R$ 0,00</span>
+                      <span className="font-mono text-xs font-black text-blue-700">R$ 0,00</span>
                     </div>
-                    <p className="text-xs font-bold text-neutral-950 mt-1">
+                    <p className="text-xs font-bold text-slate-950 mt-1">
                       Teste Grátis (15 Dias)
                     </p>
-                    <p className="text-[11px] text-neutral-600 mt-0.5 leading-snug">
+                    <p className="text-[11px] text-slate-600 mt-0.5 leading-snug">
                       Liberação imediata sem cobrança hoje. Teste tudo por 15 dias.
                     </p>
                   </button>
@@ -735,20 +735,20 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                     }}
                     className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer relative ${
                       signupMode === 'paid_direct' && selectedPlanCycle === 'YEARLY'
-                        ? 'bg-emerald-50/90 border-2 border-emerald-600 text-emerald-950 shadow-xs'
-                        : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                        ? 'bg-blue-50/90 border-2 border-blue-600 text-blue-950 shadow-xs'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-neutral-900 text-emerald-400">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-900 text-sky-400">
                         Anual &middot; -24%
                       </span>
-                      <span className="font-mono text-xs font-black text-emerald-700">R$ 99,00/mês</span>
+                      <span className="font-mono text-xs font-black text-blue-700">R$ 99,00/mês</span>
                     </div>
-                    <p className="text-xs font-bold text-neutral-950 mt-1">
+                    <p className="text-xs font-bold text-slate-950 mt-1">
                       Assinatura Anual
                     </p>
-                    <p className="text-[11px] text-neutral-600 mt-0.5 leading-snug">
+                    <p className="text-[11px] text-slate-600 mt-0.5 leading-snug">
                       Exclusivo no Cartão de Crédito (12x de R$ 99,00). Economize R$ 370,80/ano.
                     </p>
                   </button>
@@ -762,80 +762,80 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                     }}
                     className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer relative ${
                       signupMode === 'paid_direct' && selectedPlanCycle === 'MONTHLY'
-                        ? 'bg-emerald-50/90 border-2 border-emerald-600 text-emerald-950 shadow-xs'
-                        : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                        ? 'bg-blue-50/90 border-2 border-blue-600 text-blue-950 shadow-xs'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-neutral-200 text-neutral-800">
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-200 text-slate-800">
                         Mensal
                       </span>
-                      <span className="font-mono text-xs font-bold text-neutral-900">R$ 129,90/mês</span>
+                      <span className="font-mono text-xs font-bold text-slate-900">R$ 129,90/mês</span>
                     </div>
-                    <p className="text-xs font-bold text-neutral-950 mt-1">
+                    <p className="text-xs font-bold text-slate-950 mt-1">
                       Assinatura Mensal
                     </p>
-                    <p className="text-[11px] text-neutral-600 mt-0.5 leading-snug">
+                    <p className="text-[11px] text-slate-600 mt-0.5 leading-snug">
                       Sem fidelidade. Pague via Pix, Cartão de Crédito ou Boleto Asaas.
                     </p>
                   </button>
                 </div>
 
                 {signupMode === 'trial_15_days' ? (
-                  <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-2.5 text-xs">
+                  <div className="p-4 bg-blue-50/70 border border-blue-200 rounded-xl space-y-2.5 text-xs">
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-emerald-950 flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span className="font-bold text-blue-950 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-blue-600" />
                         <span>Resumo do Seu Período de Teste Grátis (15 Dias)</span>
                       </span>
-                      <span className="font-mono text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
+                      <span className="font-mono text-[11px] font-bold text-blue-800 bg-blue-100 px-2 py-0.5 rounded">
                         Sem Cartão Obrigatório
                       </span>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-[11px]">
-                      <div className="p-2.5 bg-white rounded-lg border border-emerald-100">
-                        <p className="text-neutral-500">Valor cobrado hoje:</p>
-                        <p className="font-mono font-black text-emerald-700 text-sm">R$ 0,00 (Grátis)</p>
+                      <div className="p-2.5 bg-white rounded-lg border border-blue-100">
+                        <p className="text-slate-500">Valor cobrado hoje:</p>
+                        <p className="font-mono font-black text-blue-700 text-sm">R$ 0,00 (Grátis)</p>
                       </div>
-                      <div className="p-2.5 bg-white rounded-lg border border-emerald-100">
-                        <p className="text-neutral-500">Duração do teste:</p>
-                        <p className="font-mono font-bold text-neutral-900 text-sm">15 dias corridos</p>
+                      <div className="p-2.5 bg-white rounded-lg border border-blue-100">
+                        <p className="text-slate-500">Duração do teste:</p>
+                        <p className="font-mono font-bold text-slate-900 text-sm">15 dias corridos</p>
                       </div>
-                      <div className="p-2.5 bg-white rounded-lg border border-emerald-100">
-                        <p className="text-neutral-500">Vencimento após teste:</p>
-                        <p className="font-mono font-bold text-neutral-900 text-sm">
+                      <div className="p-2.5 bg-white rounded-lg border border-blue-100">
+                        <p className="text-slate-500">Vencimento após teste:</p>
+                        <p className="font-mono font-bold text-slate-900 text-sm">
                           {new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR')}
                         </p>
                       </div>
                     </div>
-                    <p className="text-[11px] text-neutral-600 leading-relaxed">
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
                       Você terá acesso integral ao Cardápio Digital, Pix 100% direto na sua conta, Painel KDS e WhatsApp Automático. Após os 15 dias, você pode escolher entre a <strong>Assinatura Anual por R$ 99,00/mês no Cartão de Crédito</strong> ou a <strong>Assinatura Mensal por R$ 129,90/mês</strong>.
                     </p>
                   </div>
                 ) : (
                   <div className="space-y-4 pt-2">
                     {selectedPlanCycle === 'YEARLY' ? (
-                      <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-3 text-xs">
+                      <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl flex items-center justify-between gap-3 text-xs">
                         <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                          <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
                             <CreditCard className="w-4 h-4" />
                           </div>
                           <div>
-                            <p className="font-bold text-emerald-950">
+                            <p className="font-bold text-blue-950">
                               Assinatura Anual por R$ 99,00 / mês (Exclusivo no Cartão de Crédito)
                             </p>
-                            <p className="text-[11px] text-emerald-800">
+                            <p className="text-[11px] text-blue-800">
                               Cobrança em 12x de R$ 99,00 no cartão de crédito &middot; Economia de R$ 370,80/ano vs plano mensal.
                             </p>
                           </div>
                         </div>
-                        <span className="font-mono text-sm font-black text-emerald-800 shrink-0">
+                        <span className="font-mono text-sm font-black text-blue-800 shrink-0">
                           R$ 99,00/mês
                         </span>
                       </div>
                     ) : (
                       <>
-                        <label className="block text-xs font-bold text-neutral-900">
+                        <label className="block text-xs font-bold text-slate-900">
                           Escolha a Forma de Pagamento da Assinatura Mensal (R$ 129,90/mês)
                         </label>
 
@@ -845,11 +845,11 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                             onClick={() => setBillingType('PIX')}
                             className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
                               billingType === 'PIX'
-                                ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
-                                : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                                ? 'bg-blue-50 border-blue-600 text-blue-950 ring-1 ring-blue-600'
+                                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
                             }`}
                           >
-                            <QrCode className="w-4 h-4 text-emerald-600" />
+                            <QrCode className="w-4 h-4 text-blue-600" />
                             <span>Pix Imediato</span>
                           </button>
 
@@ -858,11 +858,11 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                             onClick={() => setBillingType('CREDIT_CARD')}
                             className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
                               billingType === 'CREDIT_CARD'
-                                ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
-                                : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                                ? 'bg-blue-50 border-blue-600 text-blue-950 ring-1 ring-blue-600'
+                                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
                             }`}
                           >
-                            <CreditCard className="w-4 h-4 text-emerald-600" />
+                            <CreditCard className="w-4 h-4 text-blue-600" />
                             <span>Cartão de Crédito</span>
                           </button>
 
@@ -871,11 +871,11 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                             onClick={() => setBillingType('BOLETO')}
                             className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
                               billingType === 'BOLETO'
-                                ? 'bg-emerald-50 border-emerald-600 text-emerald-950 ring-1 ring-emerald-600'
-                                : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                                ? 'bg-blue-50 border-blue-600 text-blue-950 ring-1 ring-blue-600'
+                                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
                             }`}
                           >
-                            <FileText className="w-4 h-4 text-emerald-600" />
+                            <FileText className="w-4 h-4 text-blue-600" />
                             <span>Boleto Asaas</span>
                           </button>
                         </div>
@@ -884,10 +884,10 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
 
                     {/* Credit Card Form Fields (Always shown for Annual R$ 99,00/mês or when CREDIT_CARD is selected in Monthly) */}
                     {(selectedPlanCycle === 'YEARLY' || billingType === 'CREDIT_CARD') && (
-                      <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-xl space-y-3">
+                      <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
-                            <CreditCard className="w-4 h-4 text-emerald-600" />
+                          <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                            <CreditCard className="w-4 h-4 text-blue-600" />
                             <span>
                               {selectedPlanCycle === 'YEARLY'
                                 ? 'Dados do Cartão de Crédito (Plano Anual R$ 99,00/mês)'
@@ -902,13 +902,13 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                               setCcExpiry('10/29');
                               setCcCvv('888');
                             }}
-                            className="text-[11px] font-semibold text-emerald-700 hover:underline cursor-pointer"
+                            className="text-[11px] font-semibold text-blue-700 hover:underline cursor-pointer"
                           >
                             Preencher Cartão Teste
                           </button>
                         </div>
                         <div>
-                          <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                             Número do Cartão de Crédito
                           </label>
                           <input
@@ -917,11 +917,11 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                             value={ccNumber}
                             onChange={(e) => setCcNumber(e.target.value)}
                             placeholder="0000 0000 0000 0000"
-                            className="w-full p-2.5 text-xs bg-white border border-neutral-200 rounded-lg font-mono"
+                            className="w-full p-2.5 text-xs bg-white border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-blue-600"
                           />
                         </div>
                         <div>
-                          <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                             Nome Impresso no Cartão
                           </label>
                           <input
@@ -930,12 +930,12 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                             value={ccHolder}
                             onChange={(e) => setCcHolder(e.target.value.toUpperCase())}
                             placeholder="COMO ESTÁ NO CARTÃO"
-                            className="w-full p-2.5 text-xs bg-white border border-neutral-200 rounded-lg"
+                            className="w-full p-2.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
                           />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                               Validade (MM/AA)
                             </label>
                             <input
@@ -944,11 +944,11 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                               value={ccExpiry}
                               onChange={(e) => setCcExpiry(e.target.value)}
                               placeholder="12/29"
-                              className="w-full p-2.5 text-xs bg-white border border-neutral-200 rounded-lg font-mono"
+                              className="w-full p-2.5 text-xs bg-white border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-blue-600"
                             />
                           </div>
                           <div>
-                            <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                               CVV
                             </label>
                             <input
@@ -958,7 +958,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                               value={ccCvv}
                               onChange={(e) => setCcCvv(e.target.value)}
                               placeholder="123"
-                              className="w-full p-2.5 text-xs bg-white border border-neutral-200 rounded-lg font-mono"
+                              className="w-full p-2.5 text-xs bg-white border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-blue-600"
                             />
                           </div>
                         </div>
@@ -971,7 +971,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
               <button
                 type="submit"
                 disabled={isProcessingSub}
-                className="w-full py-3.5 px-5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                className="w-full py-3.5 px-5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
               >
                 <ShieldCheck className="w-4 h-4" />
                 <span>
@@ -995,36 +995,36 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
 
             {/* Generated Pix or Boleto Payment Box */}
             {subscriptionData && !subscriptionConfirmed && (
-              <div className="p-5 bg-emerald-50/70 border-2 border-emerald-500 rounded-2xl space-y-4">
+              <div className="p-5 bg-blue-50/70 border-2 border-blue-500 rounded-2xl space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded flex items-center gap-1.5 w-fit">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-blue-800 bg-blue-100 px-2 py-0.5 rounded flex items-center gap-1.5 w-fit">
+                      <span className="w-2 h-2 rounded-full bg-blue-500 animate-ping" />
                       <span>Cobrança Asaas Gerada</span>
                     </span>
-                    <h3 className="text-sm font-bold text-neutral-950 mt-1">
+                    <h3 className="text-sm font-bold text-slate-950 mt-1">
                       Efetue o pagamento de R$ 129,90 para desbloquear a criação do seu restaurante
                     </h3>
                   </div>
-                  <span className="font-mono text-base font-bold text-emerald-800">R$ 129,90</span>
+                  <span className="font-mono text-base font-bold text-blue-800">R$ 129,90</span>
                 </div>
 
                 {billingType === 'PIX' && pixInvoiceData && (
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center bg-white p-4 rounded-xl border border-emerald-200">
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center bg-white p-4 rounded-xl border border-blue-200">
                     {pixInvoiceData.pixQrCodeBase64 && (
                       <div className="sm:col-span-4 flex flex-col items-center gap-1">
                         <img
                           src={pixInvoiceData.pixQrCodeBase64}
                           alt="QR Code Pix Assinatura Aladay"
-                          className="w-36 h-36 rounded-lg border border-neutral-200 p-1"
+                          className="w-36 h-36 rounded-lg border border-slate-200 p-1"
                         />
-                        <span className="text-[10px] text-neutral-400 font-mono">
+                        <span className="text-[10px] text-slate-400 font-mono">
                           Pix BACEN Oficial
                         </span>
                       </div>
                     )}
                     <div className={pixInvoiceData.pixQrCodeBase64 ? 'sm:col-span-8 space-y-2.5' : 'sm:col-span-12 space-y-2.5'}>
-                      <p className="text-xs font-semibold text-neutral-800">
+                      <p className="text-xs font-semibold text-slate-800">
                         Pix Copia e Cola (Padrão Oficial BACEN):
                       </p>
                       <div className="flex items-center gap-2">
@@ -1032,12 +1032,12 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                           type="text"
                           readOnly
                           value={pixInvoiceData.pixCopiaECola}
-                          className="w-full p-2 text-[11px] font-mono bg-neutral-50 border border-neutral-200 rounded-lg text-neutral-700"
+                          className="w-full p-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-700"
                         />
                         <button
                           type="button"
                           onClick={() => handleCopyPix(pixInvoiceData.pixCopiaECola)}
-                          className="px-3 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shrink-0 cursor-pointer"
+                          className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shrink-0 cursor-pointer"
                         >
                           {copiedPix ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                           <span>{copiedPix ? 'Copiado' : 'Copiar'}</span>
@@ -1045,8 +1045,8 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                       </div>
 
                       {/* Live polling status pill */}
-                      <div className="flex items-center gap-2 text-[11px] text-neutral-600 bg-neutral-50 p-2 rounded-lg border border-neutral-100">
-                        <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isAutoCheckingPayment ? 'animate-spin' : ''}`} />
+                      <div className="flex items-center gap-2 text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                        <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${isAutoCheckingPayment ? 'animate-spin' : ''}`} />
                         <span>
                           O sistema verifica automaticamente o pagamento e liberará o restaurante assim que for confirmado.
                         </span>
@@ -1060,9 +1060,9 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                     type="button"
                     onClick={handleConfirmInvoicePayment}
                     disabled={isProcessingSub}
-                    className="w-full py-3.5 px-4 bg-neutral-950 hover:bg-neutral-800 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                    className="w-full py-3.5 px-4 bg-slate-950 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
                   >
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <CheckCircle2 className="w-4 h-4 text-sky-400" />
                     <span>
                       {isProcessingSub
                         ? 'Consultando Asaas...'
@@ -1075,10 +1075,10 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
           </div>
 
           {/* Right Column: Plan Summary & Security Guarantee */}
-          <div className="lg:col-span-5 bg-neutral-950 text-white border border-neutral-800 rounded-2xl p-6 space-y-6">
-            <div className="flex items-baseline justify-between border-b border-neutral-800 pb-4">
+          <div className="lg:col-span-5 bg-slate-950 text-white border border-slate-800 rounded-2xl p-6 space-y-6 shadow-md">
+            <div className="flex items-baseline justify-between border-b border-slate-800 pb-4">
               <div>
-                <p className="text-xs text-emerald-400 font-medium">Resumo do Plano</p>
+                <p className="text-xs text-sky-400 font-medium">Resumo do Plano</p>
                 <h3 className="text-lg font-bold text-white mt-0.5">
                   {signupMode === 'paid_direct' && selectedPlanCycle === 'YEARLY'
                     ? 'Aladay Anual (Cartão)'
@@ -1091,46 +1091,46 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                     ? 'R$ 99,00'
                     : 'R$ 129,90'}
                 </span>
-                <span className="text-xs text-neutral-400">/mês</span>
+                <span className="text-xs text-slate-400">/mês</span>
                 {signupMode === 'paid_direct' && selectedPlanCycle === 'YEARLY' && (
-                  <p className="text-[10px] text-emerald-400 font-mono">12x no Cartão de Crédito</p>
+                  <p className="text-[10px] text-sky-400 font-mono">12x no Cartão de Crédito</p>
                 )}
               </div>
             </div>
 
-            <div className="space-y-3 text-xs text-neutral-300">
+            <div className="space-y-3 text-xs text-slate-300">
               <div className="flex items-start gap-2.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                 <span>
                   <strong>0% de comissão sobre vendas:</strong> Seu restaurante fica com 100% do valor dos pedidos pagos via Pix direto na sua conta bancária.
                 </span>
               </div>
               <div className="flex items-start gap-2.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                 <span>
-                  <strong>Domínio próprio de cardápio:</strong> Link exclusivo <code className="text-emerald-300">aladay.com.br/sua-loja</code> liberado logo após a assinatura.
+                  <strong>Domínio próprio de cardápio:</strong> Link exclusivo <code className="text-sky-300">aladay.com.br/sua-loja</code> liberado logo após a assinatura.
                 </span>
               </div>
               <div className="flex items-start gap-2.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                 <span>
                   <strong>KDS Cozinha &amp; WhatsApp Automático:</strong> Avisos automáticos a cada mudança de status do pedido (Confirmado, Em Preparo, Saiu para Entrega).
                 </span>
               </div>
               <div className="flex items-start gap-2.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                 <span>
                   <strong>Importação rápida por planilha:</strong> Suba todos os seus produtos, preços e adicionais em segundos após ativar sua conta.
                 </span>
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-neutral-900 border border-neutral-800 space-y-2 text-xs">
-              <div className="flex items-center gap-2 text-amber-300 font-semibold">
+            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-2 text-xs">
+              <div className="flex items-center gap-2 text-sky-300 font-semibold">
                 <KeyRound className="w-4 h-4" />
                 <span>Por que assinar antes de criar o cardápio?</span>
               </div>
-              <p className="text-neutral-400 leading-relaxed">
+              <p className="text-slate-400 leading-relaxed">
                 Cada restaurante recebe um ambiente isolado de banco de dados, instância dedicada de WhatsApp e rota exclusiva na Cloudflare. A ativação da assinatura garante o provisionamento imediato dos recursos da sua loja.
               </p>
             </div>
@@ -1144,13 +1144,13 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
       {activeStep === 'restaurant' && subscriptionConfirmed && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Form Column */}
-          <div className="lg:col-span-7 bg-white border border-neutral-200 rounded-2xl p-6 space-y-5">
-            <div className="flex items-center justify-between pb-3 border-b border-neutral-200">
-              <h3 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
-                <Store className="w-4 h-4 text-emerald-600" />
+          <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-6 space-y-5 shadow-xs">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Store className="w-4 h-4 text-blue-600" />
                 <span>2. Dados do Restaurante &amp; Configuração do Cardápio Digital</span>
               </h3>
-              <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
+              <span className="text-[11px] font-semibold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-md border border-blue-200">
                 Assinatura Confirmada
               </span>
             </div>
@@ -1165,7 +1165,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
             <form onSubmit={handleCreateTenant} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-neutral-700 mb-1">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
                     Nome do Restaurante / Estabelecimento
                   </label>
                   <input
@@ -1187,16 +1187,16 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                         setSlug(autoSlug);
                       }
                     }}
-                    className="w-full p-2.5 text-xs border border-neutral-200 rounded-lg text-neutral-900 focus:outline-none focus:ring-1 focus:ring-neutral-400"
+                    className="w-full p-2.5 text-xs border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-neutral-700 mb-1">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
                     Domínio &amp; Link do Cardápio
                   </label>
                   <div className="flex items-center">
-                    <span className="text-xs text-neutral-600 bg-neutral-100 px-2.5 py-2.5 border border-r-0 border-neutral-200 rounded-l-lg font-mono font-medium">
+                    <span className="text-xs text-slate-600 bg-slate-100 px-2.5 py-2.5 border border-r-0 border-slate-200 rounded-l-lg font-mono font-medium">
                       aladay.com.br/
                     </span>
                     <input
@@ -1208,12 +1208,12 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                         setIsSlugCustomized(true);
                         setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''));
                       }}
-                      className="w-full p-2.5 text-xs border border-neutral-200 rounded-r-lg text-neutral-900 font-mono focus:outline-none focus:ring-1 focus:ring-neutral-400"
+                      className="w-full p-2.5 text-xs border border-slate-200 rounded-r-lg text-slate-900 font-mono focus:outline-none focus:ring-2 focus:ring-blue-600"
                     />
                   </div>
-                  <p className="text-[11px] text-neutral-500 mt-1">
+                  <p className="text-[11px] text-slate-500 mt-1">
                     Link final:{' '}
-                    <span className="font-mono text-emerald-700 font-semibold">
+                    <span className="font-mono text-blue-700 font-semibold">
                       https://aladay.com.br/{slug || 'nome-do-restaurante'}
                     </span>
                   </p>
@@ -1222,7 +1222,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-neutral-700 mb-1">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
                     WhatsApp Oficial da Loja (com DDD)
                   </label>
                   <input
@@ -1231,12 +1231,12 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="Ex: 11987654321"
-                    className="w-full p-2.5 text-xs border border-neutral-200 rounded-lg text-neutral-900 font-mono"
+                    className="w-full p-2.5 text-xs border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:ring-2 focus:ring-blue-600"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-neutral-700 mb-1">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
                     Cor Primária da Marca (Identidade Visual)
                   </label>
                   <div className="flex items-center gap-2">
@@ -1244,13 +1244,13 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                       type="color"
                       value={primaryColor}
                       onChange={(e) => setPrimaryColor(e.target.value)}
-                      className="w-10 h-9 p-0.5 border border-neutral-200 rounded cursor-pointer"
+                      className="w-10 h-9 p-0.5 border border-slate-200 rounded cursor-pointer"
                     />
                     <input
                       type="text"
                       value={primaryColor}
                       onChange={(e) => setPrimaryColor(e.target.value)}
-                      className="flex-1 p-2 text-xs border border-neutral-200 rounded-lg font-mono text-neutral-900"
+                      className="flex-1 p-2 text-xs border border-slate-200 rounded-lg font-mono text-slate-900"
                     />
                   </div>
                 </div>
@@ -1258,7 +1258,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-neutral-700 mb-1">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
                     Endereço Físico Completo
                   </label>
                   <input
@@ -1267,12 +1267,12 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                     placeholder="Ex: Av. Paulista, 1000 - Bela Vista, São Paulo - SP"
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
-                    className="w-full p-2.5 text-xs border border-neutral-200 rounded-lg text-neutral-900"
+                    className="w-full p-2.5 text-xs border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-neutral-700 mb-1">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
                     Chave Pix do Restaurante (Recebimento 100% Direto)
                   </label>
                   <input
@@ -1281,14 +1281,14 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                     placeholder="CNPJ, CPF, E-mail ou Celular da Loja"
                     value={pixKey}
                     onChange={(e) => setPixKey(e.target.value)}
-                    className="w-full p-2.5 text-xs border border-neutral-200 rounded-lg text-neutral-900 font-mono"
+                    className="w-full p-2.5 text-xs border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:ring-2 focus:ring-blue-600"
                   />
                 </div>
               </div>
 
-              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-900 flex items-center justify-between">
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-900 flex items-center justify-between">
                 <span>Status da Assinatura:</span>
-                <span className="font-bold text-emerald-800">
+                <span className="font-bold text-blue-800">
                   {subscriptionData?.isTrial
                     ? `Teste Grátis 15 Dias Ativo (${subscriberEmail})`
                     : subscriptionData?.cycle === 'YEARLY' || selectedPlanCycle === 'YEARLY'
@@ -1300,7 +1300,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
               <button
                 type="submit"
                 disabled={isCreating}
-                className="w-full py-3.5 px-4 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-3.5 px-4 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
               >
                 {isCreating ? (
                   <span>Criando Restaurante e Publicando Cardápio Digital...</span>
@@ -1315,25 +1315,25 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
           </div>
 
           {/* Right Column: Created Output & Direct Access */}
-          <div className="lg:col-span-5 bg-white border border-neutral-200 rounded-2xl p-6 space-y-5">
-            <h3 className="text-sm font-bold text-neutral-900 flex items-center gap-2 pb-3 border-b border-neutral-200">
-              <QrCode className="w-4 h-4 text-neutral-700" />
+          <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-6 space-y-5 shadow-xs">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 pb-3 border-b border-slate-200">
+              <QrCode className="w-4 h-4 text-blue-600" />
               <span>Ativação do Cardápio &amp; Painel do Lojista</span>
             </h3>
 
             {createdTenant ? (
               <div className="space-y-4">
-                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-xs space-y-2">
-                  <div className="flex items-center gap-1.5 text-emerald-900 font-bold">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl text-xs space-y-2">
+                  <div className="flex items-center gap-1.5 text-blue-900 font-bold">
+                    <CheckCircle2 className="w-4 h-4 text-blue-700" />
                     <span>Restaurante e Cardápio Criados com Sucesso!</span>
                   </div>
-                  <p className="text-emerald-800">
+                  <p className="text-blue-800">
                     O restaurante <strong>{createdTenant.name}</strong> já está ativo e autenticado na sua conta:
                   </p>
-                  <div className="p-2.5 bg-white rounded-lg border border-emerald-300 font-mono text-[11px] text-emerald-900 font-bold select-all flex items-center justify-between">
+                  <div className="p-2.5 bg-white rounded-lg border border-blue-300 font-mono text-[11px] text-blue-900 font-bold select-all flex items-center justify-between">
                     <span>https://aladay.com.br/{createdTenant.slug}</span>
-                    <span className="text-[10px] text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded font-sans font-medium">
+                    <span className="text-[10px] text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded font-sans font-medium">
                       Cardápio Ativo
                     </span>
                   </div>
@@ -1343,7 +1343,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                   <button
                     type="button"
                     onClick={() => onNavigateToView('admin')}
-                    className="w-full py-3 px-4 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                    className="w-full py-3 px-4 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs"
                   >
                     <span>Acessar Painel e Cadastrar Produtos do Cardápio</span>
                     <ArrowRight className="w-4 h-4" />
@@ -1352,19 +1352,19 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                   <button
                     type="button"
                     onClick={() => onNavigateToView('consumer')}
-                    className="w-full py-3 px-4 text-xs font-semibold text-neutral-800 bg-neutral-100 hover:bg-neutral-200 rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="w-full py-3 px-4 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <span>Visualizar Cardápio do Cliente ({createdTenant.name})</span>
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="p-6 border border-dashed border-neutral-300 rounded-xl text-center space-y-3 text-neutral-500">
-                <Store className="w-10 h-10 mx-auto text-emerald-600 stroke-1" />
-                <p className="text-xs font-medium text-neutral-700">
+              <div className="p-6 border border-dashed border-slate-300 rounded-xl text-center space-y-3 text-slate-500">
+                <Store className="w-10 h-10 mx-auto text-blue-600 stroke-1" />
+                <p className="text-xs font-medium text-slate-700">
                   Assinatura validada! Preencha os dados ao lado para publicar seu cardápio digital.
                 </p>
-                <p className="text-[11px] text-neutral-500">
+                <p className="text-[11px] text-slate-500">
                   Após clicar em &ldquo;Criar Restaurante&rdquo;, você será conectado automaticamente ao painel administrativo da sua loja para gerenciar produtos, categorias e pedidos.
                 </p>
               </div>

@@ -55,22 +55,22 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
   return (
     <div className="max-w-5xl mx-auto py-4 sm:py-8 space-y-8">
       {/* Top Bar & Navigation */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-200 pb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-6">
         <div className="space-y-1.5">
           <button
             type="button"
             onClick={onBackToHome}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-neutral-600 hover:text-neutral-950 transition-colors cursor-pointer mb-1"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-blue-600 transition-colors cursor-pointer mb-1"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             <span>Voltar para a Página Inicial</span>
           </button>
-          <div className="flex items-center gap-2 text-xs text-neutral-500 font-mono">
+          <div className="flex items-center gap-2 text-xs text-blue-600 font-mono font-semibold">
             <span>DOCUMENTAÇÃO JURÍDICA &amp; LGPD</span>
             <span aria-hidden="true">·</span>
             <span>ATUALIZADO EM OUTUBRO DE 2026</span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-black text-neutral-950 tracking-tight">
+          <h1 className="text-2xl sm:text-3xl font-black text-slate-950 tracking-tight">
             {activeTab === 'terms'
               ? 'Termos e Condições Gerais de Uso'
               : 'Política de Privacidade e Proteção de Dados (LGPD)'}
@@ -78,14 +78,14 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
         </div>
 
         {/* Segmented Document Switcher */}
-        <div className="inline-flex p-1 bg-neutral-200/80 rounded-xl self-start sm:self-center shrink-0">
+        <div className="inline-flex p-1 bg-slate-200/80 rounded-xl self-start sm:self-center shrink-0">
           <button
             type="button"
             onClick={() => handleSelectTab('terms')}
             className={`px-4 py-2.5 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
               activeTab === 'terms'
-                ? 'bg-neutral-950 text-white shadow-xs'
-                : 'text-neutral-700 hover:text-neutral-950'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-slate-700 hover:text-slate-950'
             }`}
           >
             <Scale className="w-3.5 h-3.5" />
@@ -96,8 +96,8 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
             onClick={() => handleSelectTab('privacy')}
             className={`px-4 py-2.5 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
               activeTab === 'privacy'
-                ? 'bg-neutral-950 text-white shadow-xs'
-                : 'text-neutral-700 hover:text-neutral-950'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-slate-700 hover:text-slate-950'
             }`}
           >
             <ShieldCheck className="w-3.5 h-3.5" />
@@ -107,44 +107,44 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
       </div>
 
       {/* Executive Summary Banner */}
-      <div className="bg-white border border-neutral-200 rounded-2xl p-5 sm:p-6 shadow-2xs grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-2xs grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+          <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center shrink-0">
             <QrCode className="w-4 h-4" />
           </div>
           <div>
-            <h2 className="text-xs font-bold text-neutral-950">
+            <h2 className="text-xs font-bold text-slate-950">
               100% Pix Direto para a Loja
             </h2>
-            <p className="text-[11px] text-neutral-600 leading-relaxed mt-0.5">
+            <p className="text-[11px] text-slate-600 leading-relaxed mt-0.5">
               A Aladay não intermedia nem retém valores de pedidos. O QR Code Pix é gerado com a chave bancária configurada pelo próprio restaurante.
             </p>
           </div>
         </div>
 
         <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-xl bg-neutral-100 border border-neutral-200 text-neutral-800 flex items-center justify-center shrink-0">
+          <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center shrink-0">
             <Database className="w-4 h-4" />
           </div>
           <div>
-            <h2 className="text-xs font-bold text-neutral-950">
+            <h2 className="text-xs font-bold text-slate-950">
               Isolamento Multi-Tenant (RLS)
             </h2>
-            <p className="text-[11px] text-neutral-600 leading-relaxed mt-0.5">
+            <p className="text-[11px] text-slate-600 leading-relaxed mt-0.5">
               Dados de cardápios, clientes e pedidos de cada restaurante são isolados por políticas de segurança em nível de linha (PostgreSQL RLS).
             </p>
           </div>
         </div>
 
         <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-xl bg-neutral-100 border border-neutral-200 text-neutral-800 flex items-center justify-center shrink-0">
+          <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center shrink-0">
             <Lock className="w-4 h-4" />
           </div>
           <div>
-            <h2 className="text-xs font-bold text-neutral-950">
+            <h2 className="text-xs font-bold text-slate-950">
               Conformidade Lei nº 13.709/2018
             </h2>
-            <p className="text-[11px] text-neutral-600 leading-relaxed mt-0.5">
+            <p className="text-[11px] text-slate-600 leading-relaxed mt-0.5">
               Transparência integral sobre coleta, finalidade, retenção e direitos dos titulares de dados pessoais para lojistas e consumidores.
             </p>
           </div>
@@ -154,12 +154,12 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
       {/* Main Content Layout with Sidebar TOC */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Sidebar Table of Contents */}
-        <aside className="lg:col-span-4 bg-white border border-neutral-200 rounded-2xl p-5 space-y-4 lg:sticky lg:top-24">
-          <div className="border-b border-neutral-100 pb-3">
-            <p className="text-[11px] font-mono uppercase tracking-wider text-neutral-500">
+        <aside className="lg:col-span-4 bg-white border border-slate-200 rounded-2xl p-5 space-y-4 lg:sticky lg:top-24">
+          <div className="border-b border-slate-100 pb-3">
+            <p className="text-[11px] font-mono uppercase tracking-wider text-blue-600 font-semibold">
               Sumário Navegável
             </p>
-            <h3 className="text-sm font-bold text-neutral-950 mt-0.5">
+            <h3 className="text-sm font-bold text-slate-950 mt-0.5">
               {activeTab === 'terms' ? 'Cláusulas dos Termos de Uso' : 'Seções da Política LGPD'}
             </h3>
           </div>
@@ -179,7 +179,7 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
                   key={item.id}
                   type="button"
                   onClick={() => scrollToClause(item.id)}
-                  className="w-full text-left px-3 py-2 rounded-lg text-neutral-600 hover:text-neutral-950 hover:bg-neutral-100 font-medium transition-colors cursor-pointer"
+                  className="w-full text-left px-3 py-2 rounded-lg text-slate-600 hover:text-blue-600 hover:bg-blue-50/60 font-medium transition-colors cursor-pointer"
                 >
                   {item.label}
                 </button>
@@ -199,7 +199,7 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
                   key={item.id}
                   type="button"
                   onClick={() => scrollToClause(item.id)}
-                  className="w-full text-left px-3 py-2 rounded-lg text-neutral-600 hover:text-neutral-950 hover:bg-neutral-100 font-medium transition-colors cursor-pointer"
+                  className="w-full text-left px-3 py-2 rounded-lg text-slate-600 hover:text-blue-600 hover:bg-blue-50/60 font-medium transition-colors cursor-pointer"
                 >
                   {item.label}
                 </button>
@@ -207,33 +207,33 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
             </nav>
           )}
 
-          <div className="pt-3 border-t border-neutral-100 space-y-2 text-[11px] text-neutral-500">
-            <p className="font-semibold text-neutral-800">Precisa de suporte jurídico ou DPO?</p>
+          <div className="pt-3 border-t border-slate-100 space-y-2 text-[11px] text-slate-500">
+            <p className="font-semibold text-slate-800">Precisa de suporte jurídico ou DPO?</p>
             <p>
               Entre em contato com nosso Encarregado de Proteção de Dados pelo canal{' '}
-              <span className="font-mono text-neutral-900">privacidade@aladay.com.br</span>.
+              <span className="font-mono text-blue-600 font-semibold">privacidade@aladay.com.br</span>.
             </p>
           </div>
         </aside>
 
         {/* Document Body */}
-        <article className="lg:col-span-8 bg-white border border-neutral-200 rounded-2xl p-6 sm:p-8 space-y-8 text-neutral-700 text-xs sm:text-sm leading-relaxed shadow-2xs">
+        <article className="lg:col-span-8 bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 space-y-8 text-slate-700 text-xs sm:text-sm leading-relaxed shadow-2xs">
           {activeTab === 'terms' ? (
             <>
               {/* TERMOS DE USO */}
-              <div className="border-b border-neutral-200 pb-5 space-y-2">
-                <div className="flex items-center gap-2 text-emerald-700 font-mono text-xs font-semibold">
+              <div className="border-b border-slate-200 pb-5 space-y-2">
+                <div className="flex items-center gap-2 text-blue-600 font-mono text-xs font-semibold">
                   <FileText className="w-4 h-4" />
                   <span>CONTRATO DE LICENÇA DE USO DE SOFTWARE (SaaS)</span>
                 </div>
-                <p className="text-xs text-neutral-500">
+                <p className="text-xs text-slate-500">
                   Estes Termos de Uso regulam a utilização da plataforma tecnológica{' '}
                   <strong>Aladay Cardápios Digitais</strong> por estabelecimentos gastronômicos (restaurantes, hamburguerias, pizzarias, lanchonetes e similares, doravante denominados <strong>&ldquo;Lojista&rdquo;</strong> ou <strong>&ldquo;Tenant&rdquo;</strong>) e por seus clientes finais (<strong>&ldquo;Consumidores&rdquo;</strong>).
                 </p>
               </div>
 
               <section id="termos-1" className="space-y-2.5 scroll-mt-24">
-                <h2 className="text-base font-bold text-neutral-950">
+                <h2 className="text-base font-bold text-slate-950">
                   1. Objeto e Aceitação dos Termos
                 </h2>
                 <p>
@@ -245,7 +245,7 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
               </section>
 
               <section id="termos-2" className="space-y-2.5 scroll-mt-24">
-                <h2 className="text-base font-bold text-neutral-950">
+                <h2 className="text-base font-bold text-slate-950">
                   2. Cadastro, Conta do Restaurante (Tenant) e Responsabilidades
                 </h2>
                 <p>
@@ -260,8 +260,8 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
               </section>
 
               <section id="termos-3" className="space-y-2.5 scroll-mt-24">
-                <h2 className="text-base font-bold text-neutral-950 flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-emerald-700" />
+                <h2 className="text-base font-bold text-slate-950 flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-blue-600" />
                   <span>3. Período de Teste Grátis (15 Dias) e Planos de Assinatura</span>
                 </h2>
                 <p>
@@ -287,8 +287,8 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
               </section>
 
               <section id="termos-4" className="space-y-2.5 scroll-mt-24">
-                <h2 className="text-base font-bold text-neutral-950 flex items-center gap-2">
-                  <QrCode className="w-4 h-4 text-emerald-700" />
+                <h2 className="text-base font-bold text-slate-950 flex items-center gap-2">
+                  <QrCode className="w-4 h-4 text-blue-600" />
                   <span>4. Pagamentos de Pedidos via Pix Direto (Isenção de Intermediação)</span>
                 </h2>
                 <p>
@@ -303,8 +303,8 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
               </section>
 
               <section id="termos-5" className="space-y-2.5 scroll-mt-24">
-                <h2 className="text-base font-bold text-neutral-950 flex items-center gap-2">
-                  <MessageSquare className="w-4 h-4 text-emerald-700" />
+                <h2 className="text-base font-bold text-slate-950 flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-blue-600" />
                   <span>5. Integração WhatsApp (Evolution API) e Boas Práticas</span>
                 </h2>
                 <p>
@@ -316,7 +316,7 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
               </section>
 
               <section id="termos-6" className="space-y-2.5 scroll-mt-24">
-                <h2 className="text-base font-bold text-neutral-950">
+                <h2 className="text-base font-bold text-slate-950">
                   6. Propriedade Intelectual e Disponibilidade (SLA)
                 </h2>
                 <p>
@@ -328,7 +328,7 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
               </section>
 
               <section id="termos-7" className="space-y-2.5 scroll-mt-24">
-                <h2 className="text-base font-bold text-neutral-950">
+                <h2 className="text-base font-bold text-slate-950">
                   7. Cancelamento, Suspensão e Foro Aplicável
                 </h2>
                 <p>
@@ -342,20 +342,20 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
           ) : (
             <>
               {/* POLÍTICA DE PRIVACIDADE E LGPD */}
-              <div className="border-b border-neutral-200 pb-5 space-y-2">
-                <div className="flex items-center gap-2 text-emerald-700 font-mono text-xs font-semibold">
+              <div className="border-b border-slate-200 pb-5 space-y-2">
+                <div className="flex items-center gap-2 text-blue-600 font-mono text-xs font-semibold">
                   <ShieldCheck className="w-4 h-4" />
                   <span>CONFORMIDADE COM A LEI GERAL DE PROTEÇÃO DE DADOS (LEI Nº 13.709/2018)</span>
                 </div>
-                <p className="text-xs text-neutral-500">
+                <p className="text-xs text-slate-500">
                   Esta Política de Privacidade descreve de forma clara e transparente como a{' '}
                   <strong>Aladay Cardápios Digitais</strong> coleta, utiliza, armazena e protege os dados pessoais de Lojistas assinantes e de Consumidores que realizam pedidos através dos cardápios digitais hospedados na plataforma.
                 </p>
               </div>
 
               <section id="lgpd-1" className="space-y-2.5 scroll-mt-24">
-                <h2 className="text-base font-bold text-neutral-950 flex items-center gap-2">
-                  <Building2 className="w-4 h-4 text-emerald-700" />
+                <h2 className="text-base font-bold text-slate-950 flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-blue-600" />
                   <span>1. Papéis na LGPD: Controlador e Operador de Dados</span>
                 </h2>
                 <p>
@@ -372,26 +372,26 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
               </section>
 
               <section id="lgpd-2" className="space-y-2.5 scroll-mt-24">
-                <h2 className="text-base font-bold text-neutral-950">
+                <h2 className="text-base font-bold text-slate-950">
                   2. Dados Pessoais Coletados
                 </h2>
                 <p>
                   Coletamos apenas o mínimo necessário (princípio da necessidade, Art. 6º, III da LGPD) para a operação segura do sistema:
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  <div className="p-3.5 rounded-xl bg-neutral-50 border border-neutral-200 space-y-1.5">
-                    <p className="text-xs font-bold text-neutral-900">
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+                    <p className="text-xs font-bold text-slate-900">
                       A. Dados do Lojista (Restaurante)
                     </p>
-                    <p className="text-[11px] text-neutral-600 leading-relaxed">
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
                       Nome completo ou Razão Social, CPF/CNPJ, e-mail de login, telefone WhatsApp, endereço do estabelecimento, Chave Pix e Nome do Beneficiário para recebimento de vendas.
                     </p>
                   </div>
-                  <div className="p-3.5 rounded-xl bg-neutral-50 border border-neutral-200 space-y-1.5">
-                    <p className="text-xs font-bold text-neutral-900">
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+                    <p className="text-xs font-bold text-slate-900">
                       B. Dados do Consumidor Final
                     </p>
-                    <p className="text-[11px] text-neutral-600 leading-relaxed">
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
                       Nome de identificação do pedido, número de WhatsApp (para recebimento de status do pedido), endereço de entrega (ou número da mesa) e itens escolhidos na sacola.
                     </p>
                   </div>
@@ -399,7 +399,7 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
               </section>
 
               <section id="lgpd-3" className="space-y-2.5 scroll-mt-24">
-                <h2 className="text-base font-bold text-neutral-950">
+                <h2 className="text-base font-bold text-slate-950">
                   3. Finalidades e Bases Legais de Tratamento (Art. 7º da LGPD)
                 </h2>
                 <ul className="list-disc pl-5 space-y-1.5">
@@ -416,8 +416,8 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
               </section>
 
               <section id="lgpd-4" className="space-y-2.5 scroll-mt-24">
-                <h2 className="text-base font-bold text-neutral-950 flex items-center gap-2">
-                  <Lock className="w-4 h-4 text-emerald-700" />
+                <h2 className="text-base font-bold text-slate-950 flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-blue-600" />
                   <span>4. Segurança da Informação e Isolamento Multi-Tenant</span>
                 </h2>
                 <p>
@@ -437,7 +437,7 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
               </section>
 
               <section id="lgpd-5" className="space-y-2.5 scroll-mt-24">
-                <h2 className="text-base font-bold text-neutral-950">
+                <h2 className="text-base font-bold text-slate-950">
                   5. Compartilhamento de Dados e Uso de Cookies
                 </h2>
                 <p>
@@ -452,8 +452,8 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
               </section>
 
               <section id="lgpd-6" className="space-y-2.5 scroll-mt-24">
-                <h2 className="text-base font-bold text-neutral-950 flex items-center gap-2">
-                  <UserCheck className="w-4 h-4 text-emerald-700" />
+                <h2 className="text-base font-bold text-slate-950 flex items-center gap-2">
+                  <UserCheck className="w-4 h-4 text-blue-600" />
                   <span>6. Direitos do Titular (Art. 18 da LGPD) e Contato do DPO</span>
                 </h2>
                 <p>
@@ -465,17 +465,17 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
                   <li>Anonimização, bloqueio ou eliminação de dados desnecessários;</li>
                   <li>Portabilidade dos dados e revogação do consentimento de cookies analíticos.</li>
                 </ul>
-                <div className="mt-4 p-4 rounded-xl bg-emerald-50/70 border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="mt-4 p-4 rounded-xl bg-blue-50/70 border border-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="space-y-0.5">
-                    <p className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
-                      <Mail className="w-3.5 h-3.5 text-emerald-700" />
+                    <p className="text-xs font-bold text-blue-950 flex items-center gap-1.5">
+                      <Mail className="w-3.5 h-3.5 text-blue-600" />
                       <span>Encarregado pelo Tratamento de Dados Pessoais (DPO)</span>
                     </p>
-                    <p className="text-[11px] text-emerald-800">
+                    <p className="text-[11px] text-blue-800">
                       Para solicitações relativas à LGPD, exclusão de conta ou dúvidas sobre privacidade:
                     </p>
                   </div>
-                  <span className="font-mono text-xs font-bold text-emerald-950 bg-white px-3 py-1.5 rounded-lg border border-emerald-200 shrink-0">
+                  <span className="font-mono text-xs font-bold text-blue-950 bg-white px-3 py-1.5 rounded-lg border border-blue-200 shrink-0">
                     privacidade@aladay.com.br
                   </span>
                 </div>
@@ -484,11 +484,11 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
           )}
 
           {/* Bottom Switcher & Back Action */}
-          <div className="pt-6 border-t border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="pt-6 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
             <button
               type="button"
               onClick={onBackToHome}
-              className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-neutral-300 text-neutral-700 hover:bg-neutral-100 text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Voltar ao Início</span>
@@ -497,16 +497,16 @@ export const LegalComplianceView: React.FC<LegalComplianceViewProps> = ({
             <button
               type="button"
               onClick={() => handleSelectTab(activeTab === 'terms' ? 'privacy' : 'terms')}
-              className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-xs shadow-blue-600/20"
             >
               {activeTab === 'terms' ? (
                 <>
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  <ShieldCheck className="w-3.5 h-3.5 text-white" />
                   <span>Ler Política de Privacidade (LGPD)</span>
                 </>
               ) : (
                 <>
-                  <Scale className="w-3.5 h-3.5 text-emerald-400" />
+                  <Scale className="w-3.5 h-3.5 text-white" />
                   <span>Ler Termos e Condições de Uso</span>
                 </>
               )}
