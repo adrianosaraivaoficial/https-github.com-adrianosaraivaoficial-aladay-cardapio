@@ -45,6 +45,24 @@ export interface Category {
   order: number;
 }
 
+export interface LegacyTenantCatalog {
+  categories: Category[];
+  products: Product[];
+  orders: Order[];
+}
+
+export interface NormalizedTenantCatalog {
+  schemaVersion: 3;
+  categoriesById: Record<string, Category>;
+  categoryIds: string[];
+  productsById: Record<string, Product>;
+  productIds: string[];
+  productIdsByCategory: Record<string, string[]>;
+  ordersById: Record<string, Order>;
+  orderIds: string[];
+  updatedAt: number;
+}
+
 export interface DeliveryZone {
   id: string;
   name: string;

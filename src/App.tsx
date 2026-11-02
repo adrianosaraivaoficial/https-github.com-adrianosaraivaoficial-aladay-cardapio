@@ -15,13 +15,338 @@ import {
   PIZZARIA_CATEGORIES,
   PIZZARIA_PRODUCTS,
 } from './data/mockTenant';
-import { AuthSession, Category, CustomerRecord, Order, OrderStatus, Product, RestaurantTenant } from './types';
+import {
+  AuthSession,
+  Category,
+  CustomerRecord,
+  LegacyTenantCatalog,
+  NormalizedTenantCatalog,
+  Order,
+  OrderStatus,
+  Product,
+  RestaurantTenant,
+} from './types';
 import { BLUEPRINT_SECTIONS } from './data/blueprintSections';
 import { LogIn, Lock, ShieldAlert, X, ArrowRight, Menu, Share2, Copy, Check, MessageSquare, ExternalLink } from 'lucide-react';
 import { WhatsAppAutomationView } from './components/WhatsAppAutomationView';
 import { AuthPortalView } from './components/AuthPortalView';
 import { LandingPageView } from './components/LandingPageView';
 import { LegalComplianceView } from './components/LegalComplianceView';
+
+const CATALOG_PARTITION_PREFIX = 'aladay_prod_catalog_v3_';
+const CATALOG_INDEX_KEY = 'aladay_prod_catalog_index_v3';
+const LEGACY_CATALOGS_KEY = 'aladay_prod_catalogs_v2';
+
+const DEFAULT_NUMERIC_CATEGORY_NAMES: Record<string, string> = {
+  '1': 'Lanches & Burgers',
+  '2': 'Porções & Entradas',
+  '3': 'Bebidas',
+  '4': 'Sobremesas',
+};
+
+/**
+ * Memoized string normalization helper to avoid repeated Unicode NFD regex passes
+ * when indexing large catalogs across tenants.
+ */
+function normalizeCatalogKey(value: string, cache: Map<string, string>): string {
+  const existing = cache.get(value);
+  if (existing !== undefined) return existing;
+  const normalized = value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+  cache.set(value, normalized);
+  return normalized;
+}
+
+/**
+ * Normalizes and repairs a single tenant's catalog in linear O(C + P + O) time.
+ * Supports both LegacyTenantCatalog (flat arrays) and NormalizedTenantCatalog (v3 indexed maps).
+ * Builds O(1) lookup tables (`categoriesById`, `productsById`, `ordersById`) and
+ * secondary category-to-products index (`productIdsByCategory`) for scalable mutations.
+ */
+export function sanitizeTenantCatalog(
+  rawTenantData: Partial<LegacyTenantCatalog & NormalizedTenantCatalog> | null | undefined,
+  normCache: Map<string, string> = new Map()
+): NormalizedTenantCatalog {
+  const now = Date.now();
+  if (!rawTenantData) {
+    return {
+      schemaVersion: 3,
+      categoriesById: {},
+      categoryIds: [],
+      productsById: {},
+      productIds: [],
+      productIdsByCategory: {},
+      ordersById: {},
+      orderIds: [],
+      updatedAt: now,
+    };
+  }
+
+  // Extract raw arrays whether input is already v3 normalized or legacy flat arrays
+  const sourceCategories: Category[] = Array.isArray(rawTenantData.categories)
+    ? rawTenantData.categories
+    : rawTenantData.categoriesById && Array.isArray(rawTenantData.categoryIds)
+    ? rawTenantData.categoryIds
+        .map((id) => rawTenantData.categoriesById![id])
+        .filter((c): c is Category => Boolean(c))
+    : rawTenantData.categoriesById
+    ? Object.values(rawTenantData.categoriesById)
+    : [];
+
+  const sourceProducts: Product[] = Array.isArray(rawTenantData.products)
+    ? rawTenantData.products
+    : rawTenantData.productsById && Array.isArray(rawTenantData.productIds)
+    ? rawTenantData.productIds
+        .map((id) => rawTenantData.productsById![id])
+        .filter((p): p is Product => Boolean(p))
+    : rawTenantData.productsById
+    ? Object.values(rawTenantData.productsById)
+    : [];
+
+  const sourceOrders: Order[] = Array.isArray(rawTenantData.orders)
+    ? rawTenantData.orders
+    : rawTenantData.ordersById && Array.isArray(rawTenantData.orderIds)
+    ? rawTenantData.orderIds
+        .map((id) => rawTenantData.ordersById![id])
+        .filter((o): o is Order => Boolean(o))
+    : rawTenantData.ordersById
+    ? Object.values(rawTenantData.ordersById)
+    : [];
+
+  const catMapByNorm = new Map<string, Category>();
+  const idRemap = new Map<string, string>();
+  const numericCategories: Category[] = [];
+
+  // Single pass over categories: partition non-numeric vs numeric-only categories
+  for (let i = 0; i < sourceCategories.length; i++) {
+    const cat = sourceCategories[i];
+    if (!cat || !cat.id) continue;
+    const trimmed = (cat.name || '').trim();
+    if (/^\d+$/.test(trimmed)) {
+      numericCategories.push(cat);
+    } else {
+      const safeName = trimmed || 'Geral';
+      const norm = normalizeCatalogKey(safeName, normCache);
+      const existing = catMapByNorm.get(norm);
+      if (!existing) {
+        catMapByNorm.set(norm, { ...cat, name: safeName });
+      } else if (cat.id !== existing.id) {
+        idRemap.set(cat.id, existing.id);
+      }
+    }
+  }
+
+  // Repair numeric-only categories ("1", "2", "3", "4")
+  for (let i = 0; i < numericCategories.length; i++) {
+    const cat = numericCategories[i];
+    const trimmed = (cat.name || '').trim();
+    const numOrder = parseInt(trimmed, 10) || cat.order || 1;
+    const mappedName = DEFAULT_NUMERIC_CATEGORY_NAMES[trimmed] || `Categoria ${trimmed}`;
+    const norm = normalizeCatalogKey(mappedName, normCache);
+    const existing = catMapByNorm.get(norm);
+    if (existing) {
+      if (cat.id !== existing.id) {
+        idRemap.set(cat.id, existing.id);
+      }
+    } else {
+      catMapByNorm.set(norm, {
+        ...cat,
+        name: mappedName,
+        order: numOrder,
+      });
+    }
+  }
+
+  const candidateCategoriesById = new Map<string, Category>();
+  catMapByNorm.forEach((cat) => {
+    candidateCategoriesById.set(cat.id, cat);
+  });
+
+  // Single O(P) pass over products: deduplicate by ID, remap categoryId, and populate category buckets
+  const productsById: Record<string, Product> = {};
+  const productIds: string[] = [];
+  const productIdsByCategory: Record<string, string[]> = {};
+
+  candidateCategoriesById.forEach((cat) => {
+    productIdsByCategory[cat.id] = [];
+  });
+
+  let fallbackCategoryId: string | null = null;
+
+  for (let i = 0; i < sourceProducts.length; i++) {
+    const rawProd = sourceProducts[i];
+    if (!rawProd || !rawProd.id) continue;
+
+    let resolvedCategoryId = idRemap.get(rawProd.categoryId) || rawProd.categoryId;
+
+    // Ensure orphan products are never lost if their categoryId was missing
+    if (!candidateCategoriesById.has(resolvedCategoryId)) {
+      if (!fallbackCategoryId) {
+        const firstExisting = candidateCategoriesById.keys().next().value as string | undefined;
+        if (firstExisting) {
+          fallbackCategoryId = firstExisting;
+        } else {
+          fallbackCategoryId = 'cat_default_1';
+          const fallbackCat: Category = {
+            id: fallbackCategoryId,
+            name: 'Pratos Principais',
+            order: 1,
+          };
+          candidateCategoriesById.set(fallbackCategoryId, fallbackCat);
+          productIdsByCategory[fallbackCategoryId] = [];
+        }
+      }
+      resolvedCategoryId = fallbackCategoryId;
+    }
+
+    const isNewProduct = !(rawProd.id in productsById);
+    const normalizedProd: Product =
+      resolvedCategoryId === rawProd.categoryId
+        ? rawProd
+        : { ...rawProd, categoryId: resolvedCategoryId };
+
+    productsById[rawProd.id] = normalizedProd;
+    if (isNewProduct) {
+      productIds.push(rawProd.id);
+      if (!productIdsByCategory[resolvedCategoryId]) {
+        productIdsByCategory[resolvedCategoryId] = [];
+      }
+      productIdsByCategory[resolvedCategoryId].push(rawProd.id);
+    }
+  }
+
+  // O(C) filtering of empty default placeholder categories using O(1) bucket length check
+  const allUniqueCats = Array.from(candidateCategoriesById.values());
+  const nonEmptyOrOnlyCats =
+    allUniqueCats.length > 2
+      ? allUniqueCats.filter((c) => {
+          const count = productIdsByCategory[c.id]?.length ?? 0;
+          if (count > 0) return true;
+          const norm = normalizeCatalogKey(c.name, normCache);
+          return norm !== 'pratos principais' && norm !== 'geral';
+        })
+      : allUniqueCats;
+
+  const finalCategories = (nonEmptyOrOnlyCats.length > 0 ? nonEmptyOrOnlyCats : allUniqueCats)
+    .sort((a, b) => a.order - b.order)
+    .map((c, idx) => ({ ...c, order: idx + 1 }));
+
+  const categoriesById: Record<string, Category> = {};
+  const categoryIds: string[] = [];
+  const cleanedProductIdsByCategory: Record<string, string[]> = {};
+
+  for (let i = 0; i < finalCategories.length; i++) {
+    const cat = finalCategories[i];
+    categoriesById[cat.id] = cat;
+    categoryIds.push(cat.id);
+    cleanedProductIdsByCategory[cat.id] = productIdsByCategory[cat.id] || [];
+  }
+
+  // Single O(O) pass over orders
+  const ordersById: Record<string, Order> = {};
+  const orderIds: string[] = [];
+  for (let i = 0; i < sourceOrders.length; i++) {
+    const ord = sourceOrders[i];
+    if (!ord || !ord.id) continue;
+    if (!(ord.id in ordersById)) {
+      orderIds.push(ord.id);
+    }
+    ordersById[ord.id] = ord;
+  }
+
+  return {
+    schemaVersion: 3,
+    categoriesById,
+    categoryIds,
+    productsById,
+    productIds,
+    productIdsByCategory: cleanedProductIdsByCategory,
+    ordersById,
+    orderIds,
+    updatedAt: rawTenantData.updatedAt || now,
+  };
+}
+
+/**
+ * Sanitizes and indexes an entire multi-tenant catalog dictionary in O(T * (C + P + O)) time.
+ * Accepts both legacy v2 `{ categories, products, orders }` and v3 `NormalizedTenantCatalog` entries.
+ */
+export function sanitizeCatalogData(
+  rawCatalog: Record<string, Partial<LegacyTenantCatalog & NormalizedTenantCatalog>>
+): Record<string, NormalizedTenantCatalog> {
+  const normCache = new Map<string, string>();
+  const cleaned: Record<string, NormalizedTenantCatalog> = {};
+
+  if (!rawCatalog || typeof rawCatalog !== 'object') {
+    return cleaned;
+  }
+
+  const entries = Object.entries(rawCatalog);
+  for (let i = 0; i < entries.length; i++) {
+    const [slug, data] = entries[i];
+    if (!slug) continue;
+    cleaned[slug] = sanitizeTenantCatalog(data, normCache);
+  }
+
+  return cleaned;
+}
+
+/**
+ * Converts a NormalizedTenantCatalog back into a compact LegacyTenantCatalog snapshot
+ * when needed for backward compatibility or API export.
+ */
+function materializeLegacyCatalog(catalog: NormalizedTenantCatalog): LegacyTenantCatalog {
+  return {
+    categories: catalog.categoryIds
+      .map((id) => catalog.categoriesById[id])
+      .filter((c): c is Category => Boolean(c)),
+    products: catalog.productIds
+      .map((id) => catalog.productsById[id])
+      .filter((p): p is Product => Boolean(p)),
+    orders: catalog.orderIds
+      .map((id) => catalog.ordersById[id])
+      .filter((o): o is Order => Boolean(o)),
+  };
+}
+
+/**
+ * Persists a single tenant's normalized catalog partition to localStorage,
+ * avoiding full-store serialization of untouched tenants.
+ */
+function persistSingleTenantCatalogPartition(
+  slug: string,
+  catalog: NormalizedTenantCatalog
+): void {
+  try {
+    localStorage.setItem(`${CATALOG_PARTITION_PREFIX}${slug}`, JSON.stringify(catalog));
+    const rawIndex = localStorage.getItem(CATALOG_INDEX_KEY);
+    const currentIndex: string[] = rawIndex ? JSON.parse(rawIndex) : [];
+    if (!currentIndex.includes(slug)) {
+      currentIndex.push(slug);
+      localStorage.setItem(CATALOG_INDEX_KEY, JSON.stringify(currentIndex));
+    }
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+/**
+ * Hydrates a single tenant partition from localStorage if available.
+ */
+function hydrateSingleTenantCatalogPartition(slug: string): NormalizedTenantCatalog | null {
+  try {
+    const rawPartition = localStorage.getItem(`${CATALOG_PARTITION_PREFIX}${slug}`);
+    if (rawPartition) {
+      return sanitizeTenantCatalog(JSON.parse(rawPartition));
+    }
+  } catch {
+    // ignore corrupted partition
+  }
+  return null;
+}
 
 export default function App() {
   const sharedLojaParam = React.useMemo(() => {
@@ -90,116 +415,81 @@ export default function App() {
     }
   });
 
-  // Helper to automatically repair any numeric-only category names (e.g. "1", "2", "3", "4")
-  // that may have been saved in localStorage from a previous spreadsheet upload and normalize order sequentially
-  const sanitizeCatalogData = (
-    rawCatalog: Record<string, { categories: Category[]; products: Product[]; orders: Order[] }>
-  ) => {
-    const defaultOrderNames: Record<string, string> = {
-      '1': 'Lanches & Burgers',
-      '2': 'Porções & Entradas',
-      '3': 'Bebidas',
-      '4': 'Sobremesas',
-    };
-    const normalizeStr = (s: string) =>
-      s
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .trim();
+  // Tracks which tenant slugs have pending catalog mutations for incremental persistence
+  const dirtyTenantSlugsRef = React.useRef<Set<string>>(new Set());
 
-    const cleaned: Record<string, { categories: Category[]; products: Product[]; orders: Order[] }> = {};
+  const markTenantCatalogDirty = React.useCallback((slug: string) => {
+    if (slug) {
+      dirtyTenantSlugsRef.current.add(slug);
+    }
+  }, []);
 
-    Object.entries(rawCatalog).forEach(([slug, data]) => {
-      if (!data || !Array.isArray(data.categories) || !Array.isArray(data.products)) {
-        cleaned[slug] = data;
-        return;
+  // Normalized Catalogs indexed by tenant slug (Multi-tenancy isolated & partitioned state)
+  const [catalogsByTenant, setCatalogsByTenant] = useState<
+    Record<string, NormalizedTenantCatalog>
+  >(() => {
+    const normCache = new Map<string, string>();
+    const hydrated: Record<string, NormalizedTenantCatalog> = {};
+
+    try {
+      // 1. Load from v3 per-tenant partitions if index exists
+      const rawIndex = localStorage.getItem(CATALOG_INDEX_KEY);
+      if (rawIndex) {
+        const indexedSlugs: string[] = JSON.parse(rawIndex);
+        if (Array.isArray(indexedSlugs)) {
+          for (let i = 0; i < indexedSlugs.length; i++) {
+            const slug = indexedSlugs[i];
+            const partition = hydrateSingleTenantCatalogPartition(slug);
+            if (partition) {
+              hydrated[slug] = partition;
+            }
+          }
+        }
       }
 
-      const catMapByNorm = new Map<string, Category>();
-      const idRemap = new Map<string, string>();
-
-      // First pass: register valid non-numeric categories
-      data.categories.forEach((cat) => {
-        const trimmed = cat.name.trim();
-        if (!/^\d+$/.test(trimmed)) {
-          const norm = normalizeStr(trimmed);
-          if (!catMapByNorm.has(norm)) {
-            catMapByNorm.set(norm, { ...cat, name: trimmed });
-          } else {
-            idRemap.set(cat.id, catMapByNorm.get(norm)!.id);
+      // 2. Migrate any legacy v2 monolithic catalogs not yet in v3 partitions
+      const legacySaved = localStorage.getItem(LEGACY_CATALOGS_KEY);
+      if (legacySaved) {
+        const sanitizedLegacy = sanitizeCatalogData(JSON.parse(legacySaved));
+        Object.entries(sanitizedLegacy).forEach(([slug, normalizedCat]) => {
+          if (!hydrated[slug]) {
+            hydrated[slug] = normalizedCat;
+            persistSingleTenantCatalogPartition(slug, normalizedCat);
           }
-        }
-      });
-
-      // Second pass: repair numeric-only categories ("1", "2", "3", "4")
-      data.categories.forEach((cat) => {
-        const trimmed = cat.name.trim();
-        if (/^\d+$/.test(trimmed)) {
-          const numOrder = parseInt(trimmed, 10) || cat.order || 1;
-          const mappedName = defaultOrderNames[trimmed] || `Categoria ${trimmed}`;
-          const norm = normalizeStr(mappedName);
-          if (catMapByNorm.has(norm)) {
-            const target = catMapByNorm.get(norm)!;
-            idRemap.set(cat.id, target.id);
-          } else {
-            const repairedCat: Category = {
-              ...cat,
-              name: mappedName,
-              order: numOrder,
-            };
-            catMapByNorm.set(norm, repairedCat);
-          }
-        }
-      });
-
-      const remappedProducts = data.products.map((p) => ({
-        ...p,
-        categoryId: idRemap.get(p.categoryId) || p.categoryId,
-      }));
-
-      // Remove empty default placeholder categories if repaired/imported categories exist with products
-      const allUniqueCats = Array.from(catMapByNorm.values());
-      const nonEmptyOrOnlyCats =
-        allUniqueCats.length > 2
-          ? allUniqueCats.filter(
-              (c) =>
-                remappedProducts.some((p) => p.categoryId === c.id) ||
-                (normalizeStr(c.name) !== 'pratos principais' && normalizeStr(c.name) !== 'geral')
-            )
-          : allUniqueCats;
-
-      const sortedCats = (nonEmptyOrOnlyCats.length > 0 ? nonEmptyOrOnlyCats : allUniqueCats)
-        .sort((a, b) => a.order - b.order)
-        .map((c, idx) => ({ ...c, order: idx + 1 }));
-
-      cleaned[slug] = {
-        ...data,
-        categories: sortedCats,
-        products: remappedProducts,
-      };
-    });
-
-    return cleaned;
-  };
-
-  // Catalogs indexed by tenant slug (Multi-tenancy isolated state)
-  const [catalogsByTenant, setCatalogsByTenant] = useState<
-    Record<string, { categories: Category[]; products: Product[]; orders: Order[] }>
-  >(() => {
-    try {
-      const saved = localStorage.getItem('aladay_prod_catalogs_v2');
-      if (saved) return sanitizeCatalogData(JSON.parse(saved));
+        });
+      }
     } catch {
-      // ignore
+      // ignore storage read errors
     }
-    return {
-      [INITIAL_TENANT.slug]: {
-        categories: INITIAL_CATEGORIES,
-        products: INITIAL_PRODUCTS,
-        orders: INITIAL_ORDERS,
-      },
-    };
+
+    // 3. Ensure default initial tenants are always seeded
+    if (!hydrated[INITIAL_TENANT.slug]) {
+      const defaultInitial = sanitizeTenantCatalog(
+        {
+          categories: INITIAL_CATEGORIES,
+          products: INITIAL_PRODUCTS,
+          orders: INITIAL_ORDERS,
+        },
+        normCache
+      );
+      hydrated[INITIAL_TENANT.slug] = defaultInitial;
+      persistSingleTenantCatalogPartition(INITIAL_TENANT.slug, defaultInitial);
+    }
+
+    if (!hydrated['pizzaria-napoli']) {
+      const defaultPizzaria = sanitizeTenantCatalog(
+        {
+          categories: PIZZARIA_CATEGORIES,
+          products: PIZZARIA_PRODUCTS,
+          orders: [],
+        },
+        normCache
+      );
+      hydrated['pizzaria-napoli'] = defaultPizzaria;
+      persistSingleTenantCatalogPartition('pizzaria-napoli', defaultPizzaria);
+    }
+
+    return hydrated;
   });
 
   const [customers, setCustomers] = useState<CustomerRecord[]>(() => {
@@ -211,16 +501,66 @@ export default function App() {
     }
   });
 
+  // Domain-isolated persistence effects to prevent unrelated state changes from serializing the catalog
   React.useEffect(() => {
     try {
       localStorage.setItem('aladay_prod_tenant_v2', JSON.stringify(tenant));
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [tenant]);
+
+  React.useEffect(() => {
+    try {
       localStorage.setItem('aladay_prod_tenants_list_v2', JSON.stringify(tenantsList));
-      localStorage.setItem('aladay_prod_catalogs_v2', JSON.stringify(catalogsByTenant));
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [tenantsList]);
+
+  React.useEffect(() => {
+    try {
       localStorage.setItem('aladay_prod_customers_v2', JSON.stringify(customers));
     } catch {
       // ignore storage quota errors
     }
-  }, [tenant, tenantsList, catalogsByTenant, customers]);
+  }, [customers]);
+
+  // Debounced, incremental per-tenant catalog persistence
+  React.useEffect(() => {
+    const flushDirtyCatalogPartitions = () => {
+      const dirtySlugs = Array.from(dirtyTenantSlugsRef.current);
+      if (dirtySlugs.length === 0) return;
+      dirtyTenantSlugsRef.current.clear();
+
+      for (let i = 0; i < dirtySlugs.length; i++) {
+        const slug = dirtySlugs[i];
+        const tenantCatalog = catalogsByTenant[slug];
+        if (tenantCatalog) {
+          persistSingleTenantCatalogPartition(slug, tenantCatalog);
+        }
+      }
+
+      // Maintain lightweight legacy v2 snapshot compatibility
+      try {
+        const legacySnapshot: Record<string, LegacyTenantCatalog> = {};
+        Object.entries(catalogsByTenant).forEach(([slug, normCat]) => {
+          legacySnapshot[slug] = materializeLegacyCatalog(normCat);
+        });
+        localStorage.setItem(LEGACY_CATALOGS_KEY, JSON.stringify(legacySnapshot));
+      } catch {
+        // ignore quota errors on legacy fallback key
+      }
+    };
+
+    const timerId = window.setTimeout(flushDirtyCatalogPartitions, 150);
+    window.addEventListener('beforeunload', flushDirtyCatalogPartitions);
+
+    return () => {
+      window.clearTimeout(timerId);
+      window.removeEventListener('beforeunload', flushDirtyCatalogPartitions);
+    };
+  }, [catalogsByTenant]);
 
   // Synchronize and refresh JWT session with backend if a token exists
   React.useEffect(() => {
@@ -525,29 +865,60 @@ export default function App() {
     setCurrentView(targetView);
   };
 
-  // Derived current tenant data
-  const currentCatalog = catalogsByTenant[tenant.slug] || {
-    categories: INITIAL_CATEGORIES,
-    products: INITIAL_PRODUCTS,
-    orders: [],
-  };
-  const categories = currentCatalog.categories;
-  const products = currentCatalog.products;
-  const orders = currentCatalog.orders;
+  // Default fallback normalized catalog memoized once
+  const defaultNormalizedCatalog = React.useMemo(
+    () =>
+      sanitizeTenantCatalog({
+        categories: INITIAL_CATEGORIES,
+        products: INITIAL_PRODUCTS,
+        orders: [],
+      }),
+    []
+  );
+
+  // Derived current tenant data with memoized O(N) materialization only when the relevant slice changes
+  const currentCatalog = catalogsByTenant[tenant.slug] || defaultNormalizedCatalog;
+
+  const categories = React.useMemo(
+    () =>
+      currentCatalog.categoryIds
+        .map((id) => currentCatalog.categoriesById[id])
+        .filter((c): c is Category => Boolean(c)),
+    [currentCatalog.categoryIds, currentCatalog.categoriesById]
+  );
+
+  const products = React.useMemo(
+    () =>
+      currentCatalog.productIds
+        .map((id) => currentCatalog.productsById[id])
+        .filter((p): p is Product => Boolean(p)),
+    [currentCatalog.productIds, currentCatalog.productsById]
+  );
+
+  const orders = React.useMemo(
+    () =>
+      currentCatalog.orderIds
+        .map((id) => currentCatalog.ordersById[id])
+        .filter((o): o is Order => Boolean(o)),
+    [currentCatalog.orderIds, currentCatalog.ordersById]
+  );
 
   // Tenant Handlers
   const handleTenantCreated = (newTenant: RestaurantTenant) => {
+    const initialNormalized = sanitizeTenantCatalog({
+      categories: [
+        { id: `cat_${Date.now()}_1`, name: 'Pratos Principais', order: 1 },
+        { id: `cat_${Date.now()}_2`, name: 'Bebidas', order: 2 },
+      ],
+      products: [],
+      orders: [],
+    });
+
     setTenantsList((prev) => [...prev, newTenant]);
+    markTenantCatalogDirty(newTenant.slug);
     setCatalogsByTenant((prev) => ({
       ...prev,
-      [newTenant.slug]: {
-        categories: [
-          { id: `cat_${Date.now()}_1`, name: 'Pratos Principais', order: 1 },
-          { id: `cat_${Date.now()}_2`, name: 'Bebidas', order: 2 },
-        ],
-        products: [],
-        orders: [],
-      },
+      [newTenant.slug]: initialNormalized,
     }));
     setTenant(newTenant);
   };
@@ -560,6 +931,15 @@ export default function App() {
   };
 
   const handleSelectTenant = (selected: RestaurantTenant) => {
+    // Lazy on-demand partition hydration if tenant catalog is not yet in memory
+    setCatalogsByTenant((prev) => {
+      if (prev[selected.slug]) return prev;
+      const hydrated = hydrateSingleTenantCatalogPartition(selected.slug);
+      if (hydrated) {
+        return { ...prev, [selected.slug]: hydrated };
+      }
+      return prev;
+    });
     setTenant(selected);
   };
 
@@ -573,7 +953,7 @@ export default function App() {
     if (newSession.user.tenantSlug !== '*') {
       const matched = tenantsList.find((t) => t.slug === newSession.user.tenantSlug);
       if (matched) {
-        setTenant(matched);
+        handleSelectTenant(matched);
       }
     }
   };
@@ -588,74 +968,158 @@ export default function App() {
     setCurrentView('home');
   };
 
-  // Product & Category Handlers (Scoped to current tenant)
+  // Product & Category Handlers (O(1) Indexed Mutations Scoped to Current Tenant)
   const handleAddProduct = (newProduct: Product) => {
+    markTenantCatalogDirty(tenant.slug);
     setCatalogsByTenant((prev) => {
-      const existing = prev[tenant.slug] || { categories: [], products: [], orders: [] };
+      const existing = prev[tenant.slug] || defaultNormalizedCatalog;
+      const isAlreadyPresent = Boolean(existing.productsById[newProduct.id]);
+      const catId = newProduct.categoryId;
+      const existingCatBucket = existing.productIdsByCategory[catId] || [];
+
       return {
         ...prev,
         [tenant.slug]: {
           ...existing,
-          products: [newProduct, ...existing.products],
+          productsById: {
+            ...existing.productsById,
+            [newProduct.id]: newProduct,
+          },
+          productIds: isAlreadyPresent
+            ? existing.productIds
+            : [newProduct.id, ...existing.productIds],
+          productIdsByCategory: {
+            ...existing.productIdsByCategory,
+            [catId]: isAlreadyPresent
+              ? existingCatBucket
+              : [newProduct.id, ...existingCatBucket],
+          },
+          updatedAt: Date.now(),
         },
       };
     });
   };
 
   const handleUpdateProduct = (updatedProduct: Product) => {
+    markTenantCatalogDirty(tenant.slug);
     setCatalogsByTenant((prev) => {
-      const existing = prev[tenant.slug] || { categories: [], products: [], orders: [] };
+      const existing = prev[tenant.slug] || defaultNormalizedCatalog;
+      const previousProduct = existing.productsById[updatedProduct.id];
+      if (!previousProduct) {
+        return prev;
+      }
+
+      let nextProductIdsByCategory = existing.productIdsByCategory;
+      if (previousProduct.categoryId !== updatedProduct.categoryId) {
+        const oldCatId = previousProduct.categoryId;
+        const newCatId = updatedProduct.categoryId;
+        const oldBucket = (existing.productIdsByCategory[oldCatId] || []).filter(
+          (id) => id !== updatedProduct.id
+        );
+        const newBucket = existing.productIdsByCategory[newCatId] || [];
+        nextProductIdsByCategory = {
+          ...existing.productIdsByCategory,
+          [oldCatId]: oldBucket,
+          [newCatId]: newBucket.includes(updatedProduct.id)
+            ? newBucket
+            : [updatedProduct.id, ...newBucket],
+        };
+      }
+
       return {
         ...prev,
         [tenant.slug]: {
           ...existing,
-          products: existing.products.map((p) => (p.id === updatedProduct.id ? updatedProduct : p)),
+          productsById: {
+            ...existing.productsById,
+            [updatedProduct.id]: updatedProduct,
+          },
+          productIdsByCategory: nextProductIdsByCategory,
+          updatedAt: Date.now(),
         },
       };
     });
   };
 
   const handleDeleteProduct = (productId: string) => {
+    markTenantCatalogDirty(tenant.slug);
     setCatalogsByTenant((prev) => {
-      const existing = prev[tenant.slug] || { categories: [], products: [], orders: [] };
+      const existing = prev[tenant.slug] || defaultNormalizedCatalog;
+      const target = existing.productsById[productId];
+      if (!target) return prev;
+
+      const nextProductsById = { ...existing.productsById };
+      delete nextProductsById[productId];
+
+      const catId = target.categoryId;
+      const nextCatBucket = (existing.productIdsByCategory[catId] || []).filter(
+        (id) => id !== productId
+      );
+
       return {
         ...prev,
         [tenant.slug]: {
           ...existing,
-          products: existing.products.filter((p) => p.id !== productId),
+          productsById: nextProductsById,
+          productIds: existing.productIds.filter((id) => id !== productId),
+          productIdsByCategory: {
+            ...existing.productIdsByCategory,
+            [catId]: nextCatBucket,
+          },
+          updatedAt: Date.now(),
         },
       };
     });
   };
 
+  // O(1) direct hash-map lookup and availability toggle without iterating over product list
   const handleToggleProductAvailability = (productId: string) => {
+    markTenantCatalogDirty(tenant.slug);
     setCatalogsByTenant((prev) => {
-      const existing = prev[tenant.slug] || { categories: [], products: [], orders: [] };
+      const existing = prev[tenant.slug] || defaultNormalizedCatalog;
+      const target = existing.productsById[productId];
+      if (!target) return prev;
+
       return {
         ...prev,
         [tenant.slug]: {
           ...existing,
-          products: existing.products.map((p) =>
-            p.id === productId ? { ...p, isAvailable: !p.isAvailable } : p
-          ),
+          productsById: {
+            ...existing.productsById,
+            [productId]: {
+              ...target,
+              isAvailable: !target.isAvailable,
+            },
+          },
+          updatedAt: Date.now(),
         },
       };
     });
   };
 
   const handleAddCategory = (categoryName: string) => {
-    const newCat: Category = {
-      id: `cat_${Date.now()}`,
-      name: categoryName,
-      order: categories.length + 1,
-    };
+    markTenantCatalogDirty(tenant.slug);
     setCatalogsByTenant((prev) => {
-      const existing = prev[tenant.slug] || { categories: [], products: [], orders: [] };
+      const existing = prev[tenant.slug] || defaultNormalizedCatalog;
+      const newCat: Category = {
+        id: `cat_${Date.now()}`,
+        name: categoryName.trim(),
+        order: existing.categoryIds.length + 1,
+      };
       return {
         ...prev,
         [tenant.slug]: {
           ...existing,
-          categories: [...existing.categories, newCat],
+          categoriesById: {
+            ...existing.categoriesById,
+            [newCat.id]: newCat,
+          },
+          categoryIds: [...existing.categoryIds, newCat.id],
+          productIdsByCategory: {
+            ...existing.productIdsByCategory,
+            [newCat.id]: [],
+          },
+          updatedAt: Date.now(),
         },
       };
     });
@@ -666,15 +1130,43 @@ export default function App() {
     newProducts: Product[],
     mode: 'merge' | 'replace'
   ) => {
+    markTenantCatalogDirty(tenant.slug);
     setCatalogsByTenant((prev) => {
-      const existing = prev[tenant.slug] || { categories: [], products: [], orders: [] };
+      const existing = prev[tenant.slug] || defaultNormalizedCatalog;
+      const existingOrders = existing.orderIds
+        .map((id) => existing.ordersById[id])
+        .filter((o): o is Order => Boolean(o));
+
+      const mergedCategories =
+        mode === 'merge'
+          ? [
+              ...existing.categoryIds
+                .map((id) => existing.categoriesById[id])
+                .filter((c): c is Category => Boolean(c)),
+              ...newCategories,
+            ]
+          : newCategories;
+
+      const mergedProducts =
+        mode === 'merge'
+          ? [
+              ...existing.productIds
+                .map((id) => existing.productsById[id])
+                .filter((p): p is Product => Boolean(p)),
+              ...newProducts,
+            ]
+          : newProducts;
+
+      const normalizedImported = sanitizeTenantCatalog({
+        categories: mergedCategories,
+        products: mergedProducts,
+        orders: existingOrders,
+        updatedAt: Date.now(),
+      });
+
       return {
         ...prev,
-        [tenant.slug]: {
-          ...existing,
-          categories: newCategories,
-          products: newProducts,
-        },
+        [tenant.slug]: normalizedImported,
       };
     });
 
@@ -694,16 +1186,25 @@ export default function App() {
     }).catch(() => {});
   };
 
-  // When consumer creates order in the menu
+  // When consumer creates order in the menu (O(1) order insertion)
   const handleOrderCreated = (newOrder: Order) => {
     setSelectedTrackingOrder(newOrder);
+    markTenantCatalogDirty(tenant.slug);
     setCatalogsByTenant((prev) => {
-      const existing = prev[tenant.slug] || { categories: [], products: [], orders: [] };
+      const existing = prev[tenant.slug] || defaultNormalizedCatalog;
+      const alreadyExists = Boolean(existing.ordersById[newOrder.id]);
       return {
         ...prev,
         [tenant.slug]: {
           ...existing,
-          orders: [newOrder, ...existing.orders],
+          ordersById: {
+            ...existing.ordersById,
+            [newOrder.id]: newOrder,
+          },
+          orderIds: alreadyExists
+            ? existing.orderIds
+            : [newOrder.id, ...existing.orderIds],
+          updatedAt: Date.now(),
         },
       };
     });
@@ -736,7 +1237,7 @@ export default function App() {
     }
   };
 
-  // Update order status in KDS and trigger WhatsApp Evolution API Notification
+  // Update order status in KDS in O(1) time and trigger WhatsApp Evolution API Notification
   const handleUpdateOrderStatus = (orderId: string, nextStatus: OrderStatus) => {
     // Sync with backend API to record outbox event and fire Evolution API notification
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -749,34 +1250,42 @@ export default function App() {
       body: JSON.stringify({ status: nextStatus }),
     }).catch(() => {});
 
+    markTenantCatalogDirty(tenant.slug);
     setCatalogsByTenant((prev) => {
-      const existing = prev[tenant.slug] || { categories: [], products: [], orders: [] };
+      const existing = prev[tenant.slug] || defaultNormalizedCatalog;
+      const targetOrder = existing.ordersById[orderId];
+      if (!targetOrder) return prev;
+
+      const timestamp = new Date().toLocaleTimeString('pt-BR', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      const newLog = {
+        timestamp,
+        event: `order.status_${nextStatus}`,
+        detail: `Status atualizado para "${nextStatus}" no painel KDS. Notificação despachada via Evolution API (${tenant.evolutionInstanceId || 'aladay'}).`,
+        statusSent: nextStatus,
+      };
+      const updatedOrder: Order = {
+        ...targetOrder,
+        status: nextStatus,
+        updatedAt: timestamp,
+        whatsAppLogs: [newLog, ...(targetOrder.whatsAppLogs || [])],
+      };
+
+      if (selectedTrackingOrder?.id === orderId) {
+        setSelectedTrackingOrder(updatedOrder);
+      }
+
       return {
         ...prev,
         [tenant.slug]: {
           ...existing,
-          orders: existing.orders.map((o) => {
-            if (o.id === orderId) {
-              const timestamp = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-              const newLog = {
-                timestamp,
-                event: `order.status_${nextStatus}`,
-                detail: `Status atualizado para "${nextStatus}" no painel KDS. Notificação despachada via Evolution API (${tenant.evolutionInstanceId || 'aladay'}).`,
-                statusSent: nextStatus,
-              };
-              const updatedOrder = {
-                ...o,
-                status: nextStatus,
-                updatedAt: timestamp,
-                whatsAppLogs: [newLog, ...(o.whatsAppLogs || [])],
-              };
-              if (selectedTrackingOrder?.id === orderId) {
-                setSelectedTrackingOrder(updatedOrder);
-              }
-              return updatedOrder;
-            }
-            return o;
-          }),
+          ordersById: {
+            ...existing.ordersById,
+            [orderId]: updatedOrder,
+          },
+          updatedAt: Date.now(),
         },
       };
     });
