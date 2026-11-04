@@ -65,7 +65,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
 }) => {
   const isSuperAdmin = authSession ? authSession.user.role === 'SUPER_ADMIN' : true;
   const [subTab, setSubTab] = useState<'qrcode_pairing' | 'status_notifications' | 'simulator' | 'n8n_workflow' | 'templates' | 'easypanel' | 'logs'>(
-    initialSubTab || 'qrcode_pairing'
+    initialSubTab || 'n8n_workflow'
   );
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
 
@@ -328,7 +328,88 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const [botPausedForCustomer, setBotPausedForCustomer] = useState(false);
   const [activePipelineStep, setActivePipelineStep] = useState<number | null>(null);
   const [copiedWorkflow, setCopiedWorkflow] = useState(false);
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [copiedCurl, setCopiedCurl] = useState(false);
+
+  // n8n AI Agent Configurator State
+  const [n8nAgentMode, setN8nAgentMode] = useState<'sdr_aladay' | 'restaurante_ia' | 'deterministico'>('sdr_aladay');
+  const [n8nLlmProvider, setN8nLlmProvider] = useState<'openai' | 'gemini'>('openai');
+  const [n8nLlmModel, setN8nLlmModel] = useState<string>('gpt-4o-mini');
+  const [n8nMemoryWindow, setN8nMemoryWindow] = useState<number>(12);
+  const [n8nWebhookPath, setN8nWebhookPath] = useState<string>('saas');
+  const [isBindingWebhook, setIsBindingWebhook] = useState(false);
+  const [webhookBindFeedback, setWebhookBindFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Live n8n Agent Tester State
+  const [agentTestCustomerName, setAgentTestCustomerName] = useState('Carlos Mendes (Dono de Hamburgueria)');
+  const [agentTestPhone, setAgentTestPhone] = useState('5591988887777');
+  const [agentTestMessage, setAgentTestMessage] = useState('Olá! Gostaria de saber quanto custa o sistema da Aladay e se vocês cobram comissão por pedido.');
+  const [dispatchToRemoteN8n, setDispatchToRemoteN8n] = useState(false);
+  const [isTestingN8nAgent, setIsTestingN8nAgent] = useState(false);
+  const [agentTestResult, setAgentTestResult] = useState<any | null>(null);
+
+  const appOriginUrl =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : 'https://aladay.com.br';
+
+  const defaultSdrSystemPrompt = `Você é o Consultor Comercial Especialista (SDR / Closer) da Aladay Cardápios Digitais (https://aladay.com.br).
+WhatsApp Oficial de Suporte e Vendas: +55 (91) 3197-6334 (https://wa.me/559131976334).
+
+SEU OBJETIVO PRINCIPAL:
+1. Responder com clareza, rapidez, empatia e autoridade a qualquer dúvida de leads (donos de restaurantes, hamburguerias, pizzarias, lanchonetes, açaíterias, sushi bars, padarias e dark kitchens).
+2. Demonstrar como o restaurante economiza milhares de reais por mês trocando comissões abusivas (de 12% a 27% dos aplicativos tradicionais) por uma assinatura fixa acessível com 0% de comissão.
+3. Conduzir o lead para iniciar imediatamente o TESTE GRÁTIS DE 15 DIAS (no Plano Mensal) ou garantir o desconto máximo no PLANO ANUAL (12x de R$ 99,00 no cartão de crédito).
+
+PLANOS E PREÇOS OFICIAIS (0% DE COMISSÃO SEMPRE):
+1) PLANO ANUAL ALADAY PRO (MAIS VANTAJOSO — ECONOMIA DE R$ 370,80/ANO):
+   - Valor: 12x de R$ 99,00 sem juros no Cartão de Crédito (total R$ 1.188,00/ano).
+   - Forma de pagamento: Exclusivo via Cartão de Crédito em até 12x (via Asaas).
+   - Ativação imediata (o teste grátis de 15 dias aplica-se ao Plano Mensal).
+
+2) PLANO MENSAL ALADAY PRO (COM 15 DIAS DE TESTE GRÁTIS):
+   - Valor: R$ 129,90/mês.
+   - Teste Grátis: 15 dias 100% gratuitos para testar todas as funcionalidades na prática (R$ 0,00 hoje).
+   - Formas de pagamento após os 15 dias: Pix, Boleto Bancário ou Cartão de Crédito. Sem fidelidade.
+
+DIFERENCIAIS EXCLUSIVOS INCLUSOS EM TODOS OS PLANOS:
+- Pedidos, produtos e fotos ilimitados com 0% de comissão sobre vendas.
+- Três modalidades no mesmo cardápio: Delivery (Entrega), Retirada no Balcão e QR Code de Mesa.
+- Pagamento Pix Direto 100% na conta bancária do restaurante na mesma hora (QR Code + Pix Copia e Cola).
+- Automação de WhatsApp via Evolution API inclusa (dispara automaticamente: 1. Pedido Recebido, 2. Em Preparo na Cozinha, 3. Saiu para Entrega / Pronto).
+- Painel de Cozinha KDS em tempo real com alerta sonoro e impressão térmica 80mm.
+- Importador inteligente de cardápio via planilha Excel/CSV em menos de 10 segundos.
+
+REGRAS DE ATENDIMENTO NO WHATSAPP:
+- Use formatação limpa para WhatsApp (*negrito*, listas curtas e parágrafos objetivos).
+- Sempre chame o lead pelo nome se disponível.
+- Se precisar consultar detalhes completos da plataforma ou FAQ, acione a ferramenta HTTP "consultar_base_conhecimento_aladay".
+- Se o cliente pedir para falar com um atendente humano ou digitar "2", encaminhe imediatamente para o WhatsApp oficial: https://wa.me/559131976334 (+55 91 3197-6334).
+- Sempre finalize com uma pergunta engajadora convidando para criar a conta em: ${appOriginUrl}`;
+
+  const defaultRestaurantSystemPrompt = `Você é o Assistente Virtual de Atendimento do restaurante *${tenant.name}*.
+Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisão:
+1. Sempre envie o link direto do Cardápio Digital oficial para o cliente fazer o pedido sem fila: ${appOriginUrl}/?loja=${tenant.slug}
+2. Use a ferramenta HTTP "consultar_cardapio_e_loja" para verificar em tempo real se o restaurante está aberto, os produtos disponíveis, preços atualizados e taxa de entrega.
+3. Se o cliente perguntar sobre o andamento do pedido ("Onde está meu pedido?"), use a ferramenta HTTP "consultar_status_pedido" passando o telefone do cliente.
+4. Nunca invente produtos ou preços fora do cardápio retornado pela ferramenta.
+5. Se o cliente digitar "2" ou pedir um atendente humano, informe que um atendente da equipe do ${tenant.name} já vai atendê-lo.`;
+
+  const [agentSystemPrompt, setAgentSystemPrompt] = useState<string>(defaultSdrSystemPrompt);
+
+  // Switch default system prompt when user switches agent mode
+  const handleSelectAgentMode = (mode: 'sdr_aladay' | 'restaurante_ia' | 'deterministico') => {
+    setN8nAgentMode(mode);
+    if (mode === 'sdr_aladay') {
+      setAgentSystemPrompt(defaultSdrSystemPrompt);
+      setAgentTestCustomerName('Carlos Mendes (Dono de Hamburgueria)');
+      setAgentTestMessage('Olá! Gostaria de saber quanto custa o sistema da Aladay e se vocês cobram comissão por pedido.');
+    } else if (mode === 'restaurante_ia') {
+      setAgentSystemPrompt(defaultRestaurantSystemPrompt);
+      setAgentTestCustomerName('Adriano Saraiva');
+      setAgentTestMessage('Boa noite! Vocês estão abertos? Quero ver o cardápio.');
+    }
+  };
 
   // Webhook Logs & Live Inspector State
   const [webhookLogs, setWebhookLogs] = useState<WebhookLogEvent[]>([]);
@@ -338,137 +419,403 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const [isSendingTestWebhook, setIsSendingTestWebhook] = useState(false);
   const [testWebhookResult, setTestWebhookResult] = useState<any>(null);
 
-  // Workflow JSON generated dynamically tailored to the Evolution API v2 Easypanel schema
-  const n8nWorkflowJSON = JSON.stringify(
-    {
-      name: `Evolution API v2 - Auto Resposta Cardapio [${tenant.evolutionInstanceId || 'aladay'}]`,
-      nodes: [
+  // Build the dynamic n8n Workflow JSON according to the selected mode (AI Agent SDR, AI Agent Restaurant, or Deterministic)
+  const n8nWorkflowJSON = React.useMemo(() => {
+    const cleanEvoUrl = (evolutionUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host').replace(/\/$/, '');
+    const cleanInstance = tenant.evolutionInstanceId || 'aladay';
+    const cleanPath = (n8nWebhookPath || 'saas').replace(/^\//, '');
+
+    if (n8nAgentMode === 'deterministico') {
+      return JSON.stringify(
         {
-          parameters: {
-            httpMethod: 'POST',
-            path: 'saas',
-            responseMode: 'onReceived',
-            responseData: 'OK',
-            options: {},
-          },
-          id: 'node-webhook-evolution',
-          name: 'Webhook Evolution API',
-          type: 'n8n-nodes-base.webhook',
-          typeVersion: 2,
-          position: [140, 300],
-          webhookId: 'evolution-saas-webhook',
-        },
-        {
-          parameters: {
-            jsCode: `// =========================================================================\n// Processador de Webhook Evolution API v2 (Easypanel Hostinger)\n// Baseado na estrutura real recebida em /webhook/saas\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // 1. Descartar grupos (@g.us) e canais de transmissao (@broadcast)\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  // 2. Tratar fromMe (Anti-Loop com suporte a Teste no n8n):\n  // Em modo de teste (webhookUrl com /webhook-test/ ou executionMode: test),\n  // permitimos fromMe=true para testar enviando do proprio celular conectado.\n  // Em producao real, ignora mensagens enviadas pelo bot.\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/') ||\n                      String(body.destination || '').includes('/webhook-test/');\n\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  // 3. Extrair telefone limpo (ex: 559181214188)\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n\n  // 4. Tratar nome do cliente (ex: 'Adriano Saraiva | Ozonteck' -> 'Adriano Saraiva')\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n\n  // 5. Extrair mensagem de texto (suporta conversa direta ou extendedTextMessage)\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    ''\n  ).trim();\n\n  // 6. Extrair credenciais dinamicas enviadas no proprio webhook pela Evolution API\n  const serverUrl = (body.server_url || '${evolutionUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  const instance = body.instance || '${tenant.evolutionInstanceId || 'aladay'}';\n\n  // 7. Analise de intencao do cliente\n  const isHumanHandoff = /^(2|atendente|humano|ajuda|falar com atendente|falar com alguem|suporte)$/i.test(messageText);\n\n  // 8. Mensagens dinamicas\n  const menuReply = \`Olá, *\${customerName}*! Seja muito bem-vindo ao *${tenant.name}*! 🍔\\n\\nNosso cardápio digital completo está disponível com fotos e preços em tempo real:\\n\\n👉 https://cardapio.seudominio.com/${tenant.slug}\\n\\nFaça seu pedido diretamente pelo link acima!\\nSe preferir falar com um atendente da nossa equipe, responda com *2*.\`;\n\n  const humanReply = \`Perfeito, *\${customerName}*! Pausamos o bot automático. Um dos nossos atendentes humanos vai te responder em instantes! 👨‍🍳\`;\n\n  const replyText = isHumanHandoff ? humanReply : menuReply;\n\n  results.push({\n    json: {\n      customerPhone,\n      customerName,\n      messageText,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      isHumanHandoff,\n      replyText,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n      payloadToSend: {\n        number: customerPhone,\n        text: replyText,\n        options: {\n          delay: 1200,\n          presence: 'composing',\n          linkPreview: true,\n        },\n      },\n    },\n  });\n}\n\nreturn results;`,
-          },
-          id: 'node-code-process',
-          name: 'Tratar Payload Evolution API',
-          type: 'n8n-nodes-base.code',
-          typeVersion: 2,
-          position: [380, 300],
-        },
-        {
-          parameters: {
-            conditions: {
-              boolean: [
-                {
-                  value1: '={{ $json.isHumanHandoff }}',
-                  value2: true,
-                },
-              ],
+          name: `Evolution API v2 - Auto Resposta Rapida [${cleanInstance}]`,
+          nodes: [
+            {
+              parameters: {
+                httpMethod: 'POST',
+                path: cleanPath,
+                responseMode: 'onReceived',
+                responseData: 'OK',
+                options: {},
+              },
+              id: 'node-webhook-evolution',
+              name: 'Webhook Evolution API',
+              type: 'n8n-nodes-base.webhook',
+              typeVersion: 2,
+              position: [140, 300],
+              webhookId: 'evolution-saas-webhook',
             },
-          },
-          id: 'node-if-human',
-          name: 'É Pedido de Atendente Humano?',
-          type: 'n8n-nodes-base.if',
-          typeVersion: 2,
-          position: [620, 300],
-        },
-        {
-          parameters: {
-            method: 'POST',
-            url: '={{ $json.endpointUrl }}',
-            sendHeaders: true,
-            headerParameters: {
-              parameters: [
-                {
-                  name: 'apikey',
-                  value: '={{ $json.apiKey }}',
-                },
-                {
-                  name: 'Content-Type',
-                  value: 'application/json',
-                },
-              ],
+            {
+              parameters: {
+                jsCode: `// =========================================================================\n// Processador de Webhook Evolution API v2 (Easypanel Hostinger)\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/') ||\n                      String(body.destination || '').includes('/webhook-test/');\n\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    ''\n  ).trim();\n\n  if (!messageText) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  const instance = body.instance || '${cleanInstance}';\n  const isHumanHandoff = /^(2|atendente|humano|ajuda|falar com atendente|falar com alguem|suporte)$/i.test(messageText);\n\n  const menuReply = \`Olá, *\${customerName}*! Seja muito bem-vindo ao *${tenant.name}*! 🍔\\n\\nNosso cardápio digital completo está disponível com fotos e preços em tempo real:\\n\\n👉 ${appOriginUrl}/?loja=${tenant.slug}\\n\\nFaça seu pedido diretamente pelo link acima!\\nSe preferir falar com um atendente da nossa equipe, responda com *2*.\`;\n  const humanReply = \`Perfeito, *\${customerName}*! Pausamos o bot automático. Um dos nossos atendentes humanos vai te responder em instantes! 👨‍🍳\`;\n  const replyText = isHumanHandoff ? humanReply : menuReply;\n\n  results.push({\n    json: {\n      customerPhone,\n      customerName,\n      messageText,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      isHumanHandoff,\n      replyText,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n      payloadToSend: {\n        number: customerPhone,\n        text: replyText,\n        options: {\n          delay: 1200,\n          presence: 'composing',\n          linkPreview: true,\n        },\n      },\n    },\n  });\n}\n\nreturn results;`,
+              },
+              id: 'node-code-process',
+              name: 'Tratar Payload Evolution API',
+              type: 'n8n-nodes-base.code',
+              typeVersion: 2,
+              position: [380, 300],
             },
-            sendBody: true,
-            specifyBody: 'json',
-            jsonBody: '={{ JSON.stringify($json.payloadToSend) }}',
-            options: {},
-          },
-          id: 'node-send-cardapio',
-          name: 'Enviar Cardápio Digital (Evolution API)',
-          type: 'n8n-nodes-base.httpRequest',
-          typeVersion: 4.2,
-          position: [880, 220],
-        },
-        {
-          parameters: {
-            method: 'POST',
-            url: '={{ $json.endpointUrl }}',
-            sendHeaders: true,
-            headerParameters: {
-              parameters: [
-                {
-                  name: 'apikey',
-                  value: '={{ $json.apiKey }}',
+            {
+              parameters: {
+                method: 'POST',
+                url: '={{ $json.endpointUrl }}',
+                sendHeaders: true,
+                headerParameters: {
+                  parameters: [
+                    { name: 'apikey', value: '={{ $json.apiKey }}' },
+                    { name: 'Content-Type', value: 'application/json' },
+                  ],
                 },
-                {
-                  name: 'Content-Type',
-                  value: 'application/json',
-                },
-              ],
+                sendBody: true,
+                specifyBody: 'json',
+                jsonBody: '={{ JSON.stringify($json.payloadToSend) }}',
+                options: {},
+              },
+              id: 'node-send-whatsapp',
+              name: 'Enviar Resposta (Evolution API)',
+              type: 'n8n-nodes-base.httpRequest',
+              typeVersion: 4.2,
+              position: [660, 300],
             },
-            sendBody: true,
-            specifyBody: 'json',
-            jsonBody: '={{ JSON.stringify($json.payloadToSend) }}',
-            options: {},
-          },
-          id: 'node-send-humano',
-          name: 'Avisar Atendente Humano (Evolution API)',
-          type: 'n8n-nodes-base.httpRequest',
-          typeVersion: 4.2,
-          position: [880, 380],
-        },
-      ],
-      connections: {
-        'Webhook Evolution API': {
-          main: [[{ node: 'Tratar Payload Evolution API', type: 'main', index: 0 }]],
-        },
-        'Tratar Payload Evolution API': {
-          main: [[{ node: 'É Pedido de Atendente Humano?', type: 'main', index: 0 }]],
-        },
-        'É Pedido de Atendente Humano?': {
-          main: [
-            [{ node: 'Avisar Atendente Humano (Evolution API)', type: 'main', index: 0 }],
-            [{ node: 'Enviar Cardápio Digital (Evolution API)', type: 'main', index: 0 }],
           ],
+          connections: {
+            'Webhook Evolution API': {
+              main: [[{ node: 'Tratar Payload Evolution API', type: 'main', index: 0 }]],
+            },
+            'Tratar Payload Evolution API': {
+              main: [[{ node: 'Enviar Resposta (Evolution API)', type: 'main', index: 0 }]],
+            },
+          },
+          active: true,
+          settings: { executionOrder: 'v1' },
+        },
+        null,
+        2
+      );
+    }
+
+    // AI Agent Workflow (LangChain n8n Agent + Chat Model + Window Buffer Memory + HTTP Tools + Evolution API v2)
+    const llmNode =
+      n8nLlmProvider === 'gemini'
+        ? {
+            parameters: {
+              modelName: 'models/gemini-2.5-flash',
+              options: { temperature: 0.3 },
+            },
+            id: 'node-llm-model',
+            name: 'Google Gemini Chat Model',
+            type: '@n8n/n8n-nodes-langchain.lmChatGoogleGemini',
+            typeVersion: 1,
+            position: [540, 540],
+          }
+        : {
+            parameters: {
+              model: {
+                __rl: true,
+                value: n8nLlmModel || 'gpt-4o-mini',
+                mode: 'list',
+              },
+              options: { temperature: 0.3 },
+            },
+            id: 'node-llm-model',
+            name: 'OpenAI Chat Model',
+            type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
+            typeVersion: 1.2,
+            position: [540, 540],
+          };
+
+    const toolNode =
+      n8nAgentMode === 'sdr_aladay'
+        ? {
+            parameters: {
+              name: 'consultar_base_conhecimento_aladay',
+              description:
+                'Consulta a Base de Conhecimento Oficial da Aladay Cardápios Digitais, incluindo planos (Anual R$ 99/mês no cartão e Mensal R$ 129,90/mês com 15 dias grátis), funcionalidades, comparativo de comissão 0% vs marketplaces e FAQ.',
+              method: 'GET',
+              url: `${appOriginUrl}/api/v1/n8n/knowledge-base`,
+            },
+            id: 'node-http-tool-kb',
+            name: 'Tool: Base de Conhecimento Aladay',
+            type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
+            typeVersion: 1.1,
+            position: [880, 540],
+          }
+        : {
+            parameters: {
+              name: 'consultar_cardapio_e_loja',
+              description:
+                'Consulta em tempo real se o restaurante está aberto, produtos disponíveis no cardápio com preços, taxa de entrega e link direto do cardápio digital.',
+              method: 'GET',
+              url: `${appOriginUrl}/api/v1/n8n/agent-context/${tenant.slug}`,
+            },
+            id: 'node-http-tool-catalog',
+            name: 'Tool: Consultar Cardápio ao Vivo',
+            type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
+            typeVersion: 1.1,
+            position: [880, 540],
+          };
+
+    const orderToolNode =
+      n8nAgentMode === 'restaurante_ia'
+        ? {
+            parameters: {
+              name: 'consultar_status_pedido',
+              description: 'Consulta o status em tempo real dos pedidos recentes do cliente na cozinha pelo número de WhatsApp.',
+              method: 'GET',
+              url: `=${appOriginUrl}/api/v1/n8n/order-status?phone={{ $fromAI("phone", "Telefone do cliente apenas numeros") }}&tenantSlug=${tenant.slug}`,
+            },
+            id: 'node-http-tool-orders',
+            name: 'Tool: Consultar Status do Pedido',
+            type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
+            typeVersion: 1.1,
+            position: [1060, 540],
+          }
+        : null;
+
+    const nodesList: any[] = [
+      {
+        parameters: {
+          httpMethod: 'POST',
+          path: cleanPath,
+          responseMode: 'onReceived',
+          responseData: 'OK',
+          options: {},
+        },
+        id: 'node-webhook-evolution',
+        name: 'Webhook Evolution API',
+        type: 'n8n-nodes-base.webhook',
+        typeVersion: 2,
+        position: [120, 300],
+        webhookId: 'evolution-saas-ai-agent-webhook',
+      },
+      {
+        parameters: {
+          jsCode: `// =========================================================================\n// Sanitizador & Filtro Anti-Loop Evolution API v2 -> Agente de IA n8n\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // 1. Ignorar grupos e canais\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  // 2. Ignorar mensagens enviadas pelo proprio bot (fromMe), exceto em Teste no n8n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/');\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    ''\n  ).trim();\n\n  if (!messageText) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  const instance = body.instance || '${cleanInstance}';\n\n  results.push({\n    json: {\n      customerPhone,\n      customerName,\n      messageText,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n      chatInput: \`Cliente (\${customerName} - WhatsApp \${customerPhone}): \${messageText}\`,\n    },\n  });\n}\n\nreturn results;`,
+        },
+        id: 'node-code-sanitize',
+        name: 'Tratar Payload & Anti-Loop',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 2,
+        position: [380, 300],
+      },
+      {
+        parameters: {
+          promptType: 'define',
+          text: '={{ $json.chatInput }}',
+          options: {
+            systemMessage: agentSystemPrompt,
+          },
+        },
+        id: 'node-ai-agent',
+        name: n8nAgentMode === 'sdr_aladay' ? 'Agente IA Comercial Aladay (SDR)' : `Agente IA Atendimento (${tenant.name})`,
+        type: '@n8n/n8n-nodes-langchain.agent',
+        typeVersion: 1.7,
+        position: [680, 300],
+      },
+      llmNode,
+      {
+        parameters: {
+          sessionIdType: 'customKey',
+          sessionKey: '={{ $("Tratar Payload & Anti-Loop").item.json.customerPhone }}',
+          contextWindowLength: n8nMemoryWindow,
+        },
+        id: 'node-memory-window',
+        name: 'Memória por WhatsApp (Window Buffer)',
+        type: '@n8n/n8n-nodes-langchain.memoryBufferWindow',
+        typeVersion: 1.3,
+        position: [710, 540],
+      },
+      toolNode,
+      {
+        parameters: {
+          method: 'POST',
+          url: '={{ $("Tratar Payload & Anti-Loop").item.json.endpointUrl }}',
+          sendHeaders: true,
+          headerParameters: {
+            parameters: [
+              {
+                name: 'apikey',
+                value: '={{ $("Tratar Payload & Anti-Loop").item.json.apiKey }}',
+              },
+              {
+                name: 'Content-Type',
+                value: 'application/json',
+              },
+            ],
+          },
+          sendBody: true,
+          specifyBody: 'json',
+          jsonBody:
+            '={{ JSON.stringify({ number: $("Tratar Payload & Anti-Loop").item.json.customerPhone, text: $json.output, options: { delay: 1200, presence: "composing", linkPreview: true } }) }}',
+          options: {},
+        },
+        id: 'node-send-evolution-reply',
+        name: 'Responder Cliente no WhatsApp (Evolution API)',
+        type: 'n8n-nodes-base.httpRequest',
+        typeVersion: 4.2,
+        position: [1060, 300],
+      },
+    ];
+
+    if (orderToolNode) {
+      nodesList.push(orderToolNode);
+    }
+
+    const agentNodeName = n8nAgentMode === 'sdr_aladay' ? 'Agente IA Comercial Aladay (SDR)' : `Agente IA Atendimento (${tenant.name})`;
+
+    const connectionsObj: Record<string, any> = {
+      'Webhook Evolution API': {
+        main: [[{ node: 'Tratar Payload & Anti-Loop', type: 'main', index: 0 }]],
+      },
+      'Tratar Payload & Anti-Loop': {
+        main: [[{ node: agentNodeName, type: 'main', index: 0 }]],
+      },
+      [llmNode.name]: {
+        ai_languageModel: [[{ node: agentNodeName, type: 'ai_languageModel', index: 0 }]],
+      },
+      'Memória por WhatsApp (Window Buffer)': {
+        ai_memory: [[{ node: agentNodeName, type: 'ai_memory', index: 0 }]],
+      },
+      [toolNode.name]: {
+        ai_tool: [[{ node: agentNodeName, type: 'ai_tool', index: 0 }]],
+      },
+      [agentNodeName]: {
+        main: [[{ node: 'Responder Cliente no WhatsApp (Evolution API)', type: 'main', index: 0 }]],
+      },
+    };
+
+    if (orderToolNode) {
+      connectionsObj[orderToolNode.name] = {
+        ai_tool: [[{ node: agentNodeName, type: 'ai_tool', index: 0 }]],
+      };
+    }
+
+    return JSON.stringify(
+      {
+        name:
+          n8nAgentMode === 'sdr_aladay'
+            ? `Aladay SaaS - Agente IA Comercial SDR + Evolution API [${cleanInstance}]`
+            : `${tenant.name} - Agente IA Cardapio & Pedidos + Evolution API [${cleanInstance}]`,
+        nodes: nodesList,
+        connections: connectionsObj,
+        active: true,
+        settings: {
+          executionOrder: 'v1',
         },
       },
-      active: true,
-      settings: {
-        executionOrder: 'v1',
-      },
-    },
-    null,
-    2
-  );
+      null,
+      2
+    );
+  }, [
+    n8nAgentMode,
+    n8nLlmProvider,
+    n8nLlmModel,
+    n8nMemoryWindow,
+    n8nWebhookPath,
+    evolutionUrl,
+    evolutionApiKey,
+    tenant.evolutionInstanceId,
+    tenant.name,
+    tenant.slug,
+    agentSystemPrompt,
+    appOriginUrl,
+  ]);
 
   const handleCopyWorkflow = () => {
     navigator.clipboard.writeText(n8nWorkflowJSON);
     setCopiedWorkflow(true);
     setTimeout(() => setCopiedWorkflow(false), 3000);
+  };
+
+  const handleDownloadWorkflowJson = () => {
+    const blob = new Blob([n8nWorkflowJSON], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download =
+      n8nAgentMode === 'sdr_aladay'
+        ? `n8n-agente-ia-comercial-aladay-${tenant.evolutionInstanceId || 'aladay'}.json`
+        : `n8n-agente-ia-${tenant.slug}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopySystemPrompt = () => {
+    navigator.clipboard.writeText(agentSystemPrompt);
+    setCopiedPrompt(true);
+    setTimeout(() => setCopiedPrompt(false), 3000);
+  };
+
+  const handleBindEvolutionWebhookToN8n = async () => {
+    setIsBindingWebhook(true);
+    setWebhookBindFeedback(null);
+    try {
+      const res = await fetch('/api/v1/n8n/configure-evolution-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          evolutionUrl,
+          evolutionApiKey,
+          instanceName: tenant.evolutionInstanceId || 'aladay',
+          n8nWebhookUrl,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setWebhookBindFeedback({
+          type: 'success',
+          message: data.message || 'Webhook MESSAGES_UPSERT vinculado com sucesso na Evolution API apontando para o n8n!',
+        });
+        handleRefreshLogs();
+      } else {
+        setWebhookBindFeedback({
+          type: 'error',
+          message: data.error || 'Falha ao vincular webhook na Evolution API.',
+        });
+      }
+    } catch (err: any) {
+      setWebhookBindFeedback({
+        type: 'error',
+        message: err?.message || 'Erro de conexão ao tentar configurar o webhook.',
+      });
+    } finally {
+      setIsBindingWebhook(false);
+    }
+  };
+
+  const handleRunAgentLiveTest = async (overrideMessage?: string) => {
+    const msgToTest = overrideMessage ?? agentTestMessage;
+    if (!msgToTest.trim() || isTestingN8nAgent) return;
+    if (overrideMessage) setAgentTestMessage(overrideMessage);
+    setIsTestingN8nAgent(true);
+    setAgentTestResult(null);
+
+    try {
+      const res = await fetch('/api/v1/n8n/test-agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentProfile: n8nAgentMode === 'restaurante_ia' ? 'restaurante_ia' : 'sdr_aladay',
+          tenantSlug: tenant.slug,
+          customerName: agentTestCustomerName,
+          customerPhone: agentTestPhone,
+          messageText: msgToTest,
+          n8nWebhookUrl,
+          dispatchToRemoteN8n,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAgentTestResult(data);
+        handleRefreshLogs();
+      }
+    } catch {
+      // Ignore error
+    } finally {
+      setIsTestingN8nAgent(false);
+    }
   };
 
   const handleSaveSettings = (e: React.FormEvent) => {
@@ -663,6 +1010,28 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
 
         {/* Sub-tabs strip */}
         <div className="flex items-center gap-2 pt-3 overflow-x-auto text-xs font-medium">
+          <button
+            onClick={() => setSubTab('n8n_workflow')}
+            className={`px-3.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer border ${
+              subTab === 'n8n_workflow'
+                ? 'bg-blue-600 text-white border-blue-600 font-bold shadow-xs'
+                : 'text-blue-700 bg-blue-50 hover:bg-blue-100 border-blue-200 font-semibold'
+            }`}
+            title="Configurar Agente de IA e exportar Workflow JSON para o n8n"
+          >
+            <Bot className="w-4 h-4" />
+            <span>Configurar Agente IA no n8n</span>
+            <span
+              className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                subTab === 'n8n_workflow'
+                  ? 'bg-white/20 text-white'
+                  : 'bg-blue-200 text-blue-900'
+              }`}
+            >
+              IA + Evolution
+            </span>
+          </button>
+
           {/* Lojista / Restaurante Functions */}
           <button
             onClick={() => setSubTab('qrcode_pairing')}
@@ -726,24 +1095,8 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
             <>
               <div className="h-5 w-px bg-neutral-300 mx-1 shrink-0" />
               <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 shrink-0">
-                Somente ADM:
+                Infra VPS:
               </span>
-
-              <button
-                onClick={() => setSubTab('n8n_workflow')}
-                className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer border ${
-                  subTab === 'n8n_workflow'
-                    ? 'bg-purple-900 text-white border-purple-800 font-semibold shadow-xs'
-                    : 'text-purple-700 bg-purple-50 hover:bg-purple-100 border-purple-200'
-                }`}
-                title="Workflow mestre do n8n em formato JSON (Somente para o Administrador da Plataforma)"
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span>Workflow do n8n</span>
-                <span className="text-[9px] px-1 py-0.2 bg-purple-200 text-purple-900 rounded font-bold uppercase">
-                  ADM
-                </span>
-              </button>
 
               <button
                 onClick={() => setSubTab('easypanel')}
@@ -752,13 +1105,10 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                     ? 'bg-indigo-900 text-white border-indigo-800 font-semibold shadow-xs'
                     : 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border-indigo-200'
                 }`}
-                title="Configurações e comando cURL no Easypanel (Somente para o Administrador da Plataforma)"
+                title="Configurações e comando cURL no Easypanel"
               >
                 <Terminal className="w-3.5 h-3.5" />
                 <span>Passo a Passo na VPS</span>
-                <span className="text-[9px] px-1 py-0.2 bg-indigo-200 text-indigo-900 rounded font-bold uppercase">
-                  ADM
-                </span>
               </button>
 
               <button
@@ -768,13 +1118,10 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                     ? 'bg-emerald-900 text-white border-emerald-800 font-semibold shadow-xs'
                     : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border-emerald-200'
                 }`}
-                title="Inspetor técnico de Webhooks e tráfego HTTP em tempo real (Somente para o Administrador da Plataforma)"
+                title="Inspetor técnico de Webhooks e tráfego HTTP em tempo real"
               >
                 <Radio className="w-3.5 h-3.5" />
                 <span>Logs &amp; Inspetor de Webhooks</span>
-                <span className="text-[9px] px-1 py-0.2 bg-emerald-200 text-emerald-900 rounded font-bold uppercase">
-                  ADM
-                </span>
               </button>
             </>
           )}
@@ -1376,156 +1723,646 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
       )}
 
       {/* Access Denied Card for Non-Admin trying to access infrastructure tools */}
-      {!isSuperAdmin && (subTab === 'n8n_workflow' || subTab === 'easypanel' || subTab === 'logs') && (
+      {!isSuperAdmin && (subTab === 'easypanel' || subTab === 'logs') && (
         <div className="bg-white border border-amber-200 rounded-xl p-8 text-center space-y-3 shadow-2xs">
           <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto font-bold text-lg">
             🛡️
           </div>
           <h4 className="text-base font-bold text-neutral-900">Ferramenta de Infraestrutura (Exclusivo ADM)</h4>
           <p className="text-xs text-neutral-600 max-w-md mx-auto">
-            Esta área (Workflow do n8n, Passo a Passo na VPS e Logs de Webhooks) é de controle exclusivo da equipe técnica e do Administrador Geral da plataforma Aladay.
+            Esta área (Passo a Passo na VPS e Logs de Webhooks) é de controle exclusivo da equipe técnica e do Administrador Geral da plataforma Aladay.
           </p>
           <div className="pt-2">
             <button
               type="button"
-              onClick={() => setSubTab('qrcode_pairing')}
+              onClick={() => setSubTab('n8n_workflow')}
               className="px-4 py-2 bg-neutral-900 text-white rounded-lg text-xs font-semibold hover:bg-neutral-800 transition-colors cursor-pointer"
             >
-              Voltar para o Pareamento da Loja
+              Voltar para Configuração do Agente n8n
             </button>
           </div>
         </div>
       )}
 
       {/* ============================================================== */}
-      {/* SUB-TAB 2: N8N WORKFLOW JSON EXPORT (Somente ADM)              */}
+      {/* SUB-TAB 2: N8N AI AGENT CONFIGURATOR & WORKFLOW STUDIO         */}
       {/* ============================================================== */}
-      {isSuperAdmin && subTab === 'n8n_workflow' && (
-        <div className="space-y-5">
-          <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-2xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-neutral-100">
-              <div>
-                <h4 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
-                  <FileCode className="w-4 h-4 text-indigo-600" />
-                  <span>Workflow Pronto para Importação no n8n</span>
-                </h4>
-                <p className="text-xs text-neutral-600 mt-0.5">
-                  Copie o código JSON abaixo e cole diretamente dentro do seu n8n rodando no Easypanel (menu &quot;Import from JSON&quot;).
-                </p>
+      {subTab === 'n8n_workflow' && (
+        <div className="space-y-6">
+          {/* STEP 1: SELECT AGENT ARCHITECTURE PROFILE */}
+          <div className="bg-white border border-neutral-200 rounded-2xl p-6 shadow-2xs space-y-5">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-neutral-100">
+              <div className="flex items-start gap-3">
+                <div className="w-11 h-11 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <Bot className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h4 className="text-base font-bold text-neutral-900">
+                      Estúdio de Configuração do Agente de IA no n8n + Evolution API v2
+                    </h4>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                      Pronto para Importar no EasyPanel
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-600 mt-1">
+                    Configure seu Agente de IA com memória de conversa por WhatsApp, Base de Conhecimento Oficial e ferramentas HTTP em tempo real, e importe no seu n8n em 1 clique.
+                  </p>
+                </div>
               </div>
 
-              <button
-                type="button"
-                onClick={handleCopyWorkflow}
-                className="flex items-center gap-1.5 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg transition-colors shadow-xs shrink-0"
-              >
-                {copiedWorkflow ? (
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <a
+                  href="/base-conhecimento-agente-ia-aladay.txt"
+                  download="base-conhecimento-agente-ia-aladay.txt"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl transition-colors"
+                >
+                  <FileCode className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Baixar Base de Conhecimento (.TXT)</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={handleCopyWorkflow}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-colors shadow-xs cursor-pointer"
+                >
+                  {copiedWorkflow ? (
+                    <>
+                      <Check className="w-4 h-4 text-emerald-300" />
+                      <span>Workflow JSON Copiado!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-4 h-4" />
+                      <span>Copiar Workflow p/ n8n (Ctrl+V)</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* 3 Profile Cards */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-neutral-900">
+                1. Escolha o Perfil do Agente no n8n:
+              </label>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleSelectAgentMode('sdr_aladay')}
+                  className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+                    n8nAgentMode === 'sdr_aladay'
+                      ? 'border-blue-600 bg-blue-50/70 ring-2 ring-blue-600/20'
+                      : 'border-neutral-200 bg-white hover:border-neutral-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-blue-600" />
+                      <span>Agente IA Comercial SDR Aladay</span>
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-600 text-white">
+                      Recomendado
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-600 leading-relaxed">
+                    Treinado com toda a Base de Conhecimento da plataforma para responder dúvidas de <strong>Leads (donos de restaurantes)</strong> no WhatsApp (+55 91 3197-6334), quebrar objeções e converter nos planos de <strong>R$ 99/mês (Anual)</strong> ou <strong>15 Dias Grátis (Mensal)</strong>.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectAgentMode('restaurante_ia')}
+                  className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+                    n8nAgentMode === 'restaurante_ia'
+                      ? 'border-blue-600 bg-blue-50/70 ring-2 ring-blue-600/20'
+                      : 'border-neutral-200 bg-white hover:border-neutral-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
+                      <Bot className="w-4 h-4 text-emerald-600" />
+                      <span>Agente IA de Cardápio &amp; Pedidos</span>
+                    </span>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                      Loja: {tenant.slug}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-600 leading-relaxed">
+                    Atende os consumidores finais de <strong>{tenant.name}</strong>, consulta o cardápio e preços ao vivo via HTTP Tool, envia o link do pedido e responde sobre o status na cozinha.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectAgentMode('deterministico')}
+                  className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+                    n8nAgentMode === 'deterministico'
+                      ? 'border-blue-600 bg-blue-50/70 ring-2 ring-blue-600/20'
+                      : 'border-neutral-200 bg-white hover:border-neutral-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
+                      <Zap className="w-4 h-4 text-amber-600" />
+                      <span>Fluxo Rápido Determinístico</span>
+                    </span>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-neutral-100 text-neutral-700">
+                      Sem Tokens LLM
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-600 leading-relaxed">
+                    Auto-resposta instantânea sem custo de API de IA: envia imediatamente o link do cardápio digital ou transfere para atendente humano quando o cliente digita <strong>2</strong>.
+                  </p>
+                </button>
+              </div>
+            </div>
+
+            {/* STEP 2: CREDENTIALS, LLM MODEL & WEBHOOK BINDING */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 pt-2">
+              <div className="lg:col-span-7 space-y-4 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                    <Sliders className="w-4 h-4 text-blue-600" />
+                    <span>2. Parâmetros de Conexão (Evolution API + n8n + Modelo de IA)</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-500">
+                    Instância: {tenant.evolutionInstanceId || 'aladay'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      URL da Evolution API (EasyPanel)
+                    </label>
+                    <input
+                      type="text"
+                      value={evolutionUrl}
+                      onChange={(e) => setEvolutionUrl(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-[11px]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Global API Key (Evolution API)
+                    </label>
+                    <input
+                      type="text"
+                      value={evolutionApiKey}
+                      onChange={(e) => setEvolutionApiKey(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-[11px]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      URL do Webhook no n8n (Produção)
+                    </label>
+                    <input
+                      type="text"
+                      value={n8nWebhookUrl}
+                      onChange={(e) => setN8nWebhookUrl(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-[11px]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Path do Nó Webhook no n8n
+                    </label>
+                    <input
+                      type="text"
+                      value={n8nWebhookPath}
+                      onChange={(e) => setN8nWebhookPath(e.target.value)}
+                      placeholder="saas"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-[11px]"
+                    />
+                  </div>
+
+                  {n8nAgentMode !== 'deterministico' && (
+                    <>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Provedor de IA no n8n (Chat Model)
+                        </label>
+                        <select
+                          value={n8nLlmProvider}
+                          onChange={(e) => {
+                            const val = e.target.value as 'openai' | 'gemini';
+                            setN8nLlmProvider(val);
+                            setN8nLlmModel(val === 'gemini' ? 'models/gemini-2.5-flash' : 'gpt-4o-mini');
+                          }}
+                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-medium"
+                        >
+                          <option value="openai">OpenAI (gpt-4o-mini / gpt-4o)</option>
+                          <option value="gemini">Google Gemini (gemini-2.5-flash)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Janela de Memória por Cliente (Mensagens)
+                        </label>
+                        <input
+                          type="number"
+                          min={4}
+                          max={40}
+                          value={n8nMemoryWindow}
+                          onChange={(e) => setN8nMemoryWindow(Number(e.target.value) || 12)}
+                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-xs"
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* 1-Click Evolution API -> n8n Webhook Binder */}
+                <div className="pt-2 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="text-[11px] text-slate-600">
+                    Apontar evento <code className="bg-white px-1 py-0.5 rounded border border-slate-200 font-mono font-bold">MESSAGES_UPSERT</code> da instância <strong>{tenant.evolutionInstanceId || 'aladay'}</strong> direto para o n8n:
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isBindingWebhook}
+                    onClick={handleBindEvolutionWebhookToN8n}
+                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    {isBindingWebhook ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Vinculando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Vincular Webhook na Evolution API (1 Clique)</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {webhookBindFeedback && (
+                  <div
+                    className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
+                      webhookBindFeedback.type === 'success'
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                        : 'bg-rose-50 border-rose-200 text-rose-900'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                    <span>{webhookBindFeedback.message}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: Step-by-Step Checklist in n8n */}
+              <div className="lg:col-span-5 bg-blue-950 text-white rounded-xl p-5 flex flex-col justify-between space-y-4">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-blue-800 text-blue-200 font-bold">
+                      Guia Rápido (60 Segundos)
+                    </span>
+                    <span className="text-[11px] font-mono text-blue-300">
+                      n8n + EasyPanel
+                    </span>
+                  </div>
+                  <h5 className="text-sm font-bold text-white">
+                    Como ativar este Agente no seu n8n:
+                  </h5>
+                  <ol className="space-y-2.5 text-xs text-blue-100 leading-relaxed">
+                    <li className="flex items-start gap-2">
+                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                        1
+                      </span>
+                      <span>
+                        Clique em <strong>&ldquo;Copiar Workflow p/ n8n (Ctrl+V)&rdquo;</strong> ou baixe o arquivo <code className="bg-blue-900 px-1 rounded font-mono">.json</code> abaixo.
+                      </span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                        2
+                      </span>
+                      <span>
+                        Abra seu painel n8n em <code className="bg-blue-900 px-1 py-0.5 rounded font-mono text-[11px]">agencia-n8n.2eoc7n.easypanel.host</code>, crie um workflow em branco e pressione <kbd className="bg-blue-800 px-1.5 py-0.5 rounded border border-blue-600 font-mono text-[10px]">Ctrl + V</kbd>.
+                      </span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                        3
+                      </span>
+                      <span>
+                        {n8nAgentMode === 'deterministico' ? (
+                          <>Verifique o nó <strong>Webhook Evolution API</strong> e ative a chave <strong>Active</strong> no topo direito do n8n.</>
+                        ) : (
+                          <>Abra o nó <strong>{n8nLlmProvider === 'gemini' ? 'Google Gemini Chat Model' : 'OpenAI Chat Model'}</strong>, selecione sua credencial de API no n8n e ative a chave <strong>Active</strong> no canto superior direito.</>
+                        )}
+                      </span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="w-5 h-5 rounded-full bg-emerald-500 text-neutral-950 font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                        4
+                      </span>
+                      <span>
+                        Clique em <strong>&ldquo;Vincular Webhook na Evolution API&rdquo;</strong> ao lado e teste no simulador abaixo!
+                      </span>
+                    </li>
+                  </ol>
+                </div>
+
+                <div className="pt-3 border-t border-blue-800/80 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopyWorkflow}
+                    className="flex-1 py-2.5 px-3 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    {copiedWorkflow ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    <span>{copiedWorkflow ? 'Copiado!' : 'Copiar JSON (Ctrl+V)'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadWorkflowJson}
+                    className="py-2.5 px-3 bg-blue-900 hover:bg-blue-800 text-blue-100 border border-blue-700 font-semibold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <FileCode className="w-4 h-4" />
+                    <span>Baixar .JSON</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* STEP 3: SYSTEM PROMPT & TOOLS ARCHITECTURE */}
+            {n8nAgentMode !== 'deterministico' && (
+              <div className="space-y-3 pt-2 border-t border-neutral-100">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-900">
+                      3. System Prompt &amp; Base de Conhecimento Embutida no Nó &ldquo;AI Agent&rdquo; do n8n:
+                    </label>
+                    <p className="text-[11px] text-neutral-500">
+                      Você pode editar as instruções abaixo antes de copiar o JSON. O workflow já inclui este prompt configurado dentro do nó Agente IA.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAgentSystemPrompt(
+                          n8nAgentMode === 'sdr_aladay' ? defaultSdrSystemPrompt : defaultRestaurantSystemPrompt
+                        )
+                      }
+                      className="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-lg text-[11px] font-semibold cursor-pointer"
+                    >
+                      Restaurar Padrão
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCopySystemPrompt}
+                      className="px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      {copiedPrompt ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedPrompt ? 'Prompt Copiado!' : 'Copiar Apenas o Prompt'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <textarea
+                  rows={10}
+                  value={agentSystemPrompt}
+                  onChange={(e) => setAgentSystemPrompt(e.target.value)}
+                  className="w-full p-3.5 bg-slate-950 text-emerald-400 border border-slate-800 rounded-xl font-mono text-[11px] leading-relaxed focus:outline-blue-600"
+                />
+
+                {/* Endpoints HTTP Tools Exposed to the n8n AI Agent */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px]">
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <span className="font-bold text-blue-700 block">
+                      Tool HTTP 1: Base de Conhecimento SDR
+                    </span>
+                    <code className="font-mono text-[10px] text-slate-800 block mt-1 break-all">
+                      GET {appOriginUrl}/api/v1/n8n/knowledge-base
+                    </code>
+                    <p className="text-slate-500 mt-1">
+                      Retorna todos os planos, argumentos de conversão, ROI e FAQ oficial para o Agente Comercial.
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <span className="font-bold text-emerald-700 block">
+                      Tool HTTP 2: Cardápio &amp; Status da Loja
+                    </span>
+                    <code className="font-mono text-[10px] text-slate-800 block mt-1 break-all">
+                      GET {appOriginUrl}/api/v1/n8n/agent-context/{tenant.slug}
+                    </code>
+                    <p className="text-slate-500 mt-1">
+                      Retorna em tempo real os produtos disponíveis, preços, taxa de entrega e se a loja está aberta.
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <span className="font-bold text-purple-700 block">
+                      Tool HTTP 3: Consulta de Pedido por Telefone
+                    </span>
+                    <code className="font-mono text-[10px] text-slate-800 block mt-1 break-all">
+                      GET {appOriginUrl}/api/v1/n8n/order-status?phone=...
+                    </code>
+                    <p className="text-slate-500 mt-1">
+                      Permite ao agente informar ao cliente se o pedido está confirmado, em preparo ou saiu para entrega.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* STEP 4: LIVE AGENT SIMULATOR & N8N WEBHOOK DISPATCHER */}
+            <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h5 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-blue-600" />
+                    <span>4. Testar Resposta do Agente IA &amp; Disparar Payload Real para o n8n</span>
+                  </h5>
+                  <p className="text-[11px] text-slate-600 mt-0.5">
+                    Simule perguntas reais de Leads ou clientes para validar o comportamento do Agente IA e a estrutura do webhook da Evolution API v2.
+                  </p>
+                </div>
+
+                <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 bg-white px-3 py-1.5 rounded-lg border border-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={dispatchToRemoteN8n}
+                    onChange={(e) => setDispatchToRemoteN8n(e.target.checked)}
+                    className="accent-blue-600"
+                  />
+                  <span>Enviar também POST real p/ URL do n8n</span>
+                </label>
+              </div>
+
+              {/* Quick Preset Questions */}
+              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                <span className="font-semibold text-slate-600">Perguntas de Teste:</span>
+                {n8nAgentMode === 'sdr_aladay' ? (
                   <>
-                    <Check className="w-4 h-4 text-emerald-400" />
-                    <span>Copiado com Sucesso!</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest(
+                          'Olá! Quero saber quanto custa o sistema da Aladay e como funcionam os planos.'
+                        )
+                      }
+                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      💰 &ldquo;Quanto custa e quais os planos?&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest(
+                          'Eu já vendo pelo iFood. Vocês cobram comissão por pedido também?'
+                        )
+                      }
+                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      📊 &ldquo;Vocês cobram comissão igual ao iFood?&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest(
+                          'Tenho muitos produtos, dá para importar meu cardápio por planilha Excel?'
+                        )
+                      }
+                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      📑 &ldquo;Dá para importar cardápio por planilha?&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunAgentLiveTest('Quero falar com um consultor humano')}
+                      className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      👨‍💼 &ldquo;Falar com consultor humano&rdquo;
+                    </button>
                   </>
                 ) : (
                   <>
-                    <Copy className="w-4 h-4" />
-                    <span>Copiar Workflow JSON (1 Clique)</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRunAgentLiveTest('Boa noite! Vocês estão abertos? Quero ver o cardápio.')}
+                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      🍔 &ldquo;Quero ver o cardápio de hoje&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunAgentLiveTest('Qual o status do meu pedido?')}
+                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      🛵 &ldquo;Onde está meu pedido?&rdquo;
+                    </button>
                   </>
                 )}
-              </button>
-            </div>
+              </div>
 
-            {/* Step-by-Step Import Guide */}
-            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-xs text-indigo-950 space-y-1">
-              <span className="font-bold flex items-center gap-1.5 text-indigo-900">
-                <CheckCircle2 className="w-4 h-4 text-indigo-600" />
-                Como importar no seu n8n rodando no Easypanel (30 segundos):
-              </span>
-              <ol className="list-decimal list-inside space-y-0.5 text-[11px] text-indigo-900/90 pl-1">
-                <li>Clique no botão <strong>&quot;Copiar Workflow JSON&quot;</strong> acima.</li>
-                <li>Abra o n8n em <code className="bg-white/80 px-1 py-0.5 rounded font-mono font-bold">https://agencia-n8n.2eoc7n.easypanel.host</code>.</li>
-                <li>Crie um novo workflow vazio e simplesmente pressione <kbd className="bg-white px-1.5 py-0.5 rounded border border-indigo-300 font-mono text-[10px]">Ctrl + V</kbd> (ou clique no menu ⋯ &gt; &quot;Import from JSON&quot;).</li>
-                <li>Para testar: clique no nó <em>Webhook Evolution API</em> &gt; <strong>&quot;Test step&quot;</strong>.</li>
-                <li>Para deixar 24h rodando: ative a chave seletora <strong>&quot;Active&quot;</strong> no canto superior direito do n8n.</li>
-              </ol>
-            </div>
-
-            {/* Architecture diagram of n8n nodes */}
-            <div className="p-4 bg-neutral-50 rounded-lg border border-neutral-200 space-y-2 text-xs">
-              <span className="font-bold text-neutral-900 text-xs block">
-                Nós configurados neste Workflow:
-              </span>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-[11px]">
-                <div className="p-2.5 bg-white border border-neutral-200 rounded-md shadow-2xs">
-                  <p className="font-bold text-indigo-700">1. Webhook Evolution</p>
-                  <p className="text-neutral-500 mt-0.5">
-                    Path <code className="font-mono text-neutral-800 font-bold">/saas</code>. Recebe <code className="font-mono">messages.upsert</code>.
-                  </p>
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
+                <div className="md:col-span-3">
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Nome do Lead / Cliente (pushName)
+                  </label>
+                  <input
+                    type="text"
+                    value={agentTestCustomerName}
+                    onChange={(e) => setAgentTestCustomerName(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs"
+                  />
                 </div>
-                <div className="p-2.5 bg-white border border-neutral-200 rounded-md shadow-2xs">
-                  <p className="font-bold text-neutral-800">2. Code / Sanitização</p>
-                  <p className="text-neutral-500 mt-0.5">
-                    Extrai <code className="font-mono text-neutral-800">remoteJid</code>, filtra grupos e previne loop de <code className="font-mono text-neutral-800">fromMe</code>.
-                  </p>
+                <div className="md:col-span-3">
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    WhatsApp (remoteJid)
+                  </label>
+                  <input
+                    type="text"
+                    value={agentTestPhone}
+                    onChange={(e) => setAgentTestPhone(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-xs"
+                  />
                 </div>
-                <div className="p-2.5 bg-white border border-neutral-200 rounded-md shadow-2xs">
-                  <p className="font-bold text-amber-700">3. Switch de Intenção</p>
-                  <p className="text-neutral-500 mt-0.5">
-                    Verifica se o cliente digitou &quot;2&quot; ou pediu atendente humano.
-                  </p>
-                </div>
-                <div className="p-2.5 bg-white border border-neutral-200 rounded-md shadow-2xs">
-                  <p className="font-bold text-emerald-700">4. HTTP Request (Evolution)</p>
-                  <p className="text-neutral-500 mt-0.5">
-                    POST para <code className="font-mono text-neutral-800">/message/sendText/{tenant.evolutionInstanceId || 'aladay'}</code>.
-                  </p>
+                <div className="md:col-span-6">
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Mensagem Recebida no WhatsApp
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={agentTestMessage}
+                      onChange={(e) => setAgentTestMessage(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleRunAgentLiveTest();
+                      }}
+                      className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs"
+                    />
+                    <button
+                      type="button"
+                      disabled={isTestingN8nAgent}
+                      onClick={() => handleRunAgentLiveTest()}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer"
+                    >
+                      {isTestingN8nAgent ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Send className="w-3.5 h-3.5" />
+                      )}
+                      <span>{isTestingN8nAgent ? 'Processando...' : 'Testar Agente'}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
+
+              {agentTestResult && (
+                <div className="bg-white border border-blue-200 rounded-xl p-4 space-y-3 text-xs shadow-2xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
+                    <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span>Resposta Gerada pelo Agente IA ({agentTestResult.triggeredTool})</span>
+                    </span>
+                    <div className="flex items-center gap-2 text-[11px] font-mono">
+                      <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">
+                        Latência: {agentTestResult.latencyMs}ms
+                      </span>
+                      {dispatchToRemoteN8n && (
+                        <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                          Webhook n8n: {agentTestResult.remoteN8nStatus}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="p-3.5 bg-[#DCF8C6]/50 border border-emerald-200 rounded-xl whitespace-pre-wrap text-slate-900 leading-relaxed font-sans text-xs">
+                    {agentTestResult.agentReply}
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Live Webhook Schema Mapping based on user's exact payload */}
-            <div className="p-4 bg-amber-50/60 border border-amber-200 rounded-lg space-y-2 text-xs">
-              <span className="font-bold text-amber-950 text-xs flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-amber-600" />
-                Mapeamento das Variáveis do seu Webhook Real da Evolution API v2:
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-[11px] font-mono">
-                <div className="p-2 bg-white rounded border border-amber-200">
-                  <span className="text-neutral-400 block text-[10px]">Origem (Webhook Evolution):</span>
-                  <span className="text-amber-800 font-semibold">body.server_url</span>
-                  <span className="text-neutral-600 block truncate mt-0.5">&quot;https://agencia-evolution-api.2eoc7n...&quot;</span>
-                </div>
-                <div className="p-2 bg-white rounded border border-amber-200">
-                  <span className="text-neutral-400 block text-[10px]">Origem (Webhook Evolution):</span>
-                  <span className="text-amber-800 font-semibold">body.apikey</span>
-                  <span className="text-neutral-600 block truncate mt-0.5">&quot;21C3D49F3F00-48FA...&quot;</span>
-                </div>
-                <div className="p-2 bg-white rounded border border-amber-200">
-                  <span className="text-neutral-400 block text-[10px]">Instância:</span>
-                  <span className="text-amber-800 font-semibold">body.instance</span>
-                  <span className="text-neutral-600 block font-bold mt-0.5">&quot;aladay&quot;</span>
-                </div>
-                <div className="p-2 bg-white rounded border border-amber-200">
-                  <span className="text-neutral-400 block text-[10px]">Telefone do Cliente:</span>
-                  <span className="text-amber-800 font-semibold">body.data.key.remoteJid</span>
-                  <span className="text-neutral-600 block font-bold mt-0.5">559181214188</span>
-                </div>
-                <div className="p-2 bg-white rounded border border-amber-200">
-                  <span className="text-neutral-400 block text-[10px]">Nome do Cliente:</span>
-                  <span className="text-amber-800 font-semibold">body.data.pushName</span>
-                  <span className="text-neutral-600 block font-bold mt-0.5">&quot;Adriano Saraiva&quot;</span>
-                </div>
-                <div className="p-2 bg-white rounded border border-amber-200">
-                  <span className="text-neutral-400 block text-[10px]">Texto da Mensagem:</span>
-                  <span className="text-amber-800 font-semibold">data.message.conversation</span>
-                  <span className="text-neutral-600 block font-bold mt-0.5">&quot;Quero ver o cardápio&quot;</span>
-                </div>
+            {/* STEP 5: COMPLETE N8N WORKFLOW JSON PREVIEW */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-neutral-900">
+                  5. Código JSON Completo do Workflow n8n ({n8nAgentMode === 'sdr_aladay' ? 'Agente IA Comercial SDR Aladay' : n8nAgentMode === 'restaurante_ia' ? `Agente IA ${tenant.name}` : 'Auto-Resposta Determinística'}):
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyWorkflow}
+                  className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  {copiedWorkflow ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedWorkflow ? 'JSON Copiado!' : 'Copiar JSON'}</span>
+                </button>
               </div>
-            </div>
-
-            {/* Code Box */}
-            <div className="relative">
-              <pre className="bg-neutral-900 text-emerald-400 p-4 rounded-xl font-mono text-[11px] overflow-x-auto max-h-[460px] leading-relaxed">
-                {n8nWorkflowJSON}
-              </pre>
+              <div className="relative">
+                <pre className="bg-neutral-900 text-emerald-400 p-4 rounded-xl font-mono text-[11px] overflow-x-auto max-h-[420px] leading-relaxed">
+                  {n8nWorkflowJSON}
+                </pre>
+              </div>
             </div>
           </div>
         </div>

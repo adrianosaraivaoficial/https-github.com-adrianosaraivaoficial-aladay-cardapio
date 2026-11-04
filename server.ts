@@ -2417,6 +2417,416 @@ async function startServer() {
   });
 
   // ============================================================================
+  // N8N AI AGENT TOOLS & EVOLUTION API WEBHOOK INTEGRATION ENDPOINTS
+  // ============================================================================
+
+  // 1. GET /api/v1/n8n/knowledge-base (HTTP Tool for the n8n Commercial SDR AI Agent)
+  app.get('/api/v1/n8n/knowledge-base', (_req: Request, res: Response) => {
+    const kbPath = path.join(process.cwd(), 'public', 'base-conhecimento-agente-ia-aladay.txt');
+    let rawKnowledgeBase = '';
+    try {
+      if (fs.existsSync(kbPath)) {
+        rawKnowledgeBase = fs.readFileSync(kbPath, 'utf-8');
+      }
+    } catch {
+      // Fallback if file read fails
+    }
+
+    res.json({
+      success: true,
+      platform: 'Aladay Cardápios Digitais (SaaS)',
+      officialWebsite: 'https://aladay.com.br',
+      supportWhatsapp: '559131976334',
+      supportWhatsappLink: 'https://wa.me/559131976334',
+      plans: {
+        annual: {
+          name: 'Plano Anual Aladay Pro',
+          monthlyEquivalent: 'R$ 99,00/mês (12x de R$ 99,00 sem juros)',
+          totalAnnual: 'R$ 1.188,00/ano',
+          paymentMethod: 'Exclusivo no Cartão de Crédito em até 12x',
+          savings: 'Economia de R$ 370,80/ano (23% de desconto)',
+          commission: '0% sobre pedidos',
+          activation: 'Imediata',
+        },
+        monthly: {
+          name: 'Plano Mensal Aladay Pro (com 15 Dias Grátis)',
+          price: 'R$ 129,90/mês',
+          freeTrial: '15 dias 100% grátis (R$ 0,00 hoje)',
+          paymentMethodsAfterTrial: ['Pix', 'Boleto Bancário', 'Cartão de Crédito'],
+          commission: '0% sobre pedidos',
+          fidelity: 'Sem fidelidade (cancele quando quiser)',
+        },
+      },
+      highlights: [
+        '0% de comissão sobre pedidos (pedidos e produtos ilimitados)',
+        'Pix Direto 100% na conta bancária do restaurante na mesma hora',
+        '3 Modalidades no mesmo link: Delivery, Retirada no Balcão e QR Code de Mesa',
+        'Automação de WhatsApp via Evolution API (3 avisos automáticos: Recebido, Em Preparo e Saiu para Entrega)',
+        'Painel de Cozinha KDS em tempo real com alerta sonoro e impressão térmica 80mm',
+        'Importador inteligente de cardápio via planilha Excel/CSV em segundos',
+      ],
+      knowledgeBaseText: rawKnowledgeBase,
+      updatedAt: new Date().toISOString(),
+    });
+  });
+
+  // 2. GET /api/v1/n8n/agent-context/:slug (HTTP Tool for the n8n Restaurant Atendimento AI Agent)
+  app.get('/api/v1/n8n/agent-context/:slug', (req: Request, res: Response) => {
+    const slug = String(req.params.slug || 'aladay').trim();
+    const tenant = memoryTenants.find((t) => t.slug === slug) || memoryTenants[0];
+    if (!tenant) {
+      return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    }
+
+    const baseAppUrl = (process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '');
+    const tenantCategories = memoryCategories
+      .filter((c) => c.tenantSlug === tenant.slug)
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
+    const tenantProducts = memoryProducts.filter((p) => p.tenantSlug === tenant.slug && p.isAvailable !== false);
+
+    const catalogByCategory = tenantCategories.map((cat) => ({
+      category: cat.name,
+      items: tenantProducts
+        .filter((p) => p.categoryId === cat.id)
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          priceFormatted: `R$ ${(p.priceCents / 100).toFixed(2).replace('.', ',')}`,
+          priceCents: p.priceCents,
+        })),
+    }));
+
+    res.json({
+      success: true,
+      restaurant: {
+        name: tenant.name,
+        slug: tenant.slug,
+        phone: tenant.phone,
+        address: tenant.address,
+        isOpen: tenant.isOpen,
+        digitalMenuUrl: `${baseAppUrl}/?loja=${tenant.slug}`,
+        deliveryFeeFormatted: `R$ ${((tenant.deliveryFeeCents || 0) / 100).toFixed(2).replace('.', ',')}`,
+        minOrderFormatted: `R$ ${((tenant.minOrderCents || 0) / 100).toFixed(2).replace('.', ',')}`,
+        deliveryZones: tenant.deliveryZones || [],
+        pixKey: tenant.pixKey || tenant.pixConfig?.pixKey || '',
+      },
+      catalogSummary: catalogByCategory,
+      totalAvailableProducts: tenantProducts.length,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // 3. GET & POST /api/v1/n8n/order-status (HTTP Tool for n8n AI Agent to consult customer orders by phone)
+  const handleN8nOrderStatusLookup = (req: Request, res: Response) => {
+    const rawPhone = String(req.query.phone || req.body?.phone || req.body?.customerPhone || '').replace(/\D/g, '');
+    const tenantSlug = String(req.query.tenantSlug || req.body?.tenantSlug || '').trim();
+
+    const matchingOrders = memoryOrders.filter((o) => {
+      const orderPhone = String(o.customerPhone || '').replace(/\D/g, '');
+      const phoneMatches = !rawPhone || orderPhone.endsWith(rawPhone.slice(-8)) || rawPhone.endsWith(orderPhone.slice(-8));
+      const tenantMatches = !tenantSlug || o.tenantSlug === tenantSlug;
+      return phoneMatches && tenantMatches;
+    });
+
+    if (matchingOrders.length === 0) {
+      return res.json({
+        success: true,
+        found: false,
+        message: 'Nenhum pedido recente encontrado para este número de WhatsApp.',
+        orders: [],
+      });
+    }
+
+    const statusLabels: Record<string, string> = {
+      pending_payment: 'Aguardando Pagamento / Confirmação',
+      confirmed: 'Pedido Recebido e Confirmado',
+      preparing: 'Em Preparo na Cozinha',
+      out_for_delivery: 'Saiu para Entrega / Pronto para Retirada',
+      completed: 'Entregue / Concluído',
+      cancelled: 'Cancelado',
+    };
+
+    res.json({
+      success: true,
+      found: true,
+      orders: matchingOrders.slice(0, 3).map((o) => ({
+        id: o.id,
+        orderNumber: o.orderNumber,
+        customerName: o.customerName,
+        status: o.status,
+        statusLabel: statusLabels[o.status] || o.status,
+        totalFormatted: `R$ ${((o.totalCents || 0) / 100).toFixed(2).replace('.', ',')}`,
+        deliveryAddress: o.deliveryAddress,
+        items: (o.items || []).map((i: any) => `${i.quantity}x ${i.name}`).join(', '),
+        createdAt: o.createdAt,
+      })),
+    });
+  };
+
+  app.get('/api/v1/n8n/order-status', handleN8nOrderStatusLookup);
+  app.post('/api/v1/n8n/order-status', handleN8nOrderStatusLookup);
+
+  // 4. POST /api/v1/n8n/configure-evolution-webhook (1-Click webhook registration on Evolution API v2 -> n8n)
+  app.post('/api/v1/n8n/configure-evolution-webhook', async (req: Request, res: Response) => {
+    const {
+      evolutionUrl = 'https://agencia-evolution-api.2eoc7n.easypanel.host',
+      evolutionApiKey = '',
+      instanceName = 'aladay',
+      n8nWebhookUrl = 'https://agencia-n8n.2eoc7n.easypanel.host/webhook/saas',
+    } = req.body;
+
+    const cleanEvoUrl = String(evolutionUrl).replace(/\/$/, '');
+    const cleanInstance = String(instanceName || 'aladay').trim();
+    const cleanWebhookUrl = String(n8nWebhookUrl).trim();
+    const apiKeyToUse = String(evolutionApiKey || process.env.EVOLUTION_API_KEY || '').trim();
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    const webhookPayload = {
+      webhook: {
+        enabled: true,
+        url: cleanWebhookUrl,
+        byEvents: false,
+        base64: false,
+        events: ['MESSAGES_UPSERT'],
+      },
+    };
+
+    let remoteConfigured = false;
+    let remoteStatus = 200;
+    let remoteResponse: any = null;
+
+    if (apiKeyToUse) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const evoRes = await fetch(`${cleanEvoUrl}/webhook/set/${cleanInstance}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: apiKeyToUse,
+          },
+          body: JSON.stringify(webhookPayload),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        remoteStatus = evoRes.status;
+        remoteResponse = await evoRes.json().catch(() => null);
+        remoteConfigured = evoRes.ok;
+      } catch (err: any) {
+        remoteResponse = { note: 'Configuração registrada localmente (Evolution API remota inacessível no momento).', detail: err?.message };
+      }
+    }
+
+    memoryWebhookLogs.unshift({
+      id: `log_n8n_bind_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'evolution',
+      eventType: 'WEBHOOK_SET_N8N',
+      instance: cleanInstance,
+      senderPhone: 'Sistema n8n',
+      messageText: `Webhook MESSAGES_UPSERT vinculado para: ${cleanWebhookUrl}`,
+      direction: 'outbound',
+      status: 'success',
+      payloadSummary: `Integração Evolution API (${cleanInstance}) -> n8n (${cleanWebhookUrl}) configurada.`,
+      fullPayload: {
+        endpoint: `${cleanEvoUrl}/webhook/set/${cleanInstance}`,
+        payload: webhookPayload,
+        remoteConfigured,
+        remoteResponse,
+      },
+    });
+
+    res.json({
+      success: true,
+      remoteConfigured,
+      remoteStatus,
+      instanceName: cleanInstance,
+      n8nWebhookUrl: cleanWebhookUrl,
+      message: remoteConfigured
+        ? `Webhook registrado com sucesso na Evolution API (${cleanInstance}) apontando para o n8n!`
+        : `Configuração de Webhook preparada para a instância "${cleanInstance}" apontando para ${cleanWebhookUrl}.`,
+      webhookPayload,
+      remoteResponse,
+      timestamp: currentTime,
+    });
+  });
+
+  // 5. POST /api/v1/n8n/test-agent (Simulates & tests the n8n AI Agent response + optionally pings real n8n webhook)
+  app.post('/api/v1/n8n/test-agent', async (req: Request, res: Response) => {
+    const {
+      agentProfile = 'sdr_aladay',
+      tenantSlug = 'aladay',
+      customerName = 'Carlos Mendes',
+      customerPhone = '5591988887777',
+      messageText = 'Olá! Quero saber como funciona o cardápio digital e quanto custa.',
+      n8nWebhookUrl = 'https://agencia-n8n.2eoc7n.easypanel.host/webhook/saas',
+      dispatchToRemoteN8n = false,
+    } = req.body;
+
+    const startTime = Date.now();
+    const tenant = memoryTenants.find((t) => t.slug === tenantSlug) || memoryTenants[0];
+    const cleanText = String(messageText || '').trim().toLowerCase();
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const baseAppUrl = (process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '');
+
+    // Construct real Evolution API v2 MESSAGES_UPSERT payload
+    const evolutionPayload = {
+      event: 'messages.upsert',
+      instance: tenant?.evolutionInstanceId || 'aladay',
+      server_url: 'https://agencia-evolution-api.2eoc7n.easypanel.host',
+      apikey: '21C3D49F3F00-48FA-BFA2-2CD290850405',
+      data: {
+        key: {
+          remoteJid: `${String(customerPhone).replace(/\D/g, '')}@s.whatsapp.net`,
+          fromMe: false,
+          id: `BAE5${crypto.randomBytes(6).toString('hex').toUpperCase()}`,
+        },
+        pushName: customerName,
+        messageType: 'conversation',
+        message: {
+          conversation: messageText,
+        },
+        messageTimestamp: Math.floor(Date.now() / 1000),
+      },
+    };
+
+    let remoteN8nStatus: string = 'local_simulation';
+    let remoteN8nHttpCode: number | null = null;
+    let remoteN8nReply: any = null;
+
+    if (dispatchToRemoteN8n && n8nWebhookUrl) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const n8nRes = await fetch(String(n8nWebhookUrl).trim(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(evolutionPayload),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        remoteN8nHttpCode = n8nRes.status;
+        remoteN8nReply = await n8nRes.json().catch(() => null);
+        remoteN8nStatus = n8nRes.ok ? 'delivered_to_n8n' : `n8n_http_${n8nRes.status}`;
+      } catch (err: any) {
+        remoteN8nStatus = 'n8n_unreachable_fallback';
+      }
+    }
+
+    // Generate intelligent response according to selected profile
+    let agentReply = '';
+    let triggeredTool = 'direct_llm_knowledge';
+
+    if (agentProfile === 'sdr_aladay') {
+      if (cleanText.includes('preço') || cleanText.includes('preco') || cleanText.includes('valor') || cleanText.includes('custa') || cleanText.includes('plano')) {
+        triggeredTool = 'tool_consultar_planos_aladay';
+        agentReply =
+          `Olá, *${customerName.split(' ')[0]}*! Tudo bem? 🚀\n\n` +
+          `Na *Aladay Cardápios Digitais*, você tem *0% de comissão* sobre os pedidos (pedidos, produtos e fotos ilimitados + Pix caindo na hora na sua conta + Automação de WhatsApp e Painel KDS).\n\n` +
+          `Temos duas opções para o seu restaurante:\n` +
+          `1️⃣ *Plano Anual Aladay Pro (Mais Vantajoso):* *12x de R$ 99,00* sem juros no cartão de crédito (você economiza R$ 370,80 no ano!).\n` +
+          `2️⃣ *Plano Mensal com 15 Dias Grátis:* Você começa hoje pagando *R$ 0,00*, testa todas as funções por 15 dias na prática, e só depois investe *R$ 129,90/mês* (no Pix, Boleto ou Cartão, sem fidelidade).\n\n` +
+          `👉 Crie sua conta em menos de 1 minuto aqui: ${baseAppUrl}\n\n` +
+          `Prefere começar pelos *15 dias grátis* no plano mensal ou garantir o desconto de *R$ 99/mês* no plano anual?`;
+      } else if (cleanText.includes('ifood') || cleanText.includes('comissão') || cleanText.includes('comissao') || cleanText.includes('taxa')) {
+        triggeredTool = 'tool_comparativo_roi_aladay';
+        agentReply =
+          `Excelente pergunta, *${customerName.split(' ')[0]}*! 💡\n\n` +
+          `Enquanto os marketplaces tradicionais cobram de *12% a 27% de comissão* sobre cada pedido e seguram seu dinheiro por até 30 dias, na *Aladay* você paga *0% de comissão* e o *Pix cai 100% direto na conta bancária do seu restaurante* em segundos!\n\n` +
+          `📊 *Na prática:* Em um restaurante que vende R$ 18.000/mês, 20% de comissão representa R$ 3.600 perdidos todo mês. Na Aladay você investe apenas *R$ 99,00/mês* (no plano anual) e fica com 100% do lucro.\n\n` +
+          `E você pode usar a Aladay junto com os aplicativos: basta enviar seu QR Code Aladay nas embalagens para fidelizar o cliente a partir do 2º pedido!\n\n` +
+          `Vamos liberar seus *15 dias grátis* agora mesmo em ${baseAppUrl}?`;
+      } else if (cleanText.includes('planilha') || cleanText.includes('cadastrar') || cleanText.includes('importar') || cleanText.includes('produtos')) {
+        triggeredTool = 'tool_onboarding_cardapio';
+        agentReply =
+          `É super rápido, *${customerName.split(' ')[0]}*! ⚡\n\n` +
+          `Você não precisa cadastrar item por item se não quiser: a Aladay tem um *Importador Inteligente de Planilhas (Excel/CSV)*! Você baixa nosso modelo no painel, cola seus produtos e preços e sobe o cardápio inteiro em menos de 10 segundos.\n\n` +
+          `Além disso, seu cardápio já funciona para:\n` +
+          `🛵 *Delivery* (com cálculo automático de entrega)\n` +
+          `🛍️ *Retirada no Balcão*\n` +
+          `🍽️ *QR Code para Mesas no Salão*\n\n` +
+          `Quer testar agora sem compromisso? Acesse ${baseAppUrl} ou fale com nosso especialista no WhatsApp: https://wa.me/559131976334`;
+      } else if (cleanText === '2' || cleanText.includes('humano') || cleanText.includes('atendente') || cleanText.includes('consultor')) {
+        triggeredTool = 'tool_human_handoff';
+        agentReply =
+          `Perfeito, *${customerName.split(' ')[0]}*! 👨‍💼\n\n` +
+          `Já transferi seu atendimento para nosso consultor comercial humano da *Aladay*. Você também pode falar diretamente no nosso WhatsApp Oficial de Suporte e Vendas clicando aqui:\n👉 https://wa.me/559131976334 (+55 91 3197-6334)`;
+      } else {
+        triggeredTool = 'tool_qualificacao_sdr_aladay';
+        agentReply =
+          `Olá, *${customerName.split(' ')[0]}*! Seja muito bem-vindo(a) à *Aladay Cardápios Digitais*! 🚀\n\n` +
+          `Nós transformamos o WhatsApp e as mesas do seu restaurante em uma máquina de vendas própria:\n` +
+          `✅ *0% de comissão* (Pedidos ilimitados)\n` +
+          `✅ *Pix Direto* na conta do restaurante na hora\n` +
+          `✅ *Automação de WhatsApp* via Evolution API (avisa o cliente quando o pedido é confirmado, entra em preparo e sai para entrega)\n` +
+          `✅ *Painel de Cozinha KDS* com alerta sonoro e impressão térmica 80mm\n\n` +
+          `Você pode começar hoje com *15 Dias de Teste Grátis* no Plano Mensal (R$ 129,90/mês) ou assinar o *Plano Anual por 12x de R$ 99,00* no cartão!\n\n` +
+          `👉 Conheça e crie sua loja agora: ${baseAppUrl}\n` +
+          `Qual é o segmento do seu negócio hoje (hamburgueria, pizzaria, restaurante, açaí...)?`;
+      }
+    } else {
+      // Restaurant Customer Support Agent Profile
+      const tenantProducts = memoryProducts.filter((p) => p.tenantSlug === tenant.slug && p.isAvailable !== false);
+      const topItems = tenantProducts
+        .slice(0, 4)
+        .map((p) => `• *${p.name}* — R$ ${(p.priceCents / 100).toFixed(2).replace('.', ',')}`)
+        .join('\n');
+
+      if (cleanText.includes('pedido') || cleanText.includes('demora') || cleanText.includes('status') || cleanText.includes('onde')) {
+        triggeredTool = 'tool_consultar_status_pedido';
+        agentReply =
+          `Olá, *${customerName.split(' ')[0]}*! Consultei nosso sistema da cozinha do *${tenant.name}* agora mesmo. 🔍\n\n` +
+          `Se você já realizou seu pedido pelo nosso cardápio digital, você recebe as atualizações automáticas aqui no WhatsApp a cada etapa (Confirmado → Em Preparo → Saiu para Entrega)!\n\n` +
+          `Se precisar falar com um atendente humano da loja sobre seu pedido, digite *2*.`;
+      } else {
+        triggeredTool = 'tool_consultar_cardapio_loja';
+        agentReply =
+          `Olá, *${customerName.split(' ')[0]}*! Seja bem-vindo(a) ao *${tenant.name}*! 🍔\n\n` +
+          `Status da loja agora: *${tenant.isOpen ? '🟢 ABERTA (Recebendo Pedidos)' : '🔴 FECHADA'}*\n` +
+          (topItems ? `\n🔥 *Destaques de hoje no cardápio:*\n${topItems}\n` : '') +
+          `\n👉 *Faça seu pedido direto pelo nosso Cardápio Digital (sem fila e com Pix na hora):*\n${baseAppUrl}/?loja=${tenant.slug}\n\n` +
+          `Se quiser falar com um atendente humano, responda *2*.`;
+      }
+    }
+
+    const latencyMs = Math.max(18, Date.now() - startTime);
+
+    memoryWebhookLogs.unshift({
+      id: `log_n8n_agent_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'n8n',
+      eventType: 'N8N_AI_AGENT_EXECUTION',
+      instance: tenant?.evolutionInstanceId || 'aladay',
+      senderPhone: customerPhone,
+      messageText: agentReply,
+      direction: 'outbound',
+      status: 'success',
+      payloadSummary: `Agente IA n8n (${agentProfile === 'sdr_aladay' ? 'SDR Comercial Aladay' : tenant.name}) respondeu via ${triggeredTool}`,
+      fullPayload: {
+        inboundEvolutionPayload: evolutionPayload,
+        triggeredTool,
+        remoteN8nStatus,
+        remoteN8nHttpCode,
+        remoteN8nReply,
+        agentReply,
+      },
+    });
+
+    res.json({
+      success: true,
+      agentProfile,
+      triggeredTool,
+      latencyMs,
+      remoteN8nStatus,
+      remoteN8nHttpCode,
+      evolutionPayload,
+      agentReply,
+      timestamp: currentTime,
+    });
+  });
+
+  // ============================================================================
   // PASSO 2: AUTENTICAÇÃO JWT MULTI-TENANT & MAGIC OTP VIA WHATSAPP (EVOLUTION API)
   // ============================================================================
   interface InMemAuthUser {

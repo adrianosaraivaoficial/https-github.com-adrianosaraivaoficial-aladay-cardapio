@@ -1940,7 +1940,7 @@ export default function App() {
           <WhatsAppAutomationView
             tenant={tenant}
             orders={orders}
-            initialSubTab="status_notifications"
+            initialSubTab="n8n_workflow"
             onUpdateTenant={handleUpdateTenant}
             onSimulateEvolutionReconnect={handleSimulateEvolutionReconnect}
             authSession={authSession}
