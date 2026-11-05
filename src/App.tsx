@@ -2143,6 +2143,8 @@ export default function App() {
               categories={categories}
               products={products}
               onOrderCreated={handleOrderCreated}
+              onUpdateTenant={handleUpdateTenant}
+              canConfigureSchedule={Boolean(authSession)}
               onViewTracking={(order) => {
                 setSelectedTrackingOrder(order);
                 handleNavigateSafely('tracking');

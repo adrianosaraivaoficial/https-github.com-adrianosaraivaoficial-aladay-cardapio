@@ -30,6 +30,7 @@ interface InMemTenant {
   address: string;
   primaryColor: string;
   isOpen: boolean;
+  openingHoursText?: string;
   deliveryFeeCents: number;
   minOrderCents: number;
   deliveryZones?: InMemDeliveryZone[];
@@ -814,6 +815,7 @@ async function startServer() {
         address: String(incomingTenant.address || ''),
         primaryColor: incomingTenant.primaryColor || '#2563EB',
         isOpen: incomingTenant.isOpen ?? true,
+        openingHoursText: incomingTenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:30',
         deliveryFeeCents: Number(incomingTenant.deliveryFeeCents) || 0,
         minOrderCents: Number(incomingTenant.minOrderCents) || 0,
         deliveryZones: Array.isArray(incomingTenant.deliveryZones) ? incomingTenant.deliveryZones : [],
@@ -828,6 +830,7 @@ async function startServer() {
       if (incomingTenant.address !== undefined) tenant.address = String(incomingTenant.address).trim();
       if (incomingTenant.primaryColor) tenant.primaryColor = incomingTenant.primaryColor;
       if (typeof incomingTenant.isOpen === 'boolean') tenant.isOpen = incomingTenant.isOpen;
+      if (incomingTenant.openingHoursText !== undefined) tenant.openingHoursText = String(incomingTenant.openingHoursText).trim();
       if (typeof incomingTenant.deliveryFeeCents === 'number') tenant.deliveryFeeCents = incomingTenant.deliveryFeeCents;
       if (typeof incomingTenant.minOrderCents === 'number') tenant.minOrderCents = incomingTenant.minOrderCents;
       if (Array.isArray(incomingTenant.deliveryZones)) tenant.deliveryZones = incomingTenant.deliveryZones;
@@ -2241,6 +2244,7 @@ async function startServer() {
       address,
       primaryColor,
       isOpen,
+      openingHoursText,
       deliveryFeeCents,
       minOrderCents,
       deliveryZones,
@@ -2254,6 +2258,7 @@ async function startServer() {
     if (address !== undefined) tenant.address = String(address).trim();
     if (primaryColor) tenant.primaryColor = primaryColor;
     if (typeof isOpen === 'boolean') tenant.isOpen = isOpen;
+    if (openingHoursText !== undefined) tenant.openingHoursText = String(openingHoursText).trim();
     if (typeof deliveryFeeCents === 'number') tenant.deliveryFeeCents = deliveryFeeCents;
     if (typeof minOrderCents === 'number') tenant.minOrderCents = minOrderCents;
     if (Array.isArray(deliveryZones)) tenant.deliveryZones = deliveryZones;

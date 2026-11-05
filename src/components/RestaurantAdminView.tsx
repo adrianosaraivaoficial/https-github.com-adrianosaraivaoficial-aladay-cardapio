@@ -120,6 +120,10 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   const [statusUpdateToast, setStatusUpdateToast] = useState<string | null>(null);
   const [testMsgStatus, setTestMsgStatus] = useState<string | null>(null);
   const [isQrPairingModalOpen, setIsQrPairingModalOpen] = useState(false);
+  const [isTopBarHoursModalOpen, setIsTopBarHoursModalOpen] = useState(false);
+  const [topBarDaysPreset, setTopBarDaysPreset] = useState('Segunda a Domingo');
+  const [topBarOpenTime, setTopBarOpenTime] = useState('18:00');
+  const [topBarCloseTime, setTopBarCloseTime] = useState('23:45');
   const [spreadsheetModalTab, setSpreadsheetModalTab] = useState<'export' | 'import' | null>(null);
 
   // Super Admin state for filtering and provisioning restaurants
@@ -1286,6 +1290,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
             address: updated.address,
             primaryColor: updated.primaryColor,
             isOpen: updated.isOpen,
+            openingHoursText: updated.openingHoursText,
             deliveryFeeCents: updated.deliveryFeeCents,
             minOrderCents: updated.minOrderCents,
             deliveryZones: updated.deliveryZones,
@@ -1552,7 +1557,41 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Botão para Configurar o Horário do Cardápio na Barra Superior */}
+            <button
+              type="button"
+              onClick={() => {
+                const raw = tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45';
+                setSettingsHours(raw);
+                setSettingsIsOpen(tenant.isOpen ?? true);
+                const match = raw.match(/^(.*?):\s*(\d{2}:\d{2})\s*(?:às|as|-|até)\s*(\d{2}:\d{2})$/i);
+                if (match) {
+                  setTopBarDaysPreset(match[1].trim());
+                  setTopBarOpenTime(match[2]);
+                  setTopBarCloseTime(match[3]);
+                }
+                setIsTopBarHoursModalOpen(true);
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-xs cursor-pointer transition-colors shadow-2xs group"
+              title="Clique para configurar o horário do cardápio e status Aberto/Fechado na barra superior"
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  tenant.isOpen ? 'bg-emerald-500 ring-2 ring-emerald-200' : 'bg-rose-500 ring-2 ring-rose-200'
+                }`}
+              />
+              <span className="font-semibold text-slate-800">
+                {tenant.isOpen ? 'Aberto' : 'Fechado'}
+              </span>
+              <span className="text-slate-300">|</span>
+              <Clock className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <span className="text-slate-700 font-medium max-w-[200px] truncate">
+                {tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45'}
+              </span>
+              <Edit2 className="w-3 h-3 text-slate-400 group-hover:text-blue-600 ml-0.5 shrink-0" />
+            </button>
+
             <button
               type="button"
               onClick={() => setIsQrPairingModalOpen(true)}
@@ -1619,6 +1658,205 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
               <span>Ver Cardápio Público</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Rápido de Configuração de Horário do Cardápio na Barra Superior */}
+      {isTopBarHoursModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center">
+                  <Clock className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Configurar Horário do Cardápio na Barra Superior
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Altere rapidamente o horário exibido no topo do cardápio digital e o status da loja
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTopBarHoursModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const updatedTenant: RestaurantTenant = {
+                  ...tenant,
+                  openingHoursText: settingsHours.trim() || `${topBarDaysPreset}: ${topBarOpenTime} às ${topBarCloseTime}`,
+                  isOpen: settingsIsOpen,
+                };
+                onUpdateTenant(updatedTenant);
+                try {
+                  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+                  if (authSession?.token) {
+                    headers['Authorization'] = `Bearer ${authSession.token}`;
+                  }
+                  await fetch(`/api/v1/tenants/${encodeURIComponent(tenant.slug)}/settings`, {
+                    method: 'PUT',
+                    headers,
+                    body: JSON.stringify({
+                      name: updatedTenant.name,
+                      phone: updatedTenant.phone,
+                      address: updatedTenant.address,
+                      primaryColor: updatedTenant.primaryColor,
+                      isOpen: updatedTenant.isOpen,
+                      openingHoursText: updatedTenant.openingHoursText,
+                      deliveryFeeCents: updatedTenant.deliveryFeeCents,
+                      minOrderCents: updatedTenant.minOrderCents,
+                      deliveryZones: updatedTenant.deliveryZones,
+                    }),
+                  });
+                } catch {
+                  // state updated locally
+                }
+                triggerSyncNotice(
+                  `Horário do cardápio atualizado na barra superior: "${updatedTenant.openingHoursText}" (${
+                    updatedTenant.isOpen ? 'Aberto' : 'Fechado'
+                  })!`
+                );
+                setIsTopBarHoursModalOpen(false);
+              }}
+              className="space-y-4"
+            >
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Status de Atendimento da Loja
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSettingsIsOpen(true)}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      settingsIsOpen
+                        ? 'bg-emerald-50 border-emerald-500 text-emerald-800 shadow-2xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span>Aberto (Recebendo Pedidos)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsIsOpen(false)}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      !settingsIsOpen
+                        ? 'bg-rose-50 border-rose-500 text-rose-800 shadow-2xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-rose-500" />
+                    <span>Fechado</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Dias de Funcionamento
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    'Segunda a Domingo',
+                    'Terça a Domingo',
+                    'Segunda a Sábado',
+                    'Quarta a Domingo',
+                    'Todos os dias',
+                  ].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => {
+                        setTopBarDaysPreset(preset);
+                        setSettingsHours(`${preset}: ${topBarOpenTime} às ${topBarCloseTime}`);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border cursor-pointer transition-colors ${
+                        topBarDaysPreset === preset
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Horário de Abertura
+                  </label>
+                  <input
+                    type="time"
+                    value={topBarOpenTime}
+                    onChange={(e) => {
+                      const nextOpen = e.target.value;
+                      setTopBarOpenTime(nextOpen);
+                      setSettingsHours(`${topBarDaysPreset}: ${nextOpen} às ${topBarCloseTime}`);
+                    }}
+                    className="w-full p-2 text-xs font-mono border border-slate-300 rounded-xl text-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Horário de Fechamento
+                  </label>
+                  <input
+                    type="time"
+                    value={topBarCloseTime}
+                    onChange={(e) => {
+                      const nextClose = e.target.value;
+                      setTopBarCloseTime(nextClose);
+                      setSettingsHours(`${topBarDaysPreset}: ${topBarOpenTime} às ${nextClose}`);
+                    }}
+                    className="w-full p-2 text-xs font-mono border border-slate-300 rounded-xl text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Texto Exibido na Barra Superior do Cardápio
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={settingsHours}
+                  onChange={(e) => setSettingsHours(e.target.value)}
+                  placeholder="Segunda a Domingo: 18:00 às 23:45"
+                  className="w-full p-2.5 text-xs border border-slate-300 rounded-xl text-slate-900 font-medium"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsTopBarHoursModalOpen(false)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Salvar Horário</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -2293,6 +2531,8 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                       tenant={tenant}
                       categories={categories}
                       products={products}
+                      onUpdateTenant={onUpdateTenant}
+                      canConfigureSchedule={true}
                       onOrderCreated={() => {
                         triggerSyncNotice('Pedido de teste recebido pelo cardápio sincronizado!');
                       }}

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { ShoppingBag, Clock, MapPin, Plus, Minus, Check, ArrowRight, MessageSquare, AlertCircle, Sparkles, Printer, ExternalLink, Zap, QrCode, Share2, Copy, X } from 'lucide-react';
+import { ShoppingBag, Clock, MapPin, Plus, Minus, Check, ArrowRight, MessageSquare, AlertCircle, Sparkles, Printer, ExternalLink, Zap, QrCode, Share2, Copy, X, Settings } from 'lucide-react';
 import { Category, DeliveryZone, OptionGroup, OptionItem, Order, OrderItem, OrderItemOption, Product, RestaurantTenant } from '../types';
 import { ThermalTicketModal } from './ThermalTicketModal';
 import { PixPaymentModal } from './PixPaymentModal';
@@ -12,6 +12,8 @@ interface ConsumerMenuViewProps {
   products: Product[];
   onOrderCreated: (newOrder: Order) => void;
   onViewTracking?: (order: Order) => void;
+  onUpdateTenant?: (updatedTenant: RestaurantTenant) => void;
+  canConfigureSchedule?: boolean;
 }
 
 export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
@@ -20,6 +22,8 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
   products,
   onOrderCreated,
   onViewTracking,
+  onUpdateTenant,
+  canConfigureSchedule = false,
 }) => {
   const sortedCategories = useMemo(
     () => [...categories].sort((a, b) => a.order - b.order),
@@ -81,6 +85,80 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
   const [linkCopied, setLinkCopied] = useState<boolean>(false);
   const [menuShareQrDataUrl, setMenuShareQrDataUrl] = useState<string>('');
+
+  // Real-time clock & top bar schedule configurator state
+  const [currentTimeStr, setCurrentTimeStr] = useState<string>(() =>
+    new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  );
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState<boolean>(false);
+  const [scheduleDaysPreset, setScheduleDaysPreset] = useState<string>('Segunda a Domingo');
+  const [scheduleStartTime, setScheduleStartTime] = useState<string>('18:00');
+  const [scheduleEndTime, setScheduleEndTime] = useState<string>('23:45');
+  const [scheduleCustomText, setScheduleCustomText] = useState<string>(
+    tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45'
+  );
+  const [scheduleIsOpen, setScheduleIsOpen] = useState<boolean>(tenant.isOpen ?? true);
+  const [scheduleSavedToast, setScheduleSavedToast] = useState<boolean>(false);
+
+  useEffect(() => {
+    const updateClock = () => {
+      setCurrentTimeStr(
+        new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      );
+    };
+    updateClock();
+    const intervalId = setInterval(updateClock, 30000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    const raw = tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45';
+    setScheduleCustomText(raw);
+    setScheduleIsOpen(tenant.isOpen ?? true);
+    const match = raw.match(/^(.*?):\s*(\d{2}:\d{2})\s*(?:às|as|-|até)\s*(\d{2}:\d{2})$/i);
+    if (match) {
+      setScheduleDaysPreset(match[1].trim());
+      setScheduleStartTime(match[2]);
+      setScheduleEndTime(match[3]);
+    }
+  }, [tenant.openingHoursText, tenant.isOpen]);
+
+  const handleSaveTopBarSchedule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const finalHoursText = scheduleCustomText.trim() || `${scheduleDaysPreset}: ${scheduleStartTime} às ${scheduleEndTime}`;
+    const updatedTenant: RestaurantTenant = {
+      ...tenant,
+      openingHoursText: finalHoursText,
+      isOpen: scheduleIsOpen,
+    };
+    if (onUpdateTenant) {
+      onUpdateTenant(updatedTenant);
+    }
+    try {
+      await fetch(`/api/v1/tenants/${encodeURIComponent(tenant.slug)}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: updatedTenant.name,
+          phone: updatedTenant.phone,
+          address: updatedTenant.address,
+          primaryColor: updatedTenant.primaryColor,
+          isOpen: updatedTenant.isOpen,
+          openingHoursText: updatedTenant.openingHoursText,
+          deliveryFeeCents: updatedTenant.deliveryFeeCents,
+          minOrderCents: updatedTenant.minOrderCents,
+          deliveryZones: updatedTenant.deliveryZones,
+        }),
+      });
+    } catch {
+      // state already updated locally
+    }
+    setScheduleSavedToast(true);
+    setTimeout(() => {
+      setScheduleSavedToast(false);
+      setIsScheduleModalOpen(false);
+    }, 900);
+  };
 
   const menuShareUrl = useMemo(() => {
     if (typeof window === 'undefined') return `https://${tenant.slug}.com.br`;
@@ -334,11 +412,50 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
 
   return (
     <div className="max-w-md mx-auto bg-white border border-neutral-300 rounded-2xl shadow-sm overflow-hidden flex flex-col min-h-[720px] relative">
-      {/* Phone status bar simulation */}
-      <div className="bg-neutral-900 text-white text-[10px] px-4 py-1.5 flex justify-between items-center font-mono select-none">
-        <span>19:42 · 4G LTE</span>
-        <span className="text-neutral-400">{tenant.slug}.com.br</span>
-        <span>100% 🔋</span>
+      {/* Top Bar do Cardápio Digital com Horário de Funcionamento e Status em Tempo Real */}
+      <div className="bg-neutral-900 text-white text-[11px] px-3.5 py-2 flex items-center justify-between gap-2 select-none">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Clock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          <span className="font-medium text-neutral-100 truncate" title={tenant.openingHoursText}>
+            {tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45'}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="font-mono text-[10px] text-neutral-400 hidden sm:inline">
+            Agora: {currentTimeStr}
+          </span>
+          {canConfigureSchedule && onUpdateTenant && (
+            <button
+              type="button"
+              onClick={() => setIsScheduleModalOpen(true)}
+              className="px-2 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-amber-300 border border-neutral-700 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+              title="Configurar horário de funcionamento e status na barra superior"
+            >
+              <Settings className="w-3 h-3" />
+              <span>Horário</span>
+            </button>
+          )}
+          <span
+            onClick={() => {
+              if (canConfigureSchedule && onUpdateTenant) setIsScheduleModalOpen(true);
+            }}
+            className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 ${
+              canConfigureSchedule && onUpdateTenant ? 'cursor-pointer hover:opacity-90' : ''
+            } ${
+              tenant.isOpen
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                tenant.isOpen ? 'bg-emerald-400' : 'bg-rose-400'
+              }`}
+            />
+            <span>{tenant.isOpen ? 'Aberto' : 'Fechado'}</span>
+          </span>
+        </div>
       </div>
 
       {/* Restaurant Header */}
@@ -346,17 +463,12 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
         className="p-5 text-white relative"
         style={{ backgroundColor: tenant.primaryColor }}
       >
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex-1 min-w-0">
-            <span className="text-[10px] uppercase font-bold tracking-wider opacity-90">
-              Cardápio Digital Oficial
-            </span>
-            <h1 className="text-lg font-bold mt-0.5 leading-tight truncate">{tenant.name}</h1>
-            <p className="text-xs opacity-90 mt-1 flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5 shrink-0" />
-              <span>{tenant.openingHoursText}</span>
-            </p>
-          </div>
+        {/* Top Row: Badge + Share & Open Status */}
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px] uppercase font-extrabold tracking-wider bg-black/15 px-2.5 py-1 rounded-md whitespace-nowrap">
+            Cardápio Digital Oficial
+          </span>
+
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
@@ -367,18 +479,67 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
               <Share2 className="w-3.5 h-3.5 text-emerald-600" />
               <span>Compartilhar</span>
             </button>
-            <div className="bg-white/20 backdrop-blur-xs px-2.5 py-1 rounded-lg text-[11px] font-medium">
-              Aberto
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (canConfigureSchedule && onUpdateTenant) {
+                  setIsScheduleModalOpen(true);
+                }
+              }}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1.5 backdrop-blur-xs transition-opacity ${
+                canConfigureSchedule && onUpdateTenant ? 'cursor-pointer hover:opacity-90' : 'cursor-default'
+              } ${
+                tenant.isOpen
+                  ? 'bg-white/20 text-white'
+                  : 'bg-neutral-950/50 text-rose-200 border border-white/20'
+              }`}
+              title={
+                canConfigureSchedule && onUpdateTenant
+                  ? 'Clique para alterar o horário de funcionamento ou abrir/fechar a loja'
+                  : undefined
+              }
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  tenant.isOpen ? 'bg-emerald-300' : 'bg-rose-400'
+                }`}
+              />
+              <span>{tenant.isOpen ? 'Aberto' : 'Fechado'}</span>
+            </button>
           </div>
         </div>
 
-        <div className="mt-3 pt-3 border-t border-white/20 flex items-center justify-between text-xs opacity-90">
-          <span className="flex items-center gap-1">
-            <MapPin className="w-3 h-3" />
+        {/* Full-Width Restaurant Title (Sem corte/truncamento) */}
+        <h1 className="text-xl font-extrabold mt-2.5 leading-snug break-words">
+          {tenant.name}
+        </h1>
+
+        {/* Full-Width Opening Hours Bar inside Header */}
+        <div className="mt-2 bg-black/15 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <Clock className="w-4 h-4 shrink-0 text-white/90" />
+            <span className="font-medium text-white/95 leading-snug">
+              {tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45'}
+            </span>
+          </div>
+          {canConfigureSchedule && onUpdateTenant && (
+            <button
+              type="button"
+              onClick={() => setIsScheduleModalOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-white text-neutral-900 hover:bg-neutral-100 text-[11px] font-bold shrink-0 flex items-center gap-1 cursor-pointer shadow-2xs"
+            >
+              <Settings className="w-3 h-3 text-blue-600" />
+              <span>Editar Horário</span>
+            </button>
+          )}
+        </div>
+
+        <div className="mt-3 pt-3 border-t border-white/20 flex items-center justify-between text-xs opacity-95">
+          <span className="flex items-center gap-1 font-medium">
+            <MapPin className="w-3.5 h-3.5" />
             <span>Entrega: {formatBRL(tenant.deliveryFeeCents)}</span>
           </span>
-          <span>Mínimo: {formatBRL(tenant.minOrderCents)}</span>
+          <span className="font-medium">Mínimo: {formatBRL(tenant.minOrderCents)}</span>
         </div>
 
         {/* Share Link Quick Bar inside Menu Header */}
@@ -424,6 +585,172 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Modal Rápido para Configurar Horário do Cardápio na Barra Superior */}
+      {isScheduleModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-neutral-200 space-y-4 animate-in fade-in duration-150">
+            <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center">
+                  <Clock className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-neutral-900">
+                    Horário do Cardápio na Barra Superior
+                  </h3>
+                  <p className="text-[11px] text-neutral-500">
+                    Configure os dias, horários de atendimento e status da loja
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsScheduleModalOpen(false)}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveTopBarSchedule} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                  Status Atual do Cardápio Digital
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setScheduleIsOpen(true)}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      scheduleIsOpen
+                        ? 'bg-emerald-50 border-emerald-500 text-emerald-800 shadow-2xs'
+                        : 'bg-white border-neutral-200 text-neutral-600 hover:bg-neutral-50'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span>Aberto Agora</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScheduleIsOpen(false)}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      !scheduleIsOpen
+                        ? 'bg-rose-50 border-rose-500 text-rose-800 shadow-2xs'
+                        : 'bg-white border-neutral-200 text-neutral-600 hover:bg-neutral-50'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-rose-500" />
+                    <span>Fechado</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                  Dias de Funcionamento
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    'Segunda a Domingo',
+                    'Terça a Domingo',
+                    'Segunda a Sábado',
+                    'Quarta a Domingo',
+                    'Todos os dias',
+                  ].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => {
+                        setScheduleDaysPreset(preset);
+                        setScheduleCustomText(`${preset}: ${scheduleStartTime} às ${scheduleEndTime}`);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border cursor-pointer transition-colors ${
+                        scheduleDaysPreset === preset
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-neutral-50 text-neutral-700 border-neutral-200 hover:bg-neutral-100'
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    Abre às
+                  </label>
+                  <input
+                    type="time"
+                    value={scheduleStartTime}
+                    onChange={(e) => {
+                      const nextStart = e.target.value;
+                      setScheduleStartTime(nextStart);
+                      setScheduleCustomText(`${scheduleDaysPreset}: ${nextStart} às ${scheduleEndTime}`);
+                    }}
+                    className="w-full p-2 text-xs font-mono border border-neutral-300 rounded-xl text-neutral-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1">
+                    Fecha às
+                  </label>
+                  <input
+                    type="time"
+                    value={scheduleEndTime}
+                    onChange={(e) => {
+                      const nextEnd = e.target.value;
+                      setScheduleEndTime(nextEnd);
+                      setScheduleCustomText(`${scheduleDaysPreset}: ${scheduleStartTime} às ${nextEnd}`);
+                    }}
+                    className="w-full p-2 text-xs font-mono border border-neutral-300 rounded-xl text-neutral-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1">
+                  Texto Exibido na Barra Superior do Cardápio
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={scheduleCustomText}
+                  onChange={(e) => setScheduleCustomText(e.target.value)}
+                  placeholder="Segunda a Domingo: 18:00 às 23:45"
+                  className="w-full p-2.5 text-xs border border-neutral-300 rounded-xl text-neutral-900 font-medium"
+                />
+              </div>
+
+              {scheduleSavedToast && (
+                <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-2">
+                  <Check className="w-4 h-4 text-emerald-600" />
+                  <span>Horário atualizado na barra superior com sucesso!</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-100">
+                <button
+                  type="button"
+                  onClick={() => setIsScheduleModalOpen(false)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-semibold text-neutral-600 hover:bg-neutral-100 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Salvar Horário</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* If Order Placed: Confirmation Screen */}
       {lastPlacedOrder ? (
