@@ -37,15 +37,30 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
     setLoading(true);
     setFeedback(null);
 
+    let savedTenant: any = null;
+    try {
+      const rawTenant = localStorage.getItem('aladay_prod_tenant_v2');
+      if (rawTenant) savedTenant = JSON.parse(rawTenant);
+    } catch {
+      // ignore
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
     try {
       const resp = await fetch('/api/v1/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           email,
           password,
+          clientSessionUser: currentSession?.user || null,
+          clientTenant: savedTenant,
         }),
       });
+      clearTimeout(timeoutId);
       const data = await resp.json();
 
       if (!resp.ok || !data.success) {
@@ -58,14 +73,22 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
           authMethod: 'password',
           authenticatedAt: data.authenticatedAt,
         };
-        onSessionAuthenticated(newSession);
         setFeedback({
           type: 'success',
-          message: `Bem-vindo, ${data.user.name}! Acesso liberado.`,
+          message: `Bem-vindo, ${data.user.name}! Redirecionando para o painel...`,
         });
+        onSessionAuthenticated(newSession);
+        onNavigateToAdmin();
       }
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message || 'Erro de conexão com o servidor.' });
+      clearTimeout(timeoutId);
+      setFeedback({
+        type: 'error',
+        message:
+          err?.name === 'AbortError'
+            ? 'Tempo limite excedido ao conectar ao servidor. Tente novamente.'
+            : err.message || 'Erro de conexão com o servidor.',
+      });
     } finally {
       setLoading(false);
     }
@@ -132,12 +155,13 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
           authMethod: 'whatsapp_otp',
           authenticatedAt: data.authenticatedAt,
         };
-        onSessionAuthenticated(newSession);
         setOtpRequested(false);
         setFeedback({
           type: 'success',
           message: `Autenticado com sucesso! Bem-vindo, ${data.user.name}.`,
         });
+        onSessionAuthenticated(newSession);
+        onNavigateToAdmin();
       }
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message || 'Erro ao validar código.' });

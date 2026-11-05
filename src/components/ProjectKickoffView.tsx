@@ -198,6 +198,22 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
         setSubscriptionConfirmed(true);
         setLockedStepWarning(false);
         if (!phone) setPhone(subscriberPhone);
+
+        // Pre-register owner credentials immediately in Step 1 so login works right away
+        fetch('/api/v1/auth/register-tenant-owner', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: subscriberName.trim(),
+            email: subscriberEmail.trim(),
+            password: subscriberPassword,
+            phone: subscriberPhone.replace(/\D/g, ''),
+            tenantId: `tenant_${onboardingTempSlug}`,
+            tenantSlug: 'aladay',
+            tenantName: subscriberName.trim(),
+          }),
+        }).catch(() => {});
+
         setActiveStep('restaurant');
       } catch {
         setSubError('Erro de comunicação ao ativar o teste grátis de 15 dias. Tente novamente.');
@@ -419,6 +435,9 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
         },
       };
 
+      setCreatedTenant(tenantData);
+      onTenantCreated(tenantData);
+
       // Register & authenticate the subscriber as TENANT_OWNER of this restaurant
       if (subscriberEmail && subscriberPassword) {
         try {
@@ -451,9 +470,6 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
           // ignore auth registration fallback error
         }
       }
-
-      setCreatedTenant(tenantData);
-      onTenantCreated(tenantData);
     } catch {
       setTenantError('Erro ao criar o cardápio do restaurante. Tente novamente.');
     } finally {

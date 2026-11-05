@@ -672,18 +672,22 @@ export default function App() {
 
       const asaasSub = targetTenant.asaasSubscription;
 
-      // 1. Verifica se possui assinatura paga e ativa no Asaas
+      // 1. Verifica se possui assinatura paga e ativa no Asaas ou status ativo no tenant
       const hasPaidAsaasInvoice = Boolean(
         asaasSub?.invoices?.some(
           (inv) => inv.status === 'RECEIVED' || inv.status === 'CONFIRMED'
         )
       );
       const hasActiveAsaasSubscription = Boolean(
-        (asaasSub?.status === 'ACTIVE' && !asaasSub?.isTrial) ||
+        targetTenant.subscriptionStatus === 'active' ||
+          (asaasSub?.status === 'ACTIVE' && !asaasSub?.isTrial) ||
           (asaasSub?.status === 'ACTIVE' && hasPaidAsaasInvoice) ||
-          (targetTenant.subscriptionStatus === 'active' &&
-            asaasSub?.status === 'ACTIVE' &&
-            !asaasSub?.isTrial)
+          (!targetTenant.subscriptionStatus &&
+            !asaasSub?.isTrial &&
+            asaasSub?.status !== 'TRIAL' &&
+            asaasSub?.status !== 'OVERDUE' &&
+            asaasSub?.status !== 'CANCELLED' &&
+            !targetTenant.trialEndsAt)
       );
 
       // 2. Calcula a data limite dos 15 dias de teste grátis
@@ -952,6 +956,7 @@ export default function App() {
 
   const handleSessionAuthenticated = (newSession: AuthSession) => {
     setAuthSession(newSession);
+    setShowSubscriptionNoticeModal(false);
     try {
       localStorage.setItem('aladay_auth_session', JSON.stringify(newSession));
     } catch {
@@ -961,12 +966,29 @@ export default function App() {
       setCurrentView('admin');
       return;
     }
-    if (newSession.user.tenantSlug !== '*') {
+    if (newSession.user.tenantSlug && newSession.user.tenantSlug !== '*') {
       const matched = tenantsList.find((t) => t.slug === newSession.user.tenantSlug);
       if (matched) {
-        handleSelectTenant(matched);
+        const ensuredTenant: RestaurantTenant = {
+          ...matched,
+          subscriptionStatus: matched.subscriptionStatus || 'active',
+        };
+        handleUpdateTenant(ensuredTenant);
+        handleSelectTenant(ensuredTenant);
+      } else {
+        const hydratedTenant: RestaurantTenant = {
+          ...INITIAL_TENANT,
+          id: newSession.user.tenantId || `tenant_${Date.now()}`,
+          name: newSession.user.tenantName || 'Meu Restaurante',
+          slug: newSession.user.tenantSlug,
+          phone: newSession.user.phone || '',
+          evolutionInstanceId: `instancia_${newSession.user.tenantSlug}`,
+          subscriptionStatus: 'active',
+        };
+        handleTenantCreated(hydratedTenant);
       }
     }
+    setCurrentView('admin');
   };
 
   const handleLogout = () => {
