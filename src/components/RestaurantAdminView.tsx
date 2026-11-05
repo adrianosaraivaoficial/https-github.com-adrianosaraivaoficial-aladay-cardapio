@@ -1400,25 +1400,9 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
           </div>
         </div>
 
-        {/* Tenant selector and WhatsApp Status */}
+        {/* Tenant selector (Super Admin) and WhatsApp Status */}
         <div className="flex flex-wrap items-center gap-3">
-          {authSession && authSession.user.role !== 'SUPER_ADMIN' ? (
-            <div className="flex items-center gap-2 px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-md text-xs text-blue-900">
-              <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
-              <span>
-                RLS Isolado: <strong>{tenant.name}</strong> ({authSession.user.role})
-              </span>
-              {onOpenAuthPortal && (
-                <button
-                  type="button"
-                  onClick={onOpenAuthPortal}
-                  className="underline font-bold text-blue-800 hover:text-blue-950 ml-1"
-                >
-                  Trocar Sessão JWT
-                </button>
-              )}
-            </div>
-          ) : (
+          {authSession?.user?.role === 'SUPER_ADMIN' &&
             allTenants &&
             allTenants.length > 1 &&
             onSelectTenant && (
@@ -1439,7 +1423,6 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                   ))}
                 </select>
               </div>
-            )
           )}
 
           <button
@@ -1626,110 +1609,6 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
         {/* ============================================================== */}
         {activeTab === 'menu' && (
           <div className="space-y-5">
-            {/* Quick Direct Pix Configuration Form Card (Chave Pix & Nome do Beneficiário) */}
-            <form
-              onSubmit={handleSavePixConfig}
-              className="bg-gradient-to-r from-blue-50 via-white to-blue-50/40 border border-blue-200 rounded-xl p-4 sm:p-5 shadow-2xs space-y-3"
-            >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-blue-100">
-                <div className="flex items-start gap-2.5">
-                  <div className="p-2 rounded-lg bg-blue-600 text-white shrink-0 mt-0.5 shadow-2xs">
-                    <QrCode className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Recebimento Pix Direto do Restaurante ({tenant.name})
-                      </h3>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
-                        100% Direto na Conta do Proprietário
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 mt-0.5">
-                      Defina a <strong>Chave Pix</strong> e o <strong>Nome do Beneficiário</strong> deste restaurante para gerar o QR Code Pix dinâmico no checkout do consumidor.
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('settings')}
-                  className="text-[11px] font-semibold text-blue-700 hover:text-blue-950 underline shrink-0 self-start sm:self-center cursor-pointer"
-                >
-                  Configurações avançadas Pix &rarr;
-                </button>
-              </div>
-
-              {pixSaveNotice && (
-                <div className="p-2.5 bg-blue-100/80 border border-blue-300 rounded-lg text-xs text-blue-900 font-semibold flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-blue-700 shrink-0" />
-                  <span>{pixSaveNotice}</span>
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                <div className="sm:col-span-2">
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Tipo de Chave
-                  </label>
-                  <select
-                    value={pixKeyType}
-                    onChange={(e) => setPixKeyType(e.target.value as PixGatewayConfig['pixKeyType'])}
-                    className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-900 font-medium focus:border-blue-600 outline-none"
-                  >
-                    <option value="cnpj">CNPJ</option>
-                    <option value="cpf">CPF</option>
-                    <option value="email">E-mail</option>
-                    <option value="phone">Celular (+55)</option>
-                    <option value="random">Aleatória (EVP)</option>
-                  </select>
-                </div>
-
-                <div className="sm:col-span-4">
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Chave Pix
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={pixKey}
-                    onChange={(e) => setPixKey(e.target.value)}
-                    placeholder="Ex: 12.345.678/0001-90, email@loja.com ou +5511999999999"
-                    className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-900 font-mono focus:border-blue-600 outline-none"
-                  />
-                </div>
-
-                <div className="sm:col-span-4">
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    Nome do Beneficiário
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={60}
-                    value={pixMerchantName}
-                    onChange={(e) => setPixMerchantName(e.target.value)}
-                    placeholder="Nome do Proprietário ou Razão Social"
-                    className="w-full p-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-900 font-medium focus:border-blue-600 outline-none"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <button
-                    type="submit"
-                    disabled={pixSaving}
-                    className="w-full py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50 cursor-pointer"
-                  >
-                    {pixSaving ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Check className="w-3.5 h-3.5" />
-                    )}
-                    <span>{pixSaving ? 'Salvando...' : 'Salvar Pix'}</span>
-                  </button>
-                </div>
-              </div>
-            </form>
-
             {/* Split Screen Container (if toggled) */}
             <div className={`grid gap-6 ${showLivePreviewSplit ? 'grid-cols-1 xl:grid-cols-12' : 'grid-cols-1'}`}>
               {/* Left Column: Product Management */}
