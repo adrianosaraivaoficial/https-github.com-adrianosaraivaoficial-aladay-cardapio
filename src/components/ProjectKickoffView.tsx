@@ -76,6 +76,43 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
 
   const onboardingTempSlug = `assinante_${subscriberCpfCnpj.replace(/\D/g, '') || 'novo'}`;
 
+  // Anti-autofill lifecycle: Garante que credenciais salvas do administrador geral (ex: admin@aladay.com.br)
+  // não sejam injetadas indevidamente pelo gerenciador de senhas do navegador no formulário de novo assinante.
+  useEffect(() => {
+    // Limpeza explícita na montagem
+    setSubscriberEmail('');
+    setSubscriberPassword('');
+
+    const sanitizeInjectedAutofill = () => {
+      const emailEl = document.getElementById('aladay_signup_subscriber_email') as HTMLInputElement | null;
+      const passEl = document.getElementById('aladay_signup_subscriber_password') as HTMLInputElement | null;
+
+      if (emailEl) {
+        const val = (emailEl.value || '').trim().toLowerCase();
+        if (
+          val.includes('admin@aladay') ||
+          val.includes('adm@aladay') ||
+          val === 'admin@aladay.com.br' ||
+          val === 'adm@aladay.com.br'
+        ) {
+          emailEl.value = '';
+          setSubscriberEmail('');
+          if (passEl) {
+            passEl.value = '';
+            setSubscriberPassword('');
+          }
+        }
+      }
+    };
+
+    // Varreduras nos primeiros milissegundos pós-renderização para interceptar o autofill assíncrono do Chrome/Edge/Safari
+    const timers = [40, 120, 280, 600, 1000].map((ms) => setTimeout(sanitizeInjectedAutofill, ms));
+
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+    };
+  }, []);
+
   // Automated live polling to detect when Pix invoice is paid
   useEffect(() => {
     if (!pixInvoiceData || subscriptionConfirmed) return;
@@ -117,6 +154,16 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
 
     if (!subscriberName.trim() || !subscriberCpfCnpj.trim() || !subscriberEmail.trim() || !subscriberPassword.trim() || !subscriberPhone.trim()) {
       setSubError('Preencha todos os dados cadastrais do assinante e defina sua senha de acesso.');
+      return;
+    }
+
+    const normalizedEmail = subscriberEmail.trim().toLowerCase();
+    if (
+      normalizedEmail === 'admin@aladay.com.br' ||
+      normalizedEmail === 'adm@aladay.com.br' ||
+      (normalizedEmail.endsWith('@aladay.com.br') && (normalizedEmail.startsWith('admin') || normalizedEmail.startsWith('adm')))
+    ) {
+      setSubError('O e-mail admin@aladay.com.br pertence à administração geral da plataforma. Por favor, utilize o e-mail oficial do seu restaurante ou responsável para criar a nova conta.');
       return;
     }
 
@@ -618,15 +665,50 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
               </div>
             )}
 
-            <form onSubmit={handleSubscribeSubmit} className="space-y-5">
+            <form onSubmit={handleSubscribeSubmit} autoComplete="off" className="space-y-5">
+              {/* Armadilha invisível anti-autofill: navegadores tentam preencher o primeiro par texto/senha encontrado */}
+              <div
+                className="sr-only"
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  opacity: 0,
+                  height: 0,
+                  width: 0,
+                  overflow: 'hidden',
+                  pointerEvents: 'none',
+                  zIndex: -1,
+                }}
+              >
+                <input
+                  type="text"
+                  name="aladay_decoy_prevent_user"
+                  id="aladay_decoy_prevent_user"
+                  tabIndex={-1}
+                  autoComplete="off"
+                  defaultValue=""
+                />
+                <input
+                  type="password"
+                  name="aladay_decoy_prevent_pass"
+                  id="aladay_decoy_prevent_pass"
+                  tabIndex={-1}
+                  autoComplete="new-password"
+                  defaultValue=""
+                />
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label htmlFor="aladay_signup_subscriber_name" className="block text-xs font-semibold text-slate-700 mb-1">
                     Nome Completo ou Razão Social
                   </label>
                   <input
                     type="text"
                     required
+                    id="aladay_signup_subscriber_name"
+                    name="aladay_signup_subscriber_name"
+                    autoComplete="off"
                     value={subscriberName}
                     onChange={(e) => setSubscriberName(e.target.value)}
                     placeholder="Ex: Carlos Eduardo Mendes"
@@ -635,12 +717,15 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label htmlFor="aladay_signup_subscriber_doc" className="block text-xs font-semibold text-slate-700 mb-1">
                     CPF ou CNPJ do Assinante
                   </label>
                   <input
                     type="text"
                     required
+                    id="aladay_signup_subscriber_doc"
+                    name="aladay_signup_subscriber_doc"
+                    autoComplete="off"
                     value={subscriberCpfCnpj}
                     onChange={(e) => setSubscriberCpfCnpj(e.target.value)}
                     placeholder="00.000.000/0001-00 ou CPF"
@@ -651,12 +736,35 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    E-mail de Acesso ao Painel
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label htmlFor="aladay_signup_subscriber_email" className="block text-xs font-semibold text-slate-700">
+                      E-mail de Acesso ao Painel
+                    </label>
+                    {subscriberEmail && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSubscriberEmail('');
+                          setSubscriberPassword('');
+                        }}
+                        className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline cursor-pointer font-medium"
+                      >
+                        Limpar
+                      </button>
+                    )}
+                  </div>
                   <input
+                    id="aladay_signup_subscriber_email"
+                    name="aladay_signup_subscriber_email"
                     type="email"
                     required
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    data-lpignore="true"
+                    data-1p-ignore="true"
+                    data-form-type="other"
                     value={subscriberEmail}
                     onChange={(e) => setSubscriberEmail(e.target.value)}
                     placeholder="contato@seurestaurante.com.br"
@@ -665,13 +773,33 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Crie sua Senha de Acesso
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label htmlFor="aladay_signup_subscriber_password" className="block text-xs font-semibold text-slate-700">
+                      Crie sua Senha de Acesso
+                    </label>
+                    {subscriberPassword && (
+                      <button
+                        type="button"
+                        onClick={() => setSubscriberPassword('')}
+                        className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline cursor-pointer font-medium"
+                      >
+                        Limpar
+                      </button>
+                    )}
+                  </div>
                   <input
+                    id="aladay_signup_subscriber_password"
+                    name="aladay_signup_subscriber_password"
                     type="password"
                     required
                     minLength={6}
+                    autoComplete="new-password"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    data-lpignore="true"
+                    data-1p-ignore="true"
+                    data-form-type="other"
                     value={subscriberPassword}
                     onChange={(e) => setSubscriberPassword(e.target.value)}
                     placeholder="Mínimo 6 caracteres"
@@ -681,12 +809,15 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label htmlFor="aladay_signup_subscriber_phone" className="block text-xs font-semibold text-slate-700 mb-1">
                   WhatsApp do Responsável (com DDD)
                 </label>
                 <input
+                  id="aladay_signup_subscriber_phone"
+                  name="aladay_signup_subscriber_phone"
                   type="tel"
                   required
+                  autoComplete="off"
                   value={subscriberPhone}
                   onChange={(e) => setSubscriberPhone(e.target.value)}
                   placeholder="Ex: 11987654321"

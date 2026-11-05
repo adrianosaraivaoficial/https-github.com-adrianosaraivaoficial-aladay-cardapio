@@ -361,6 +361,7 @@ export default function App() {
   const [showSubscriptionNoticeModal, setShowSubscriptionNoticeModal] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [topMenuLinkCopied, setTopMenuLinkCopied] = useState<boolean>(false);
+  const [kickoffSessionKey, setKickoffSessionKey] = useState<number>(() => Date.now());
 
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => {
     try {
@@ -962,9 +963,11 @@ export default function App() {
     setAuthSession(null);
     try {
       localStorage.removeItem('aladay_auth_session');
+      sessionStorage.clear();
     } catch {
       // ignore
     }
+    setKickoffSessionKey(Date.now());
     setCurrentView('home');
   };
 
@@ -1500,6 +1503,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
+                    setKickoffSessionKey(Date.now());
                     handleNavigateSafely('kickoff');
                     setIsMobileMenuOpen(false);
                   }}
@@ -1776,7 +1780,10 @@ export default function App() {
             tenant={tenant}
             authSession={authSession}
             onNavigateToLogin={() => handleNavigateSafely('auth')}
-            onNavigateToSetup={() => handleNavigateSafely('kickoff')}
+            onNavigateToSetup={() => {
+              setKickoffSessionKey(Date.now());
+              handleNavigateSafely('kickoff');
+            }}
             onNavigateToDemoMenu={() => handleNavigateSafely('consumer')}
             onNavigateToAdmin={() => handleNavigateSafely('admin')}
             onNavigateToTerms={() => {
@@ -1803,6 +1810,7 @@ export default function App() {
 
         {currentView === 'kickoff' && (
           <ProjectKickoffView
+            key={`kickoff_session_${kickoffSessionKey}`}
             onTenantCreated={handleTenantCreated}
             onNavigateToView={(view) => handleNavigateSafely(view)}
             onSessionAuthenticated={handleSessionAuthenticated}
@@ -2038,6 +2046,7 @@ export default function App() {
                 type="button"
                 onClick={() => {
                   setShowSubscriptionNoticeModal(false);
+                  setKickoffSessionKey(Date.now());
                   setCurrentView('kickoff');
                 }}
                 className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm shadow-blue-600/20"
