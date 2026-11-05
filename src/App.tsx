@@ -1997,6 +1997,7 @@ export default function App() {
             onSelectTenant={handleSelectTenant}
             onUpdateTenant={handleUpdateTenant}
             onUpdateOrderStatus={handleUpdateOrderStatus}
+            onAddOrder={handleOrderCreated}
             onToggleProductAvailability={handleToggleProductAvailability}
             onAddProduct={handleAddProduct}
             onUpdateProduct={handleUpdateProduct}

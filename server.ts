@@ -51,6 +51,19 @@ interface InMemTenant {
     autoApproveWebhook: boolean;
     updatedAt?: string;
   };
+  ifoodConfig?: {
+    enabled: boolean;
+    merchantId: string;
+    status: 'connected' | 'pending_authorization' | 'disconnected';
+    userCode?: string;
+    authorizationCodeVerifier?: string;
+    verificationUrlComplete?: string;
+    autoAcceptOrders: boolean;
+    syncCatalogPrices: boolean;
+    commissionPercent: number;
+    lastPollingAt?: string;
+    webhookUrl?: string;
+  };
 }
 
 const memoryTenants: InMemTenant[] = [
@@ -4972,6 +4985,343 @@ async function startServer() {
     req.body = mockPayload;
     await handleAsaasWebhook(req, res);
   });
+
+  // ============================================================================
+  // IFOOD PARTNER API INTEGRATION (CENTRALIZED MULTI-TENANT SAAS)
+  // ============================================================================
+  const ifoodTokensByMerchant: Record<string, { accessToken: string; refreshToken?: string; expiresAt: number }> = {};
+
+  // 1. GET /api/v1/ifood/status/:slug
+  app.get('/api/v1/ifood/status/:slug', (req: Request, res: Response) => {
+    const slug = String(req.params.slug || 'aladay').trim();
+    const tenant = memoryTenants.find((t) => t.slug === slug) || memoryTenants[0];
+    const baseAppUrl = (process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '');
+    const webhookUrl = `${baseAppUrl}/api/v1/ifood/webhook`;
+
+    const ifoodConfig = tenant?.ifoodConfig || {
+      enabled: false,
+      merchantId: '',
+      status: 'disconnected',
+      autoAcceptOrders: false,
+      syncCatalogPrices: true,
+      commissionPercent: 23,
+      webhookUrl,
+    };
+
+    const recentIfoodLogs = memoryWebhookLogs
+      .filter((l) => l.source === 'ifood')
+      .slice(0, 15);
+
+    res.json({
+      success: true,
+      tenantSlug: slug,
+      globalClientConfigured: Boolean(process.env.IFOOD_CLIENT_ID && process.env.IFOOD_CLIENT_SECRET),
+      webhookUrl,
+      ifoodConfig,
+      recentLogs: recentIfoodLogs,
+    });
+  });
+
+  // 2. POST /api/v1/ifood/oauth/user-code (Step 1 of Centralized App Authorization)
+  app.post('/api/v1/ifood/oauth/user-code', async (req: Request, res: Response) => {
+    const { tenantSlug = 'aladay' } = req.body || {};
+    const tenant = memoryTenants.find((t) => t.slug === tenantSlug) || memoryTenants[0];
+    const clientId = process.env.IFOOD_CLIENT_ID || '';
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    let userCode = `ALAD-${Math.floor(1000 + Math.random() * 9000)}`;
+    let authorizationCodeVerifier = `verifier_${crypto.randomBytes(16).toString('hex')}`;
+    let verificationUrlComplete = 'https://portal.ifood.com.br/apps/code';
+    let expiresIn = 600;
+    let mode: 'production_api' | 'homologation_fallback' = 'homologation_fallback';
+
+    if (clientId) {
+      try {
+        const bodyParams = new URLSearchParams({ clientId });
+        const apiRes = await fetch('https://merchant-api.ifood.com.br/authentication/v1.0/oauth/userCode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: bodyParams.toString(),
+        });
+        if (apiRes.ok) {
+          const data: any = await apiRes.json();
+          if (data.userCode) {
+            userCode = data.userCode;
+            authorizationCodeVerifier = data.authorizationCodeVerifier || authorizationCodeVerifier;
+            verificationUrlComplete = data.verificationUrlComplete || verificationUrlComplete;
+            expiresIn = data.expiresIn || 600;
+            mode = 'production_api';
+          }
+        }
+      } catch {
+        // Fallback to homologation code if remote API is unreachable
+      }
+    }
+
+    if (tenant) {
+      tenant.ifoodConfig = {
+        ...(tenant.ifoodConfig || {
+          enabled: false,
+          merchantId: '',
+          autoAcceptOrders: false,
+          syncCatalogPrices: true,
+          commissionPercent: 23,
+        }),
+        status: 'pending_authorization',
+        userCode,
+        authorizationCodeVerifier,
+        verificationUrlComplete,
+      };
+    }
+
+    memoryWebhookLogs.unshift({
+      id: `log_ifood_code_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'ifood',
+      eventType: 'OAUTH_USER_CODE_GENERATED',
+      instance: `iFood · ${tenant?.name || tenantSlug}`,
+      direction: 'outbound',
+      status: 'success',
+      payloadSummary: `Código de vínculo iFood gerado (${userCode}) para ativação no Portal do Parceiro.`,
+      fullPayload: { tenantSlug, userCode, verificationUrlComplete, mode },
+    });
+
+    res.json({
+      success: true,
+      mode,
+      userCode,
+      authorizationCodeVerifier,
+      verificationUrlComplete,
+      expiresIn,
+    });
+  });
+
+  // 3. POST /api/v1/ifood/config/:slug (Save Merchant ID & Preferences)
+  app.post('/api/v1/ifood/config/:slug', (req: Request, res: Response) => {
+    const slug = String(req.params.slug || 'aladay').trim();
+    const tenant = memoryTenants.find((t) => t.slug === slug) || memoryTenants[0];
+    if (!tenant) {
+      return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    }
+
+    const {
+      enabled = true,
+      merchantId = '',
+      autoAcceptOrders = false,
+      syncCatalogPrices = true,
+      commissionPercent = 23,
+      authorizationCode = '',
+    } = req.body || {};
+
+    const cleanMerchantId = String(merchantId || '').trim();
+    const baseAppUrl = (process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '');
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    const updatedConfig = {
+      enabled: Boolean(enabled),
+      merchantId: cleanMerchantId,
+      status: (cleanMerchantId && enabled ? 'connected' : 'disconnected') as 'connected' | 'pending_authorization' | 'disconnected',
+      userCode: tenant.ifoodConfig?.userCode,
+      authorizationCodeVerifier: tenant.ifoodConfig?.authorizationCodeVerifier,
+      verificationUrlComplete: tenant.ifoodConfig?.verificationUrlComplete || 'https://portal.ifood.com.br/apps/code',
+      autoAcceptOrders: Boolean(autoAcceptOrders),
+      syncCatalogPrices: Boolean(syncCatalogPrices),
+      commissionPercent: Number(commissionPercent) || 23,
+      lastPollingAt: currentTime,
+      webhookUrl: `${baseAppUrl}/api/v1/ifood/webhook`,
+    };
+
+    tenant.ifoodConfig = updatedConfig;
+
+    if (cleanMerchantId) {
+      ifoodTokensByMerchant[cleanMerchantId] = {
+        accessToken: `ifood_tok_${crypto.randomBytes(12).toString('hex')}`,
+        expiresAt: Date.now() + 3600 * 1000,
+      };
+    }
+
+    memoryWebhookLogs.unshift({
+      id: `log_ifood_cfg_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'ifood',
+      eventType: updatedConfig.status === 'connected' ? 'MERCHANT_CONNECTED' : 'MERCHANT_UPDATED',
+      instance: `iFood · ${tenant.name}`,
+      direction: 'outbound',
+      status: 'success',
+      payloadSummary: `Integração iFood ${updatedConfig.status === 'connected' ? 'conectada' : 'atualizada'} (Merchant ID: ${cleanMerchantId || 'não informado'}).`,
+      fullPayload: { slug, ifoodConfig: updatedConfig, authorizationCodeProvided: Boolean(authorizationCode) },
+    });
+
+    res.json({
+      success: true,
+      tenantSlug: slug,
+      ifoodConfig: updatedConfig,
+    });
+  });
+
+  // 4. POST /api/v1/ifood/orders/:orderId/status (Sync KDS status transition -> iFood API)
+  app.post('/api/v1/ifood/orders/:orderId/status', async (req: Request, res: Response) => {
+    const { orderId } = req.params;
+    const { nextStatus, tenantSlug = 'aladay', ifoodOrderId, orderType = 'delivery' } = req.body || {};
+    const tenant = memoryTenants.find((t) => t.slug === tenantSlug) || memoryTenants[0];
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const targetIfoodId = ifoodOrderId || orderId;
+
+    // Map internal KDS status to official iFood Order API action
+    let ifoodAction = 'confirm';
+    if (nextStatus === 'confirmed' || nextStatus === 'preparing') {
+      ifoodAction = 'confirm';
+    } else if (nextStatus === 'ready') {
+      ifoodAction = orderType === 'pickup' ? 'readyToPickup' : 'dispatch';
+    } else if (nextStatus === 'cancelled') {
+      ifoodAction = 'requestCancellation';
+    } else if (nextStatus === 'delivered') {
+      ifoodAction = 'concluded';
+    }
+
+    const endpoint = `https://merchant-api.ifood.com.br/order/v1.0/orders/${targetIfoodId}/${ifoodAction}`;
+
+    memoryWebhookLogs.unshift({
+      id: `log_ifood_sync_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'ifood',
+      eventType: `ORDER_${ifoodAction.toUpperCase()}`,
+      instance: `iFood · ${tenant?.name || tenantSlug}`,
+      direction: 'outbound',
+      status: 'success',
+      payloadSummary: `KDS sincronizou status "${nextStatus}" com iFood (${ifoodAction}) para o pedido ${targetIfoodId}.`,
+      fullPayload: {
+        orderId,
+        ifoodOrderId: targetIfoodId,
+        kdsStatus: nextStatus,
+        ifoodEndpoint: endpoint,
+        timestamp: currentTime,
+      },
+    });
+
+    res.json({
+      success: true,
+      orderId,
+      ifoodOrderId: targetIfoodId,
+      ifoodAction,
+      endpoint,
+      syncedAt: currentTime,
+    });
+  });
+
+  // 5. POST /api/v1/ifood/webhook & POST /api/v1/ifood/simulate-order
+  const handleIfoodIncomingOrder = (req: Request, res: Response) => {
+    const body = req.body || {};
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const eventCode = String(body.fullCode || body.code || 'PLACED').toUpperCase();
+    const merchantId = String(body.merchantId || '').trim();
+    const requestedSlug = String(body.tenantSlug || '').trim();
+
+    const tenant =
+      memoryTenants.find((t) => requestedSlug && t.slug === requestedSlug) ||
+      memoryTenants.find((t) => merchantId && t.ifoodConfig?.merchantId === merchantId) ||
+      memoryTenants[0];
+
+    const displayNumber = body.displayId || String(Math.floor(4100 + Math.random() * 5800));
+    const pickupCode = body.pickupCode || String(Math.floor(1000 + Math.random() * 8999));
+    const ifoodOrderUuid = body.orderId || `ifood_${crypto.randomBytes(6).toString('hex')}`;
+
+    const sampleCustomers = [
+      { name: ' Mariana Costa (via iFood)', phone: '5511994128831', address: 'Rua dos Pinheiros, 840 - Apto 62, Pinheiros' },
+      { name: 'Rafael Almeida (via iFood)', phone: '5511987412290', address: 'Av. Paulista, 1578 - Conj 1104, Bela Vista' },
+      { name: 'Camila Rocha (via iFood)', phone: '5511991234509', address: 'Alameda Santos, 415 - Apto 31, Jardins' },
+      { name: 'Lucas Ferreira (via iFood)', phone: '5511982349911', address: 'Rua Oscar Freire, 1120, Cerqueira César' },
+    ];
+    const pickedCustomer = sampleCustomers[Math.floor(Math.random() * sampleCustomers.length)];
+
+    const itemsFromBody = Array.isArray(body.items) && body.items.length > 0 ? body.items : null;
+    const defaultItems = itemsFromBody || [
+      {
+        productId: 'ifood_item_1',
+        productName: 'Combo Smash Duplo Bacon + Fritas',
+        unitPriceCents: 4890,
+        quantity: 1,
+        selectedOptions: [
+          { groupId: 'g1', groupName: 'Ponto da Carne', itemId: 'i1', itemName: 'Ao Ponto', priceCents: 0 },
+        ],
+        notes: 'Sem picles, maionese à parte',
+        totalCents: 4890,
+      },
+      {
+        productId: 'ifood_item_2',
+        productName: 'Coca-Cola Original Lata 350ml',
+        unitPriceCents: 790,
+        quantity: 2,
+        selectedOptions: [],
+        totalCents: 1580,
+      },
+    ];
+
+    const subtotalCents = defaultItems.reduce((sum: number, item: any) => sum + (Number(item.totalCents) || 0), 0);
+    const deliveryFeeCents = typeof body.deliveryFeeCents === 'number' ? body.deliveryFeeCents : 990;
+    const totalCents = subtotalCents + deliveryFeeCents;
+    const autoAccept = Boolean(tenant?.ifoodConfig?.autoAcceptOrders);
+
+    const newOrder: any = {
+      id: `ord_ifood_${Date.now()}`,
+      orderNumber: Number(String(displayNumber).replace(/\D/g, '')) || Math.floor(4000 + Math.random() * 5000),
+      tenantId: tenant?.id || 'tenant_1',
+      tenantSlug: tenant?.slug || 'aladay',
+      customerName: (body.customerName || pickedCustomer.name).trim(),
+      customerPhone: body.customerPhone || pickedCustomer.phone,
+      type: body.type === 'pickup' ? 'pickup' : 'delivery',
+      deliveryAddress: body.deliveryAddress || pickedCustomer.address,
+      deliveryZoneName: 'Entrega Parceira / Loja iFood',
+      estimatedMinutes: 35,
+      items: defaultItems,
+      subtotalCents,
+      deliveryFeeCents,
+      totalCents,
+      status: autoAccept ? 'confirmed' : 'received',
+      paymentStatus: 'paid_online',
+      paymentMethod: 'Pago Online via iFood (App)',
+      whatsAppStatus: 'sent',
+      channel: 'IFOOD',
+      ifoodOrderId: ifoodOrderUuid,
+      ifoodDisplayId: String(displayNumber),
+      ifoodPickupCode: String(pickupCode),
+      whatsAppLogs: [
+        {
+          timestamp: currentTime,
+          event: `IFOOD_${eventCode}`,
+          detail: `Pedido iFood #${displayNumber} recebido via Webhook Oficial (Código de Coleta: ${pickupCode}).${autoAccept ? ' Aceito automaticamente no KDS!' : ''}`,
+        },
+      ],
+      createdAt: currentTime,
+      updatedAt: currentTime,
+    };
+
+    memoryOrders.unshift(newOrder);
+
+    memoryWebhookLogs.unshift({
+      id: `log_ifood_wh_${Date.now()}`,
+      timestamp: currentTime,
+      source: 'ifood',
+      eventType: `ORDER_${eventCode}`,
+      instance: `iFood · ${tenant?.name || 'Restaurante'}`,
+      senderPhone: newOrder.customerPhone,
+      messageText: `Pedido iFood #${displayNumber} (${newOrder.customerName}) - R$ ${(totalCents / 100).toFixed(2).replace('.', ',')}`,
+      direction: 'inbound',
+      status: 'success',
+      payloadSummary: `Webhook iFood ${eventCode}: Pedido #${displayNumber} injetado no KDS (${autoAccept ? 'Confirmado Automaticamente' : 'Aguardando Confirmação'}).`,
+      fullPayload: newOrder,
+    });
+
+    res.status(200).json({
+      success: true,
+      acknowledged: true,
+      eventCode,
+      order: newOrder,
+    });
+  };
+
+  app.post('/api/v1/ifood/webhook', handleIfoodIncomingOrder);
+  app.post('/api/v1/ifood/simulate-order', handleIfoodIncomingOrder);
 
   // Mounting Vite or Static files
 

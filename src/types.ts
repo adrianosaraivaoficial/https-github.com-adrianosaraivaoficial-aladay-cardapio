@@ -1,7 +1,7 @@
 export type OrderStatus = 'received' | 'confirmed' | 'preparing' | 'ready' | 'delivered' | 'cancelled';
 export type PaymentStatus = 'pending' | 'paid_on_delivery' | 'paid_online' | 'cancelled';
 export type WhatsAppStatus = 'queued' | 'sending' | 'sent' | 'delivered' | 'failed';
-export type UserRole = 'owner' | 'manager' | 'kitchen';
+export type UserRole = 'owner' | 'manager' | 'waiter' | 'kitchen';
 
 export interface MemberSession {
   userId: string;
@@ -105,6 +105,23 @@ export interface RestaurantTenant {
   asaasSubscription?: AsaasSubscriptionData;
   subscriptionStatus?: 'active' | 'trial' | 'past_due' | 'suspended';
   trialEndsAt?: string;
+  ifoodConfig?: IfoodIntegrationConfig;
+  tablesCount?: number;
+  serviceFeePercent?: number;
+}
+
+export interface IfoodIntegrationConfig {
+  enabled: boolean;
+  merchantId: string;
+  status: 'connected' | 'pending_authorization' | 'disconnected';
+  userCode?: string;
+  authorizationCodeVerifier?: string;
+  verificationUrlComplete?: string;
+  autoAcceptOrders: boolean;
+  syncCatalogPrices: boolean;
+  commissionPercent: number;
+  lastPollingAt?: string;
+  webhookUrl?: string;
 }
 
 export type AsaasBillingType = 'PIX' | 'CREDIT_CARD' | 'BOLETO';
@@ -197,7 +214,10 @@ export interface Order {
   tenantSlug?: string;
   customerName: string;
   customerPhone: string;
-  type: 'delivery' | 'pickup';
+  type: 'delivery' | 'pickup' | 'dine_in';
+  tableNumber?: string;
+  waiterName?: string;
+  serviceFeeCents?: number;
   deliveryAddress?: string;
   deliveryZoneName?: string;
   estimatedMinutes?: number;
@@ -209,6 +229,10 @@ export interface Order {
   paymentStatus: PaymentStatus;
   paymentMethod: string;
   whatsAppStatus: WhatsAppStatus;
+  channel?: 'DIRECT' | 'IFOOD';
+  ifoodOrderId?: string;
+  ifoodDisplayId?: string;
+  ifoodPickupCode?: string;
   pixTransaction?: PixTransaction;
   whatsAppLogs: Array<{
     timestamp: string;
@@ -313,7 +337,7 @@ export interface SubscriptionInfo {
 export interface WebhookLogEvent {
   id: string;
   timestamp: string;
-  source: 'evolution' | 'n8n' | 'system' | 'pix_gateway' | 'auth_guard' | 'asaas';
+  source: 'evolution' | 'n8n' | 'system' | 'pix_gateway' | 'auth_guard' | 'asaas' | 'ifood';
   eventType: string;
   instance: string;
   senderPhone?: string;

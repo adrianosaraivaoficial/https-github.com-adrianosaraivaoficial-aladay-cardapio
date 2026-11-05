@@ -26,6 +26,9 @@ import {
   MapPin,
   CheckCircle2,
   HelpCircle,
+  Utensils,
+  Bike,
+  Users,
 } from 'lucide-react';
 import { AuthSession, RestaurantTenant } from '../types';
 import {
@@ -315,10 +318,12 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
     inLanguage: 'pt-BR',
     featureList: [
       'Cardápio digital interativo para delivery, retirada e QR Code de mesa',
+      'Controle de salão e mesas para garçons com comanda digital, divisão de conta e taxa de 10%',
+      'Integração oficial iFood Partner API centralizada no painel KDS da cozinha',
       'Automação de pedidos e status no WhatsApp via Evolution API',
-      'Pagamento Pix dinâmico com repasse 100% direto via Asaas',
+      'Pagamento Pix dinâmico com repasse 100% direto na conta da loja',
       'Importação rápida de produtos e categorias via planilha CSV/Excel',
-      'Zero taxa de comissão sobre vendas',
+      'Zero taxa de comissão sobre vendas diretas',
     ],
     offers: [
       {
@@ -380,17 +385,20 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
 
             {/* Target Audience Explanation (Para Quem É) */}
             <p className="text-base sm:text-lg text-slate-600 leading-relaxed font-normal">
-              A <strong>Aladay</strong> foi criada para <strong>hamburguerias, pizzarias, lanchonetes, restaurantes e dark kitchens</strong> que desejam receber pedidos ilimitados direto no WhatsApp, com <strong>Pix 100% creditado na conta da sua própria loja</strong> e sem intermediários retendo até <strong>27% do seu faturamento</strong>.
+              A <strong>Aladay</strong> foi criada para <strong>hamburguerias, pizzarias, lanchonetes, restaurantes com salão e dark kitchens</strong> que desejam receber pedidos ilimitados direto no WhatsApp com <strong>0% de comissão</strong>, controlar <strong>mesas e garçons no salão</strong> e centralizar <strong>pedidos do iFood</strong> em um único painel KDS.
             </p>
 
-            {/* Audience Badges */}
+            {/* Audience & Feature Badges */}
             <div className="flex flex-wrap gap-2 pt-1 text-xs text-slate-700 font-medium">
-              <span className="px-2.5 py-1 bg-slate-100 rounded-md border border-slate-200">🍔 Hamburguerias</span>
-              <span className="px-2.5 py-1 bg-slate-100 rounded-md border border-slate-200">🍕 Pizzarias</span>
-              <span className="px-2.5 py-1 bg-slate-100 rounded-md border border-slate-200">🥪 Lanchonetes</span>
-              <span className="px-2.5 py-1 bg-slate-100 rounded-md border border-slate-200">🥗 Marmitarias &amp; PF</span>
-              <span className="px-2.5 py-1 bg-slate-100 rounded-md border border-slate-200">🍣 Sushi &amp; Asiáticos</span>
-              <span className="px-2.5 py-1 bg-slate-100 rounded-md border border-slate-200">🛵 Dark Kitchens &amp; Delivery</span>
+              <span className="px-2.5 py-1 bg-amber-50 text-amber-900 rounded-md border border-amber-200 font-semibold">
+                🍽️ Controle de Salão, Mesas &amp; Garçons
+              </span>
+              <span className="px-2.5 py-1 bg-red-50 text-red-800 rounded-md border border-red-200 font-semibold">
+                🔴 Integração Oficial iFood no KDS
+              </span>
+              <span className="px-2.5 py-1 bg-slate-100 rounded-md border border-slate-200">🍔 Hamburguerias &amp; Pizzarias</span>
+              <span className="px-2.5 py-1 bg-slate-100 rounded-md border border-slate-200">🥗 Restaurantes &amp; Bares</span>
+              <span className="px-2.5 py-1 bg-slate-100 rounded-md border border-slate-200">🛵 Delivery &amp; Balcão</span>
             </div>
 
             {/* Evident Call-to-Action Action Buttons */}
@@ -752,6 +760,73 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               <span className="text-blue-600 font-bold">100% Responsivo</span>
             </div>
           </div>
+
+          {/* Card 4: Salão, Mesas & Garçons */}
+          <div className="bg-white border border-amber-200 rounded-2xl p-6 space-y-4 flex flex-col justify-between hover:border-amber-400 transition-colors shadow-2xs">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center">
+                  <Utensils className="w-6 h-6" />
+                </div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200 uppercase tracking-wider">
+                  Salão &amp; PDV Mesa
+                </span>
+              </div>
+              <h3 className="text-base font-bold text-slate-950">
+                4. Controle de Salão, Mesas &amp; Garçons
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Mapa visual de mesas em tempo real (Livre, Ocupada, Pronto p/ Servir e Conta). O garçom lança pedidos pelo celular direto para a cozinha ou o cliente pede sozinho pelo <strong>QR Code exclusivo de cada mesa</strong>. Fechamento com <strong>10% opcional do garçom</strong> e divisão por pessoa.
+              </p>
+            </div>
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-mono">
+              <span>Comanda Digital + QR Mesa</span>
+              <span className="text-amber-700 font-bold">Divisão &amp; Taxa 10%</span>
+            </div>
+          </div>
+
+          {/* Card 5: Integração Oficial iFood */}
+          <div className="bg-white border border-red-200 rounded-2xl p-6 space-y-4 flex flex-col justify-between hover:border-red-400 transition-colors shadow-2xs">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="w-12 h-12 rounded-xl bg-red-50 text-red-600 border border-red-200 flex items-center justify-center">
+                  <Bike className="w-6 h-6" />
+                </div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 border border-red-200 uppercase tracking-wider">
+                  API Oficial iFood
+                </span>
+              </div>
+              <h3 className="text-base font-bold text-slate-950">
+                5. Integração Oficial iFood no KDS
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Chega de usar duas telas na cozinha! Receba automaticamente os pedidos do <strong>iFood</strong> no mesmo painel KDS dos seus pedidos diretos. Quando a cozinha avança o prato, o status atualiza sozinho no app do iFood (<em>Confirmado, Pronto e Despachado</em>) com código de coleta do entregador.
+              </p>
+            </div>
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-mono">
+              <span>Webhook + OAuth2</span>
+              <span className="text-red-600 font-bold">Hub Único na Cozinha</span>
+            </div>
+          </div>
+
+          {/* Card 6: CRM & Relatórios Analíticos */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 flex flex-col justify-between hover:border-blue-300 transition-colors shadow-2xs">
+            <div className="space-y-3">
+              <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
+                <Users className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-950">
+                6. CRM de Clientes &amp; Relatórios Reais
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Construa sua própria base de clientes a cada pedido no salão ou delivery. Visualize gráficos de vendas por dia, ranking dos pratos mais vendidos e recupere clientes inativos direto pelo WhatsApp.
+              </p>
+            </div>
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-mono">
+              <span>Gráficos &amp; Fidelização</span>
+              <span className="text-blue-600 font-bold">Base 100% Sua</span>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -832,6 +907,14 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                   <span>Painel KDS com contador visual SLA &amp; impressão térmica</span>
                 </div>
                 <div className="flex items-start gap-2">
+                  <Check className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <span><strong>Módulo Salão &amp; Garçons:</strong> Mapa de mesas, Comanda Digital, QR Code por mesa e conta com 10%</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <Check className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                  <span><strong>Integração Oficial iFood:</strong> Receba e despache pedidos do iFood direto no seu KDS</span>
+                </div>
+                <div className="flex items-start gap-2">
                   <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
                   <span>Inclui 15 dias de teste grátis para experimentar tudo</span>
                 </div>
@@ -900,6 +983,14 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 <div className="flex items-start gap-2">
                   <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
                   <span>KDS Cozinha + WhatsApp Automático Evolution API</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <span><strong>Controle de Mesas &amp; Garçons:</strong> Mapa de salão, QR Code na mesa e divisão de conta</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <Check className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  <span><strong>Hub iFood Integrado:</strong> Pedidos do iFood sincronizados no mesmo KDS</span>
                 </div>
                 <div className="flex items-start gap-2">
                   <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />

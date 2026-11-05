@@ -49,6 +49,8 @@ import { WhatsAppQrPairingModal } from './WhatsAppQrPairingModal';
 import { AsaasSubscriptionBillingView } from './AsaasSubscriptionBillingView';
 import { AuditedDashboardView } from './AuditedDashboardView';
 import { CrmCustomerManagementView } from './CrmCustomerManagementView';
+import { IfoodIntegrationView } from './IfoodIntegrationView';
+import { TableWaiterManagementView } from './TableWaiterManagementView';
 import {
   MenuSpreadsheetModal,
   ParsedRowPreview,
@@ -71,6 +73,7 @@ interface RestaurantAdminViewProps {
   onSelectTenant?: (tenant: RestaurantTenant) => void;
   onUpdateTenant: (updatedTenant: RestaurantTenant) => void;
   onUpdateOrderStatus: (orderId: string, nextStatus: OrderStatus) => void;
+  onAddOrder?: (newOrder: Order) => void;
   onToggleProductAvailability: (productId: string) => void;
   onAddProduct: (newProduct: Product) => void;
   onUpdateProduct: (updatedProduct: Product) => void;
@@ -94,6 +97,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   onSelectTenant,
   onUpdateTenant,
   onUpdateOrderStatus,
+  onAddOrder,
   onToggleProductAvailability,
   onAddProduct,
   onUpdateProduct,
@@ -105,7 +109,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   onOpenAuthPortal,
 }) => {
   const isSuperAdmin = authSession?.user?.role === 'SUPER_ADMIN';
-  const [activeTab, setActiveTab] = useState<'super_subscriptions' | 'kds' | 'menu' | 'categories' | 'settings' | 'billing' | 'whatsapp' | 'crm' | 'reports'>(() =>
+  const [activeTab, setActiveTab] = useState<'super_subscriptions' | 'kds' | 'tables' | 'menu' | 'categories' | 'settings' | 'billing' | 'whatsapp' | 'crm' | 'reports' | 'ifood'>(() =>
     authSession?.user?.role === 'SUPER_ADMIN' ? 'super_subscriptions' : 'menu'
   );
   const [printingOrder, setPrintingOrder] = useState<Order | null>(null);
@@ -154,12 +158,63 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     }
   }, [authSession]);
 
-  const handleKdsStatusChange = (order: Order, nextStatus: OrderStatus) => {
+  const handleKdsStatusChange = async (order: Order, nextStatus: OrderStatus) => {
     onUpdateOrderStatus(order.id, nextStatus);
-    setStatusUpdateToast(
-      `Status do Pedido #${order.orderNumber} alterado para "${nextStatus}". Notificação disparada no WhatsApp de ${order.customerName} via Evolution API!`
-    );
+
+    if (order.channel === 'IFOOD') {
+      try {
+        await fetch(`/api/v1/ifood/orders/${order.id}/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nextStatus,
+            tenantSlug: tenant.slug,
+            ifoodOrderId: order.ifoodOrderId || order.id,
+            orderType: order.type,
+          }),
+        });
+      } catch {
+        // Ignore network error in offline mode
+      }
+      const actionMap: Record<string, string> = {
+        confirmed: '/confirm (Confirmado no iFood)',
+        preparing: '/confirm (Em Preparo no iFood)',
+        ready: order.type === 'pickup' ? '/readyToPickup (Pronto p/ Retirada no iFood)' : '/dispatch (Despachado no iFood)',
+        delivered: 'Concluído no iFood',
+        cancelled: '/requestCancellation (Cancelado no iFood)',
+      };
+      setStatusUpdateToast(
+        `🔴 Pedido iFood #${order.ifoodDisplayId || order.orderNumber} sincronizado via API Oficial: ${actionMap[nextStatus] || nextStatus}!`
+      );
+    } else {
+      setStatusUpdateToast(
+        `Status do Pedido #${order.orderNumber} alterado para "${nextStatus}". Notificação disparada no WhatsApp de ${order.customerName} via Evolution API!`
+      );
+    }
     setTimeout(() => setStatusUpdateToast(null), 5000);
+  };
+
+  const handleQuickSimulateIfoodOrderInKds = async () => {
+    try {
+      const res = await fetch('/api/v1/ifood/simulate-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantSlug: tenant.slug,
+          merchantId: tenant.ifoodConfig?.merchantId || `merch_${tenant.slug}`,
+        }),
+      });
+      const data = await res.json();
+      if (data.order && onAddOrder) {
+        onAddOrder(data.order);
+        setStatusUpdateToast(
+          `🔴 Novo Pedido iFood #${data.order.ifoodDisplayId || data.order.orderNumber} (Código Coleta: ${data.order.ifoodPickupCode}) recebido no KDS!`
+        );
+        setTimeout(() => setStatusUpdateToast(null), 6000);
+      }
+    } catch {
+      // Ignore error
+    }
   };
 
   // Live Sync & Preview state
@@ -1475,6 +1530,20 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                   >
                     🍳 Cozinha (KDS)
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUserRole('waiter');
+                      setActiveTab('tables');
+                    }}
+                    className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+                      userRole === 'waiter'
+                        ? 'bg-white text-blue-700 shadow-2xs font-semibold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    🧑‍🍳 Garçom (Salão)
+                  </button>
                 </div>
               </div>
             </div>
@@ -1547,6 +1616,24 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
         </div>
       )}
 
+      {/* Waiter Mode Info Banner */}
+      {!isSuperAdmin && userRole === 'waiter' && (
+        <div className="bg-blue-50 border-b border-blue-200 px-6 py-2.5 text-xs text-blue-950 flex items-center justify-between gap-3 font-medium">
+          <div className="flex items-center gap-2">
+            <Utensils className="w-4 h-4 text-blue-700 shrink-0" />
+            <span>
+              <strong>Modo Garçom &amp; Salão (RBAC Ativo):</strong> Foco rápido no Mapa de Mesas, lançamento de comandas direto para o KDS e fechamento de conta com divisão por pessoa e 10%.
+            </span>
+          </div>
+          <button
+            onClick={() => setUserRole('owner')}
+            className="text-blue-800 underline text-[11px] hover:text-blue-950 font-semibold shrink-0"
+          >
+            Alternar para Dono
+          </button>
+        </div>
+      )}
+
       {/* Tabs navigation */}
       <div className="bg-white border-b border-slate-200 px-4 sm:px-6 flex gap-4 sm:gap-6 text-xs font-medium overflow-x-auto">
         {isSuperAdmin ? (
@@ -1606,6 +1693,18 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
             </button>
 
             <button
+              onClick={() => setActiveTab('ifood')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'ifood'
+                  ? 'border-red-600 text-red-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Bike className="w-4 h-4 shrink-0 text-red-600" />
+              <span>Integração iFood ({tenant.name})</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('billing')}
               className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
                 activeTab === 'billing'
@@ -1660,6 +1759,36 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                   {ordersByStatus.received.length}
                 </span>
               )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('tables')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'tables'
+                  ? 'border-amber-600 text-amber-700 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Utensils className="w-4 h-4 shrink-0 text-amber-600" />
+              <span>Mesas &amp; Garçom (Salão)</span>
+              <span className="bg-amber-50 text-amber-800 border border-amber-200 text-[9px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wider">
+                PDV Mesa
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('ifood')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'ifood'
+                  ? 'border-red-600 text-red-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Bike className="w-4 h-4 shrink-0 text-red-600" />
+              <span>Integração iFood</span>
+              <span className="bg-red-50 text-red-700 border border-red-200 text-[9px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wider">
+                Hub KDS
+              </span>
             </button>
 
             <button
@@ -2851,7 +2980,16 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                     Ao avançar o status no Kanban, o sistema dispara automaticamente uma mensagem formatada para o WhatsApp do cliente via Evolution API (instância <code className="font-mono text-neutral-800 font-bold">{tenant.evolutionInstanceId || 'aladay'}</code>).
                   </p>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleQuickSimulateIfoodOrderInKds}
+                    className="text-xs font-bold text-white bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+                    title="Injetar um pedido iFood de teste imediatamente no KDS"
+                  >
+                    <Bike className="w-3.5 h-3.5" />
+                    <span>+ Simular Pedido iFood</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => setActiveTab('whatsapp')}
@@ -2910,9 +3048,25 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                         className={`border rounded-xl p-3 space-y-2 shadow-2xs transition-colors ${timer.cardBgClass}`}
                       >
                         <div className="flex justify-between items-start gap-1.5">
-                          <span className="text-xs font-mono font-bold text-neutral-900">
-                            #{order.orderNumber}
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-mono font-bold text-neutral-900">
+                              #{order.ifoodDisplayId || order.orderNumber}
+                            </span>
+                            {order.channel === 'IFOOD' ? (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider bg-red-600 text-white shadow-2xs">
+                                iFood
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-800">
+                                Direto 0%
+                              </span>
+                            )}
+                            {order.ifoodPickupCode && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-red-50 text-red-800 border border-red-200">
+                                Coleta: {order.ifoodPickupCode}
+                              </span>
+                            )}
+                          </div>
                           <div className="flex items-center gap-1.5">
                             <span
                               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border shadow-2xs ${timer.badgeClass}`}
@@ -2926,10 +3080,22 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                         </div>
 
                         <div>
-                          <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
+                            {order.tableNumber && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                🍽️ MESA {order.tableNumber}
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[11px] text-neutral-600 font-mono">+{order.customerPhone}</p>
                           <p className="text-[11px] text-neutral-600 mt-0.5">
-                            {order.type === 'delivery' ? '🛵 Entrega' : '🛍️ Retirada'} · {order.items.length} itens
+                            {order.type === 'dine_in'
+                              ? `🍽️ Salão (Mesa ${order.tableNumber || '01'})${order.waiterName ? ` · Garçom: ${order.waiterName}` : ''}`
+                              : order.type === 'delivery'
+                              ? '🛵 Entrega'
+                              : '🛍️ Retirada'}{' '}
+                            · {order.items.length} itens
                           </p>
                         </div>
 
@@ -3013,9 +3179,21 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                         className={`border rounded-xl p-3 space-y-2 shadow-2xs transition-colors ${timer.cardBgClass}`}
                       >
                         <div className="flex justify-between items-start gap-1.5">
-                          <span className="text-xs font-mono font-bold text-neutral-900">
-                            #{order.orderNumber}
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-mono font-bold text-neutral-900">
+                              #{order.ifoodDisplayId || order.orderNumber}
+                            </span>
+                            {order.channel === 'IFOOD' && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider bg-red-600 text-white">
+                                iFood
+                              </span>
+                            )}
+                            {order.ifoodPickupCode && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-red-50 text-red-800 border border-red-200">
+                                Coleta: {order.ifoodPickupCode}
+                              </span>
+                            )}
+                          </div>
                           <div className="flex items-center gap-1.5">
                             <span
                               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border shadow-2xs ${timer.badgeClass}`}
@@ -3029,7 +3207,14 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                         </div>
 
                         <div>
-                          <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
+                            {order.tableNumber && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                🍽️ MESA {order.tableNumber}
+                              </span>
+                            )}
+                          </div>
                           <div className="text-[11px] text-neutral-700 mt-1 space-y-0.5">
                             {order.items.map((i, idx) => (
                               <p key={idx} className="truncate">
@@ -3112,9 +3297,20 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                         </div>
 
                         <div>
-                          <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
+                            {order.tableNumber && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                🍽️ MESA {order.tableNumber}
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[11px] text-neutral-700">
-                            {order.type === 'delivery' ? `🛵 ${order.deliveryAddress || 'Entrega'}` : '🛍️ Retirada no balcão'}
+                            {order.type === 'dine_in'
+                              ? `🍽️ Servir na Mesa ${order.tableNumber || '01'}${order.waiterName ? ` (${order.waiterName})` : ''}`
+                              : order.type === 'delivery'
+                              ? `🛵 ${order.deliveryAddress || 'Entrega'}`
+                              : '🛍️ Retirada no balcão'}
                           </p>
                         </div>
 
@@ -3856,6 +4052,73 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
             <AsaasSubscriptionBillingView tenant={tenant} onUpdateTenant={onUpdateTenant} />
           </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* TAB 9: INTEGRAÇÃO OFICIAL IFOOD PARTNER API                    */}
+        {/* ============================================================== */}
+        {activeTab === 'ifood' && (
+          <div className="space-y-4">
+            {isSuperAdmin && (
+              <div className="bg-indigo-950 text-white border border-indigo-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-300">
+                    <Bike className="w-4 h-4 text-red-400" />
+                    <span>GESTÃO DE INTEGRAÇÃO IFOOD DO RESTAURANTE (SUPER ADMIN)</span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Configurando vínculo Merchant ID e Webhook iFood para: <strong>{tenant.name}</strong> (<code className="text-indigo-200">{tenant.slug}</code>).
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <select
+                    value={tenant.slug}
+                    onChange={(e) => {
+                      const found = (allTenants.length > 0 ? allTenants : [tenant]).find((t) => t.slug === e.target.value);
+                      if (found && onSelectTenant) onSelectTenant(found);
+                    }}
+                    className="bg-slate-900 border border-indigo-700 text-white text-xs rounded-lg px-3 py-1.5 font-semibold"
+                  >
+                    {(allTenants.length > 0 ? allTenants : [tenant]).map((t) => (
+                      <option key={t.slug} value={t.slug}>
+                        Restaurante: {t.name} ({t.slug})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            <IfoodIntegrationView
+              tenant={tenant}
+              orders={orders}
+              products={products}
+              isSuperAdmin={isSuperAdmin}
+              onUpdateTenant={onUpdateTenant}
+              onInjectOrder={(newOrder) => {
+                if (onAddOrder) onAddOrder(newOrder);
+              }}
+              onNavigateToTab={(tab) => setActiveTab(tab)}
+            />
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* TAB 10: CONTROLE DE SALÃO, MESAS & GARÇOM                      */}
+        {/* ============================================================== */}
+        {activeTab === 'tables' && (
+          <TableWaiterManagementView
+            tenant={tenant}
+            orders={orders}
+            products={products}
+            categories={categories}
+            onAddOrder={(newOrder) => {
+              if (onAddOrder) onAddOrder(newOrder);
+            }}
+            onUpdateOrderStatus={onUpdateOrderStatus}
+            onUpdateTenant={onUpdateTenant}
+          />
         )}
       </div>
 

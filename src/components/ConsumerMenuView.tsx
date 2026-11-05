@@ -49,11 +49,23 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
   // Cart state
   const [cartItems, setCartItems] = useState<OrderItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
-  const [deliveryType, setDeliveryType] = useState<'delivery' | 'pickup'>('delivery');
+  const [deliveryType, setDeliveryType] = useState<'delivery' | 'pickup' | 'dine_in'>('delivery');
+  const [tableNumber, setTableNumber] = useState<string>('');
   const [customerName, setCustomerName] = useState<string>('');
   const [customerPhone, setCustomerPhone] = useState<string>('');
   const [deliveryAddress, setDeliveryAddress] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<string>('⚡ Pix Instantâneo (Aprovação Automática)');
+
+  // Detect ?mesa=XX from QR Code on Table
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const mesaParam = params.get('mesa');
+    if (mesaParam) {
+      setTableNumber(mesaParam.replace(/\D/g, '').padStart(2, '0'));
+      setDeliveryType('dine_in');
+    }
+  }, []);
 
   // Pix payment modal state
   const [activePixOrder, setActivePixOrder] = useState<Order | null>(null);
@@ -258,8 +270,12 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
     e.preventDefault();
     setCheckoutError(null);
     if (cartItems.length === 0) return;
-    if (cartSubtotalCents < tenant.minOrderCents) {
+    if (deliveryType === 'delivery' && cartSubtotalCents < tenant.minOrderCents) {
       setCheckoutError(`O pedido mínimo para entrega é R$ ${(tenant.minOrderCents / 100).toFixed(2)}`);
+      return;
+    }
+    if (deliveryType === 'dine_in' && !tableNumber.trim()) {
+      setCheckoutError('Por favor, informe o número da sua mesa no salão.');
       return;
     }
 
@@ -268,17 +284,19 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
     setTimeout(() => {
       const orderNumber = Math.floor(1043 + Math.random() * 50);
       const isPixDynamic = paymentMethod.includes('Pix Instantâneo');
+      const formattedTable = deliveryType === 'dine_in' ? tableNumber.trim().padStart(2, '0') : undefined;
       const newOrder: Order = {
         id: `ord_${orderNumber}`,
         orderNumber,
         tenantId: tenant.id,
         tenantSlug: tenant.slug,
-        customerName: customerName.trim(),
-        customerPhone: customerPhone.trim(),
+        customerName: customerName.trim() || (formattedTable ? `Mesa ${formattedTable}` : 'Cliente'),
+        customerPhone: customerPhone.trim() || tenant.phone,
         type: deliveryType,
-        deliveryAddress: deliveryType === 'delivery' ? deliveryAddress.trim() : undefined,
+        tableNumber: formattedTable,
+        deliveryAddress: deliveryType === 'delivery' ? deliveryAddress.trim() : formattedTable ? `Mesa ${formattedTable} (Salão)` : undefined,
         deliveryZoneName: selectedZone?.name,
-        estimatedMinutes: selectedZone?.estimatedMinutes || 35,
+        estimatedMinutes: deliveryType === 'dine_in' ? 15 : selectedZone?.estimatedMinutes || 35,
         items: [...cartItems],
         subtotalCents: cartSubtotalCents,
         deliveryFeeCents: deliveryFee,
@@ -291,7 +309,7 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
           {
             timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
             event: 'order.created',
-            detail: `Pedido #${orderNumber} registrado no sistema via Cardápio Digital (${isPixDynamic ? 'Aguardando Pagamento Pix' : paymentMethod}).`,
+            detail: `Pedido #${orderNumber} registrado no sistema via Cardápio Digital${formattedTable ? ` (Mesa ${formattedTable})` : ''} (${isPixDynamic ? 'Aguardando Pagamento Pix' : paymentMethod}).`,
           },
         ],
         createdAt: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
@@ -393,6 +411,18 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
             )}
           </button>
         </div>
+
+        {/* Table QR Code Active Banner */}
+        {deliveryType === 'dine_in' && tableNumber && (
+          <div className="mt-3 pt-2.5 border-t border-white/20 flex items-center justify-between gap-2 bg-amber-500/20 px-3 py-2 rounded-lg">
+            <span className="text-xs font-bold text-white flex items-center gap-1.5">
+              <span>🍽️ Você está pedindo na MESA #{tableNumber}</span>
+            </span>
+            <span className="text-[10px] font-mono bg-white text-neutral-900 px-2 py-0.5 rounded font-bold">
+              Taxa Zero • Direto p/ Cozinha
+            </span>
+          </div>
+        )}
       </div>
 
       {/* If Order Placed: Confirmation Screen */}
@@ -709,31 +739,69 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
             </div>
 
             <form onSubmit={handleCheckoutSubmit} className="flex-1 overflow-y-auto p-4 space-y-4">
-              {/* Delivery vs Pickup Selector */}
-              <div className="grid grid-cols-2 p-1 bg-neutral-100 rounded-lg text-xs font-medium">
+              {/* Delivery vs Pickup vs Dine-In Selector */}
+              <div className="grid grid-cols-3 p-1 bg-neutral-100 rounded-lg text-xs font-medium gap-1">
                 <button
                   type="button"
                   onClick={() => setDeliveryType('delivery')}
                   className={`py-2 rounded-md transition-colors ${
                     deliveryType === 'delivery'
-                      ? 'bg-white text-neutral-900 shadow-xs'
+                      ? 'bg-white text-neutral-900 shadow-xs font-bold'
                       : 'text-neutral-600'
                   }`}
                 >
-                  Entrega (Delivery)
+                  🛵 Delivery
                 </button>
                 <button
                   type="button"
                   onClick={() => setDeliveryType('pickup')}
                   className={`py-2 rounded-md transition-colors ${
                     deliveryType === 'pickup'
-                      ? 'bg-white text-neutral-900 shadow-xs'
+                      ? 'bg-white text-neutral-900 shadow-xs font-bold'
                       : 'text-neutral-600'
                   }`}
                 >
-                  Retirada no Balcão
+                  🛍️ Balcão
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeliveryType('dine_in')}
+                  className={`py-2 rounded-md transition-colors ${
+                    deliveryType === 'dine_in'
+                      ? 'bg-amber-600 text-white shadow-xs font-bold'
+                      : 'text-neutral-600'
+                  }`}
+                >
+                  🍽️ Na Mesa
                 </button>
               </div>
+
+              {deliveryType === 'dine_in' && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-amber-950">
+                      🍽️ Número da sua Mesa no Salão *
+                    </label>
+                    <span className="text-[10px] font-mono font-semibold text-amber-800 bg-white px-2 py-0.5 rounded border border-amber-200">
+                      Sem Taxa de Entrega
+                    </span>
+                  </div>
+                  <select
+                    value={tableNumber || '01'}
+                    onChange={(e) => setTableNumber(e.target.value)}
+                    className="w-full p-2 text-xs border border-amber-300 rounded-md text-neutral-900 bg-white font-mono font-bold"
+                  >
+                    {Array.from({ length: tenant.tablesCount || 12 }, (_, idx) => {
+                      const num = String(idx + 1).padStart(2, '0');
+                      return (
+                        <option key={num} value={num}>
+                          Mesa {num}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
 
               {/* Items List */}
               <div className="space-y-2 border-b border-neutral-200 pb-3">
