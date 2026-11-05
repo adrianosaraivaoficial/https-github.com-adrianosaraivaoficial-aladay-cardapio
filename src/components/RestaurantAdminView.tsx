@@ -83,6 +83,7 @@ interface RestaurantAdminViewProps {
   onSimulateEvolutionReconnect: () => void;
   authSession?: AuthSession | null;
   onOpenAuthPortal?: () => void;
+  onOpenPublicMenu?: () => void;
 }
 
 export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
@@ -107,8 +108,10 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   onSimulateEvolutionReconnect,
   authSession,
   onOpenAuthPortal,
+  onOpenPublicMenu,
 }) => {
   const isSuperAdmin = authSession?.user?.role === 'SUPER_ADMIN';
+  const [publicLinkCopied, setPublicLinkCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'super_subscriptions' | 'kds' | 'tables' | 'menu' | 'categories' | 'settings' | 'billing' | 'whatsapp' | 'crm' | 'reports' | 'ifood'>(() =>
     authSession?.user?.role === 'SUPER_ADMIN' ? 'super_subscriptions' : 'menu'
   );
@@ -1567,17 +1570,55 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
               <QrCode className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-700 ml-0.5" />
             </button>
 
-            <a
-              href={`#cardapio-${tenant.slug}`}
-              onClick={(e) => {
-                e.preventDefault();
+            <button
+              type="button"
+              onClick={() => {
+                const publicUrl =
+                  typeof window !== 'undefined'
+                    ? `${window.location.origin}${window.location.pathname}?loja=${encodeURIComponent(tenant.slug)}`
+                    : `https://aladay.com.br/?loja=${encodeURIComponent(tenant.slug)}`;
+                navigator.clipboard?.writeText(publicUrl).catch(() => {});
+                setPublicLinkCopied(true);
+                setTimeout(() => setPublicLinkCopied(false), 3000);
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                publicLinkCopied
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
+              }`}
+              title="Copiar link direto do cardápio digital para enviar aos clientes"
+            >
+              {publicLinkCopied ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Link Copiado!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Copiar Link do Cardápio</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== 'undefined') {
+                  const newUrl = `${window.location.pathname}?loja=${encodeURIComponent(tenant.slug)}`;
+                  window.history.pushState({ loja: tenant.slug }, '', newUrl);
+                }
+                if (onOpenPublicMenu) {
+                  onOpenPublicMenu();
+                }
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
-              className="px-3 py-1.5 text-xs font-semibold text-white rounded-lg shadow-xs transition-opacity hover:opacity-90"
+              className="px-3.5 py-1.5 text-xs font-semibold text-white rounded-lg shadow-xs transition-opacity hover:opacity-90 flex items-center gap-1.5 cursor-pointer"
               style={{ backgroundColor: tenant.primaryColor }}
             >
-              Ver Cardápio Público
-            </a>
+              <span>Ver Cardápio Público</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       )}

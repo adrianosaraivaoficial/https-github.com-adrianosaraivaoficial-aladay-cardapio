@@ -26,9 +26,9 @@ export const INITIAL_TENANT: RestaurantTenant = {
   n8nWebhookUrl: 'https://agencia-n8n.2eoc7n.easypanel.host/webhook/saas',
   botAutoReplyEnabled: true,
   botWelcomeMessage:
-    'Olá! Seja bem-vindo! Nosso cardápio digital completo está disponível pelo link abaixo:\n\n👉 https://aladay.com.br\n\nPara falar com um atendente, responda com *2*.',
+    'Olá! Seja bem-vindo! Nosso cardápio digital completo está disponível pelo link abaixo:\n\n👉 https://aladay.com.br/?loja=aladay\n\nPara falar com um atendente, responda com *2*.',
   botClosedHoursMessage:
-    'Olá! No momento estamos fechados. Confira nosso horário de funcionamento e veja o cardápio pelo link:\n👉 https://aladay.com.br',
+    'Olá! No momento estamos fechados. Confira nosso horário de funcionamento e veja o cardápio pelo link:\n👉 https://aladay.com.br/?loja=aladay',
   botHumanHandoffMessage:
     'Perfeito! Um atendente da nossa equipe vai responder sua mensagem em instantes.',
   pixConfig: {

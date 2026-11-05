@@ -92,13 +92,18 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const [isAutoReplyActive, setIsAutoReplyActive] = useState(tenant.botAutoReplyEnabled ?? true);
 
   // Template messages state
+  const publicStoreUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}${window.location.pathname}?loja=${encodeURIComponent(tenant.slug)}`
+      : `https://aladay.com.br/?loja=${encodeURIComponent(tenant.slug)}`;
+
   const [welcomeTemplate, setWelcomeTemplate] = useState(
     tenant.botWelcomeMessage ||
-      `Olá! Seja muito bem-vindo ao *${tenant.name}*! 🍔\n\nNosso cardápio digital completo está disponível no link abaixo com fotos e preços em tempo real:\n\n👉 https://cardapio.seudominio.com/${tenant.slug}\n\nFaça seu pedido diretamente pelo link! Se preferir falar com um atendente da nossa equipe, responda com *2*.`
+      `Olá! Seja muito bem-vindo ao *${tenant.name}*! 🍔\n\nNosso cardápio digital completo está disponível no link abaixo com fotos e preços em tempo real:\n\n👉 ${publicStoreUrl}\n\nFaça seu pedido diretamente pelo link! Se preferir falar com um atendente da nossa equipe, responda com *2*.`
   );
   const [closedHoursTemplate, setClosedHoursTemplate] = useState(
     tenant.botClosedHoursMessage ||
-      `Olá! Agradecemos sua mensagem para o *${tenant.name}*.\n\nNo momento nosso restaurante está *FECHADO*.\n🕒 Horário de atendimento: ${tenant.openingHoursText}.\n\nVocê já pode conferir nosso cardápio e adiantar seu pedido para quando abrirmos:\n👉 https://cardapio.seudominio.com/${tenant.slug}`
+      `Olá! Agradecemos sua mensagem para o *${tenant.name}*.\n\nNo momento nosso restaurante está *FECHADO*.\n🕒 Horário de atendimento: ${tenant.openingHoursText}.\n\nVocê já pode conferir nosso cardápio e adiantar seu pedido para quando abrirmos:\n👉 ${publicStoreUrl}`
   );
   const [humanHandoffTemplate, setHumanHandoffTemplate] = useState(
     tenant.botHumanHandoffMessage ||

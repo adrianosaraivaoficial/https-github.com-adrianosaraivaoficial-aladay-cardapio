@@ -348,14 +348,64 @@ function hydrateSingleTenantCatalogPartition(slug: string): NormalizedTenantCata
   return null;
 }
 
+function resolvePublicStoreSlugFromLocation(): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const querySlug =
+    params.get('loja') ||
+    params.get('cardapio') ||
+    params.get('restaurante') ||
+    params.get('slug');
+  if (querySlug && querySlug.trim()) {
+    return querySlug.trim().toLowerCase();
+  }
+  const hash = window.location.hash || '';
+  if (hash.startsWith('#cardapio-')) {
+    const hashSlug = hash.replace('#cardapio-', '').trim();
+    if (hashSlug) return hashSlug.toLowerCase();
+  }
+  if (hash.startsWith('#loja-')) {
+    const hashSlug = hash.replace('#loja-', '').trim();
+    if (hashSlug) return hashSlug.toLowerCase();
+  }
+  const cleanPath = (window.location.pathname || '/').replace(/^\/+|\/+$/g, '');
+  if (cleanPath) {
+    const parts = cleanPath.split('/');
+    if ((parts[0] === 'cardapio' || parts[0] === 'loja' || parts[0] === 'r') && parts[1]) {
+      return parts[1].trim().toLowerCase();
+    }
+    const reservedPaths = new Set([
+      'index.html',
+      'admin',
+      'login',
+      'auth',
+      'kickoff',
+      'terms',
+      'privacy',
+      'whatsapp',
+      'calculator',
+      'diagrams',
+      'api',
+      'assets',
+    ]);
+    if (
+      parts.length === 1 &&
+      !reservedPaths.has(parts[0].toLowerCase()) &&
+      !parts[0].includes('.')
+    ) {
+      return parts[0].trim().toLowerCase();
+    }
+  }
+  return null;
+}
+
 export default function App() {
-  const sharedLojaParam = React.useMemo(() => {
-    if (typeof window === 'undefined') return null;
-    return new URLSearchParams(window.location.search).get('loja');
-  }, []);
+  const [sharedLojaParam, setSharedLojaParam] = useState<string | null>(() =>
+    resolvePublicStoreSlugFromLocation()
+  );
 
   const [currentView, setCurrentView] = useState<'home' | 'kickoff' | 'consumer' | 'admin' | 'calculator' | 'diagrams' | 'tracking' | 'whatsapp' | 'auth' | 'terms' | 'privacy'>(() =>
-    sharedLojaParam ? 'consumer' : 'home'
+    resolvePublicStoreSlugFromLocation() ? 'consumer' : 'home'
   );
   const [selectedTrackingOrder, setSelectedTrackingOrder] = useState<Order | null>(null);
   const [showSubscriptionNoticeModal, setShowSubscriptionNoticeModal] = useState<boolean>(false);
@@ -403,14 +453,30 @@ export default function App() {
         JSON.parse(localStorage.getItem('aladay_prod_tenants_list_v2') || 'null') ||
         INITIAL_TENANTS_LIST
       ).map(normalizeTenantVisualIdentity);
+      const savedSingleRaw = localStorage.getItem('aladay_prod_tenant_v2');
+      const savedSingle: RestaurantTenant | null = savedSingleRaw
+        ? normalizeTenantVisualIdentity(JSON.parse(savedSingleRaw))
+        : null;
+
       if (sharedLojaParam) {
         const matchedBySlug = savedList.find(
           (t) => t.slug.toLowerCase() === sharedLojaParam.toLowerCase()
         );
         if (matchedBySlug) return matchedBySlug;
+        if (savedSingle && savedSingle.slug.toLowerCase() === sharedLojaParam.toLowerCase()) {
+          return savedSingle;
+        }
+        return {
+          ...INITIAL_TENANT,
+          id: `tenant_${sharedLojaParam}`,
+          slug: sharedLojaParam,
+          name: sharedLojaParam
+            .replace(/-/g, ' ')
+            .replace(/\b\w/g, (char) => char.toUpperCase()),
+          subscriptionStatus: 'active',
+        };
       }
-      const saved = localStorage.getItem('aladay_prod_tenant_v2');
-      return saved ? normalizeTenantVisualIdentity(JSON.parse(saved)) : INITIAL_TENANT;
+      return savedSingle || INITIAL_TENANT;
     } catch {
       return INITIAL_TENANT;
     }
@@ -820,26 +886,98 @@ export default function App() {
         isTenantSubscribed)
   );
 
-  // Verifica se a visualização atual é um painel bloqueável (Admin, WhatsApp, Cardápio Digital ou Tracking)
+  // Verifica se a visualização atual é um painel administrativo restrito à equipe/restaurante
   const isProtectedAdminOrMenuPanel =
     currentView === 'admin' ||
     currentView === 'whatsapp' ||
-    currentView === 'consumer' ||
-    currentView === 'tracking' ||
     currentView === 'calculator' ||
     currentView === 'diagrams';
 
-  // O acesso público ao cardápio (?loja=slug) também é BLOQUEADO caso o tenant tenha expirado os 15 dias de teste
-  // grátis e ainda não possua assinatura ativa no Asaas
+  // O acesso público ao cardápio (?loja=slug ou aba consumer/tracking) é liberado para os clientes do restaurante
   const isAllowedPublicStoreView = Boolean(
-    sharedLojaParam &&
-      (currentView === 'consumer' || currentView === 'tracking') &&
-      isTenantSubscribed &&
+    (Boolean(sharedLojaParam) || currentView === 'consumer' || currentView === 'tracking') &&
+      tenant.subscriptionStatus !== 'suspended' &&
       !isTrialExpiredWithoutAsaas
   );
 
+  // Escuta mudanças na URL (popstate / hashchange) para direcionar links de cardápio diretamente ao restaurante
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleUrlChange = () => {
+      const detectedSlug = resolvePublicStoreSlugFromLocation();
+      if (detectedSlug) {
+        setSharedLojaParam(detectedSlug);
+        setCurrentView('consumer');
+      }
+    };
+    window.addEventListener('popstate', handleUrlChange);
+    window.addEventListener('hashchange', handleUrlChange);
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      window.removeEventListener('hashchange', handleUrlChange);
+    };
+  }, []);
+
+  // Hidrata dados do restaurante e cardápio do servidor quando um cliente abre o link público (?loja=slug)
+  React.useEffect(() => {
+    const slugToLoad = sharedLojaParam || (currentView === 'consumer' ? tenant.slug : null);
+    if (!slugToLoad) return;
+
+    let cancelled = false;
+    fetch(`/api/v1/tenants/${encodeURIComponent(slugToLoad)}/catalog`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        if (cancelled || !payload?.data?.tenant) return;
+        const serverTenant = payload.data.tenant as RestaurantTenant;
+        const serverCategories = Array.isArray(payload.data.categories) ? payload.data.categories : [];
+        const serverProducts = Array.isArray(payload.data.products) ? payload.data.products : [];
+
+        setTenant((prev) => {
+          if (prev.slug.toLowerCase() !== serverTenant.slug.toLowerCase() && !sharedLojaParam) {
+            return prev;
+          }
+          return normalizeTenantVisualIdentity({
+            ...INITIAL_TENANT,
+            ...prev,
+            ...serverTenant,
+            subscriptionStatus: serverTenant.subscriptionStatus || prev.subscriptionStatus || 'active',
+          });
+        });
+
+        if (serverCategories.length > 0 || serverProducts.length > 0) {
+          setCatalogsByTenant((prev) => {
+            const existing = prev[serverTenant.slug];
+            // Se o navegador do cliente não tem produtos salvos localmente para este restaurante, hidrata do servidor
+            if (!existing || existing.productIds.length === 0) {
+              return {
+                ...prev,
+                [serverTenant.slug]: sanitizeTenantCatalog({
+                  categories: serverCategories.length > 0 ? serverCategories : INITIAL_CATEGORIES,
+                  products: serverProducts,
+                  orders: existing
+                    ? existing.orderIds.map((id) => existing.ordersById[id]).filter(Boolean)
+                    : [],
+                  updatedAt: Date.now(),
+                }),
+              };
+            }
+            return prev;
+          });
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sharedLojaParam, currentView, tenant.slug]);
+
   React.useEffect(() => {
     if (isSuperAdmin) return;
+    // Nunca redireciona clientes que estão acessando o cardápio digital ou rastreamento de pedido para a home
+    if (currentView === 'consumer' || currentView === 'tracking' || Boolean(sharedLojaParam)) {
+      return;
+    }
     if (
       (isTrialExpiredWithoutAsaas || (!hasActiveSubscription && !isAllowedPublicStoreView)) &&
       isProtectedAdminOrMenuPanel
@@ -849,6 +987,8 @@ export default function App() {
     }
   }, [
     isSuperAdmin,
+    currentView,
+    sharedLojaParam,
     isTrialExpiredWithoutAsaas,
     hasActiveSubscription,
     isAllowedPublicStoreView,
@@ -856,11 +996,15 @@ export default function App() {
   ]);
 
   const handleNavigateSafely = (targetView: typeof currentView) => {
+    // O cardápio digital ('consumer') e rastreio ('tracking') são públicos para os clientes do restaurante
+    if (targetView === 'consumer' || targetView === 'tracking') {
+      setCurrentView(targetView);
+      return;
+    }
+
     const isTargetProtected =
       targetView === 'admin' ||
       targetView === 'whatsapp' ||
-      targetView === 'consumer' ||
-      targetView === 'tracking' ||
       targetView === 'calculator' ||
       targetView === 'diagrams';
 
@@ -913,6 +1057,23 @@ export default function App() {
         .filter((o): o is Order => Boolean(o)),
     [currentCatalog.orderIds, currentCatalog.ordersById]
   );
+
+  // Sincroniza automaticamente o restaurante e seu cardápio com o backend para que o link público (?loja=slug) esteja sempre atualizado em qualquer dispositivo
+  React.useEffect(() => {
+    if (!tenant?.slug) return;
+    const timeoutId = setTimeout(() => {
+      fetch(`/api/v1/tenants/${encodeURIComponent(tenant.slug)}/catalog/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenant,
+          categories,
+          products,
+        }),
+      }).catch(() => {});
+    }, 350);
+    return () => clearTimeout(timeoutId);
+  }, [tenant, categories, products]);
 
   // Tenant Handlers
   const handleTenantCreated = (newTenant: RestaurantTenant) => {
@@ -1353,7 +1514,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
-      {/* Universal Top Bar Contract (Brand Zone - Nav Zone - Primary Action) */}
+      {/* Universal Top Bar Contract (Ocultado quando o cliente acessa diretamente o link do restaurante ?loja=slug sem estar logado no painel administrativo) */}
+      {!(Boolean(sharedLojaParam) && !authSession && (currentView === 'consumer' || currentView === 'tracking')) && (
       <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-2xs">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-2 sm:gap-8">
           {/* Zone 1: Brand Wordmark with Tech Blue emblem */}
@@ -1856,6 +2018,7 @@ export default function App() {
           </div>
         )}
       </header>
+      )}
 
       {/* Main Content Viewport */}
       <div className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
@@ -1905,7 +2068,8 @@ export default function App() {
           !isTrialExpiredWithoutAsaas &&
           (hasActiveSubscription || isAllowedPublicStoreView) && (
           <div className="py-2 space-y-4">
-            {/* Share Digital Menu Banner at top of Digital Menu Page */}
+            {/* Share Digital Menu Banner (Exibido apenas para o lojista/admin logado) */}
+            {Boolean(authSession) && (
             <div className="max-w-md mx-auto bg-white border border-slate-200 rounded-2xl p-3.5 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center shrink-0">
@@ -1913,7 +2077,7 @@ export default function App() {
                 </div>
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-slate-900">
-                    Link do Cardápio Digital
+                    Link do Cardápio Digital ({tenant.name})
                   </p>
                   <p className="text-[11px] font-mono text-slate-500 truncate">
                     {typeof window !== 'undefined'
@@ -1972,6 +2136,7 @@ export default function App() {
                 </a>
               </div>
             </div>
+            )}
 
             <ConsumerMenuView
               tenant={tenant}
@@ -2029,6 +2194,10 @@ export default function App() {
             onSimulateEvolutionReconnect={handleSimulateEvolutionReconnect}
             authSession={authSession}
             onOpenAuthPortal={() => handleNavigateSafely('auth')}
+            onOpenPublicMenu={() => {
+              setSharedLojaParam(tenant.slug);
+              handleNavigateSafely('consumer');
+            }}
           />
         )}
         {currentView === 'whatsapp' && (isSuperAdmin || (!isTrialExpiredWithoutAsaas && hasActiveSubscription)) && (

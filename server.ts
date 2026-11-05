@@ -757,13 +757,125 @@ async function startServer() {
     });
   });
 
-  // Get specific tenant
+  // Get specific tenant (and public catalog snapshot)
   app.get('/api/v1/tenants/:slug', (req: Request, res: Response) => {
-    const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
+    const slug = String(req.params.slug || '').trim().toLowerCase();
+    const tenant = memoryTenants.find((t) => t.slug.toLowerCase() === slug);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
     }
-    res.json({ data: tenant });
+    const tenantCategories = memoryCategories
+      .filter((c) => c.tenantSlug.toLowerCase() === slug)
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
+    const tenantProducts = memoryProducts.filter((p) => p.tenantSlug.toLowerCase() === slug);
+    res.json({
+      data: tenant,
+      categories: tenantCategories,
+      products: tenantProducts,
+    });
+  });
+
+  // Public Digital Menu Catalog Endpoint for Customers (?loja=:slug)
+  app.get('/api/v1/tenants/:slug/catalog', (req: Request, res: Response) => {
+    const slug = String(req.params.slug || '').trim().toLowerCase();
+    const tenant = memoryTenants.find((t) => t.slug.toLowerCase() === slug);
+    if (!tenant) {
+      return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    }
+    const tenantCategories = memoryCategories
+      .filter((c) => c.tenantSlug.toLowerCase() === slug)
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
+    const tenantProducts = memoryProducts.filter((p) => p.tenantSlug.toLowerCase() === slug);
+    res.json({
+      success: true,
+      data: {
+        tenant,
+        categories: tenantCategories,
+        products: tenantProducts,
+      },
+    });
+  });
+
+  // Sync Tenant + Catalog state from Admin Panel so public links (?loja=:slug) always reflect latest menu
+  app.post('/api/v1/tenants/:slug/catalog/sync', (req: Request, res: Response) => {
+    const slug = String(req.params.slug || '').trim();
+    if (!slug) {
+      return res.status(400).json({ error: 'Slug inválido.' });
+    }
+    const { tenant: incomingTenant, categories, products } = req.body || {};
+
+    let tenant = memoryTenants.find((t) => t.slug.toLowerCase() === slug.toLowerCase());
+    if (!tenant && incomingTenant) {
+      tenant = {
+        id: incomingTenant.id || `tenant_${Date.now()}`,
+        name: String(incomingTenant.name || slug),
+        slug,
+        phone: String(incomingTenant.phone || '').replace(/\D/g, ''),
+        address: String(incomingTenant.address || ''),
+        primaryColor: incomingTenant.primaryColor || '#2563EB',
+        isOpen: incomingTenant.isOpen ?? true,
+        deliveryFeeCents: Number(incomingTenant.deliveryFeeCents) || 0,
+        minOrderCents: Number(incomingTenant.minOrderCents) || 0,
+        deliveryZones: Array.isArray(incomingTenant.deliveryZones) ? incomingTenant.deliveryZones : [],
+        evolutionInstanceId: incomingTenant.evolutionInstanceId || `instancia_${slug}`,
+        evolutionStatus: incomingTenant.evolutionStatus || 'disconnected',
+        pixConfig: incomingTenant.pixConfig || undefined,
+      };
+      memoryTenants.push(tenant);
+    } else if (tenant && incomingTenant) {
+      if (incomingTenant.name) tenant.name = String(incomingTenant.name).trim();
+      if (incomingTenant.phone !== undefined) tenant.phone = String(incomingTenant.phone).replace(/\D/g, '');
+      if (incomingTenant.address !== undefined) tenant.address = String(incomingTenant.address).trim();
+      if (incomingTenant.primaryColor) tenant.primaryColor = incomingTenant.primaryColor;
+      if (typeof incomingTenant.isOpen === 'boolean') tenant.isOpen = incomingTenant.isOpen;
+      if (typeof incomingTenant.deliveryFeeCents === 'number') tenant.deliveryFeeCents = incomingTenant.deliveryFeeCents;
+      if (typeof incomingTenant.minOrderCents === 'number') tenant.minOrderCents = incomingTenant.minOrderCents;
+      if (Array.isArray(incomingTenant.deliveryZones)) tenant.deliveryZones = incomingTenant.deliveryZones;
+      if (incomingTenant.pixConfig) tenant.pixConfig = incomingTenant.pixConfig;
+    }
+
+    if (Array.isArray(categories)) {
+      // Remove old categories for this tenant and replace with latest list
+      for (let i = memoryCategories.length - 1; i >= 0; i--) {
+        if (memoryCategories[i].tenantSlug.toLowerCase() === slug.toLowerCase()) {
+          memoryCategories.splice(i, 1);
+        }
+      }
+      categories.forEach((cat: any, idx: number) => {
+        if (!cat || !cat.id) return;
+        memoryCategories.push({
+          id: String(cat.id),
+          tenantSlug: tenant?.slug || slug,
+          name: String(cat.name || 'Categoria').slice(0, 80),
+          order: Number(cat.order) || idx + 1,
+        });
+      });
+    }
+
+    if (Array.isArray(products)) {
+      for (let i = memoryProducts.length - 1; i >= 0; i--) {
+        if (memoryProducts[i].tenantSlug.toLowerCase() === slug.toLowerCase()) {
+          memoryProducts.splice(i, 1);
+        }
+      }
+      products.forEach((prod: any) => {
+        if (!prod || !prod.id) return;
+        memoryProducts.push({
+          id: String(prod.id),
+          tenantId: tenant?.id || `tenant_${slug}`,
+          tenantSlug: tenant?.slug || slug,
+          categoryId: String(prod.categoryId || 'cat_geral'),
+          name: String(prod.name || 'Produto').slice(0, 120),
+          description: prod.description ? String(prod.description) : '',
+          priceCents: Math.max(0, parseInt(prod.priceCents, 10) || 0),
+          imageUrl: prod.imageUrl || undefined,
+          isAvailable: prod.isAvailable !== false,
+          optionGroups: Array.isArray(prod.optionGroups) ? prod.optionGroups : [],
+        });
+      });
+    }
+
+    res.json({ success: true, slug: tenant?.slug || slug });
   });
 
   // Bulk Import / Sync Catalog (Categories & Products) from Spreadsheet per Tenant
@@ -774,7 +886,39 @@ async function startServer() {
     }
 
     const { products, categories, mode } = req.body;
+    if (Array.isArray(categories)) {
+      if (mode === 'replace') {
+        for (let i = memoryCategories.length - 1; i >= 0; i--) {
+          if (memoryCategories[i].tenantSlug === tenant.slug) {
+            memoryCategories.splice(i, 1);
+          }
+        }
+      }
+      categories.forEach((cat: any, idx: number) => {
+        if (!cat || !cat.id) return;
+        const existingCatIdx = memoryCategories.findIndex((c) => c.id === cat.id && c.tenantSlug === tenant.slug);
+        if (existingCatIdx >= 0) {
+          memoryCategories[existingCatIdx].name = String(cat.name || memoryCategories[existingCatIdx].name).slice(0, 80);
+          memoryCategories[existingCatIdx].order = Number(cat.order) || idx + 1;
+        } else {
+          memoryCategories.push({
+            id: String(cat.id),
+            tenantSlug: tenant.slug,
+            name: String(cat.name || 'Categoria').slice(0, 80),
+            order: Number(cat.order) || idx + 1,
+          });
+        }
+      });
+    }
+
     if (Array.isArray(products)) {
+      if (mode === 'replace') {
+        for (let i = memoryProducts.length - 1; i >= 0; i--) {
+          if (memoryProducts[i].tenantSlug === tenant.slug) {
+            memoryProducts.splice(i, 1);
+          }
+        }
+      }
       products.forEach((prod: any) => {
         if (!prod || !prod.id) return;
         const cleanPrice = Math.max(0, parseInt(prod.priceCents, 10) || 0);
@@ -782,14 +926,22 @@ async function startServer() {
         if (existingIdx >= 0) {
           memoryProducts[existingIdx].priceCents = cleanPrice;
           memoryProducts[existingIdx].name = String(prod.name || memoryProducts[existingIdx].name).slice(0, 120);
+          memoryProducts[existingIdx].categoryId = String(prod.categoryId || memoryProducts[existingIdx].categoryId || 'cat_geral');
+          memoryProducts[existingIdx].description = prod.description !== undefined ? String(prod.description) : memoryProducts[existingIdx].description;
+          memoryProducts[existingIdx].imageUrl = prod.imageUrl !== undefined ? prod.imageUrl : memoryProducts[existingIdx].imageUrl;
+          memoryProducts[existingIdx].isAvailable = prod.isAvailable !== false;
           memoryProducts[existingIdx].optionGroups = Array.isArray(prod.optionGroups) ? prod.optionGroups : [];
         } else {
           memoryProducts.push({
             id: String(prod.id),
             tenantId: tenant.id,
             tenantSlug: tenant.slug,
+            categoryId: String(prod.categoryId || 'cat_geral'),
             name: String(prod.name || 'Produto').slice(0, 120),
+            description: prod.description ? String(prod.description) : '',
             priceCents: cleanPrice,
+            imageUrl: prod.imageUrl || undefined,
+            isAvailable: prod.isAvailable !== false,
             optionGroups: Array.isArray(prod.optionGroups) ? prod.optionGroups : [],
           });
         }
@@ -2381,10 +2533,10 @@ async function startServer() {
       replyMessage = `Perfeito! Pausamos o robô de auto-resposta para o seu número. Um dos nossos atendentes humanos do ${tenant.name} vai falar com você em instantes! 👨‍🍳`;
     } else if (!tenant.isOpen) {
       actionType = 'closed_hours';
-      replyMessage = `Olá! Agradecemos sua mensagem para o ${tenant.name}.\n\nNo momento nosso restaurante está *FECHADO*.\n🕒 Horário de funcionamento: Seg a Dom das 18h às 23h30.\n\nVocê já pode conferir nosso cardápio e adiantar seu pedido para quando abrirmos:\n👉 ${baseAppUrl}/${tenant.slug}`;
+      replyMessage = `Olá! Agradecemos sua mensagem para o ${tenant.name}.\n\nNo momento nosso restaurante está *FECHADO*.\n🕒 Horário de funcionamento: Seg a Dom das 18h às 23h30.\n\nVocê já pode conferir nosso cardápio e adiantar seu pedido para quando abrirmos:\n👉 ${baseAppUrl}/?loja=${tenant.slug}`;
     } else {
       actionType = 'cardapio';
-      replyMessage = `Olá! Seja muito bem-vindo ao *${tenant.name}*! 🍔\n\nNosso cardápio digital oficial está disponível no link abaixo com fotos, preços e promoções atualizadas:\n\n👉 ${baseAppUrl}/${tenant.slug}\n\nFaça seu pedido diretamente pelo link! Se preferir falar com um atendente da nossa equipe, responda com *2*.`;
+      replyMessage = `Olá! Seja muito bem-vindo ao *${tenant.name}*! 🍔\n\nNosso cardápio digital oficial está disponível no link abaixo com fotos, preços e promoções atualizadas:\n\n👉 ${baseAppUrl}/?loja=${tenant.slug}\n\nFaça seu pedido diretamente pelo link! Se preferir falar com um atendente da nossa equipe, responda com *2*.`;
     }
 
     // Record Inbound log
@@ -2436,13 +2588,14 @@ async function startServer() {
   app.post('/api/v1/webhooks/test-dispatch', (req: Request, res: Response) => {
     const { instance, senderPhone, messageText, tenantSlug } = req.body;
     const tenant = memoryTenants.find((t) => t.slug === tenantSlug || t.evolutionInstanceId === instance) || memoryTenants[0];
+    const baseAppUrl = (process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '');
 
     const cleanText = String(messageText || 'Oi, quero o cardapio').trim().toLowerCase();
     const isHuman = cleanText === '2' || cleanText.includes('atendente') || cleanText.includes('humano');
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     let action = 'cardapio';
-    let reply = `Olá! Seja muito bem-vindo ao *${tenant.name}*! Acesse o cardápio: https://cardapio.seudominio.com/${tenant.slug}`;
+    let reply = `Olá! Seja muito bem-vindo ao *${tenant.name}*! Acesse o cardápio: ${baseAppUrl}/?loja=${tenant.slug}`;
     if (isHuman) {
       action = 'human_handoff';
       reply = `Encaminhando para um atendente da equipe do ${tenant.name}.`;
