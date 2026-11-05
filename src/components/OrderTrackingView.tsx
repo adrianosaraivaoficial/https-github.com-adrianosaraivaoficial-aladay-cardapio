@@ -33,13 +33,35 @@ interface OrderTrackingViewProps {
   onBackToMenu?: () => void;
 }
 
+const DEFAULT_TRACKING_ORDER: Order = {
+  id: 'ord_1042',
+  tenantId: 'tenant_aladay_01',
+  tenantSlug: 'aladay',
+  orderNumber: 1042,
+  customerName: 'Cliente',
+  customerPhone: '559181214188',
+  type: 'delivery',
+  status: 'received',
+  deliveryAddress: 'Endereço cadastrado',
+  items: [],
+  subtotalCents: 0,
+  deliveryFeeCents: 0,
+  totalCents: 0,
+  paymentMethod: 'Pix',
+  paymentStatus: 'pending',
+  whatsAppStatus: 'sent',
+  whatsAppLogs: [],
+  createdAt: '12:00',
+  updatedAt: '12:00',
+};
+
 export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
   order: initialOrder,
   tenant,
   onUpdateOrderStatus,
   onBackToMenu,
 }) => {
-  const [order, setOrder] = useState<Order>(initialOrder);
+  const [order, setOrder] = useState<Order>(() => initialOrder || DEFAULT_TRACKING_ORDER);
   const [isUpdating, setIsUpdating] = useState(false);
   const [showThermalModal, setShowThermalModal] = useState(false);
   const [showPixModal, setShowPixModal] = useState(false);
@@ -48,7 +70,9 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
 
   // Sync if prop updates
   useEffect(() => {
-    setOrder(initialOrder);
+    if (initialOrder) {
+      setOrder(initialOrder);
+    }
   }, [initialOrder]);
 
   // Status mapping and configuration
@@ -273,7 +297,7 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
             </span>
           </div>
           <p className="text-[11px] text-neutral-300">
-            Clique nos botões abaixo para simular a mudança de status na cozinha e ver a notificação automática disparando para o WhatsApp de <strong>{order.customerName} ({order.customerPhone})</strong>:
+            Clique nos botões abaixo para simular a mudança de status na cozinha e ver a notificação automática disparando para o WhatsApp de <strong>{order?.customerName || 'Cliente'} ({order?.customerPhone || ''})</strong>:
           </p>
           <div className="flex flex-wrap gap-1.5 pt-1">
             <button
@@ -516,8 +540,8 @@ export const OrderTrackingView: React.FC<OrderTrackingViewProps> = ({
               <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider block">
                 Cliente &amp; Contato
               </span>
-              <p className="font-bold text-neutral-900">{order.customerName}</p>
-              <p className="text-neutral-600 font-mono">+{order.customerPhone}</p>
+              <p className="font-bold text-neutral-900">{order?.customerName || 'Cliente'}</p>
+              <p className="text-neutral-600 font-mono">+{order?.customerPhone || ''}</p>
             </div>
 
             <div className="space-y-1">

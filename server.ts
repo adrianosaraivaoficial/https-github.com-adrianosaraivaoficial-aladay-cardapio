@@ -1561,38 +1561,62 @@ async function startServer() {
   }
 
   function getOrderTemplateVars(order: any, tenant: any): Record<string, string> {
-    const customerFirstName = (order.customerName || 'Cliente').trim().split(' ')[0];
-    const orderNum = String(order.orderNumber || order.id || '0000');
-    const totalFormatted = `R$ ${((order.totalCents || 0) / 100).toFixed(2).replace('.', ',')}`;
-    const subtotalFormatted = `R$ ${((order.subtotalCents || 0) / 100).toFixed(2).replace('.', ',')}`;
-    const deliveryFeeFormatted = `R$ ${((order.deliveryFeeCents || 0) / 100).toFixed(2).replace('.', ',')}`;
+    const safeOrder = order || {
+      id: '1042',
+      orderNumber: 1042,
+      customerName: 'Cliente',
+      customerPhone: '559181214188',
+      type: 'delivery',
+      deliveryAddress: 'Endereço informado',
+      deliveryZoneName: 'Bela Vista',
+      estimatedMinutes: 35,
+      items: [{ quantity: 1, productName: 'Smash Burger Artesanal' }],
+      totalCents: 4500,
+      subtotalCents: 4000,
+      deliveryFeeCents: 500,
+      paymentMethod: 'Pix no Recebimento',
+    };
+    const safeTenant = tenant || {
+      name: 'Restaurante',
+      address: '',
+      phone: '',
+      deliveryZones: [],
+    };
+
+    const customerFirstName = (safeOrder.customerName || 'Cliente').trim().split(' ')[0] || 'Cliente';
+    const orderNum = String(safeOrder.orderNumber || safeOrder.id || '1042');
+    const totalFormatted = `R$ ${(((safeOrder.totalCents || 0)) / 100).toFixed(2).replace('.', ',')}`;
+    const subtotalFormatted = `R$ ${(((safeOrder.subtotalCents || 0)) / 100).toFixed(2).replace('.', ',')}`;
+    const deliveryFeeFormatted = `R$ ${(((safeOrder.deliveryFeeCents || 0)) / 100).toFixed(2).replace('.', ',')}`;
     const baseAppUrl = (process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '');
-    const trackingUrl = `${baseAppUrl}/pedido/${order.id}`;
-    const itemsSummary = (order.items || [])
-      .map((i: any) => `${i.quantity}x ${i.productName}`)
+    const trackingUrl = `${baseAppUrl}/pedido/${safeOrder.id || '1042'}`;
+    const itemsSummary = (safeOrder.items || [])
+      .map((i: any) => `${i?.quantity || 1}x ${i?.productName || 'Item'}`)
       .join(', ') || 'Itens selecionados';
-    const orderType = order.type === 'delivery' ? 'Entrega' : 'Retirada no Balcão';
-    const address = order.type === 'delivery'
-      ? (order.deliveryAddress || 'Endereço informado')
-      : `Retirada no Balcão (${tenant.address || 'Balcão da loja'})`;
-    const estimatedMin = String(order.estimatedMinutes || (tenant.deliveryZones && tenant.deliveryZones[0]?.estimatedMinutes) || 35);
+    const orderType = safeOrder.type === 'delivery' ? 'Entrega' : 'Retirada no Balcão';
+    const address = safeOrder.type === 'delivery'
+      ? (safeOrder.deliveryAddress || 'Endereço informado')
+      : `Retirada no Balcão (${safeTenant.address || 'Balcão da loja'})`;
+    const estimatedMin = String(
+      safeOrder.estimatedMinutes || (safeTenant.deliveryZones && safeTenant.deliveryZones[0]?.estimatedMinutes) || 35
+    );
 
     return {
-      cliente_nome: order.customerName || 'Cliente',
+      cliente_nome: safeOrder.customerName || 'Cliente',
       cliente_primeiro_nome: customerFirstName,
       numero_pedido: orderNum,
-      restaurante_nome: tenant.name || 'Restaurante',
-      restaurante_endereco: tenant.address || '',
-      restaurante_telefone: tenant.phone || '',
+      restaurante_nome: safeTenant.name || 'Restaurante',
+      restaurante_endereco: safeTenant.address || '',
+      restaurante_telefone: safeTenant.phone || '',
       tipo_pedido: orderType,
       endereco_entrega: address,
-      bairro_entrega: order.deliveryZoneName || 'Bairro cadastrado',
+      bairro_entrega: safeOrder.deliveryZoneName || 'Bairro cadastrado',
       previsao_minutos: estimatedMin,
       total: totalFormatted,
       subtotal: subtotalFormatted,
       taxa_entrega: deliveryFeeFormatted,
       itens_resumo: itemsSummary,
-      forma_pagamento: order.paymentMethod || 'Pix',
+      forma_pagamento: safeOrder.paymentMethod || 'Pix',
       link_rastreamento: trackingUrl,
     };
   }
@@ -1600,11 +1624,11 @@ async function startServer() {
   // Helper function to build formatted WhatsApp status update messages
   function buildStatusNotificationText(order: any, tenant: any, newStatus: string): string {
     const vars = getOrderTemplateVars(order, tenant);
-    const customTemplates = tenant.statusNotificationTemplates || {};
+    const customTemplates = tenant?.statusNotificationTemplates || {};
 
     let templateKey = newStatus;
     if (newStatus === 'ready') {
-      templateKey = order.type === 'delivery' ? 'ready_delivery' : 'ready_pickup';
+      templateKey = (order?.type === 'delivery') ? 'ready_delivery' : 'ready_pickup';
     }
 
     const rawTemplate = customTemplates[templateKey] || defaultStatusTemplates[templateKey];
@@ -1912,81 +1936,117 @@ async function startServer() {
 
   // POST test-send custom notification template
   app.post('/api/v1/notifications/test-send', async (req: Request, res: Response) => {
-    const { tenantSlug, templateKey, customText, customPhone, orderId } = req.body;
-    const tenant = memoryTenants.find((t) => t.slug === tenantSlug) || memoryTenants[0];
-    const order = memoryOrders.find((o) => o.id === orderId) || memoryOrders[0];
+    try {
+      const { tenantSlug, templateKey, customText, customPhone, orderId } = req.body || {};
+      const tenant = (tenantSlug ? memoryTenants.find((t) => t.slug === tenantSlug) : null) || memoryTenants[0] || {
+        id: 'tenant_aladay_01',
+        name: 'Meu Restaurante',
+        slug: tenantSlug || 'aladay',
+        phone: '',
+        address: '',
+        primaryColor: '#EA580C',
+        isOpen: true,
+        deliveryFeeCents: 0,
+        minOrderCents: 0,
+        deliveryZones: [],
+        evolutionInstanceId: 'aladay',
+        evolutionStatus: 'disconnected',
+      };
 
-    const targetPhone = (customPhone || order?.customerPhone || '559181214188').replace(/\D/g, '');
-    const vars = getOrderTemplateVars(order, tenant);
-    const textToSend = customText
-      ? interpolateTemplate(customText, vars)
-      : buildStatusNotificationText(order, tenant, templateKey || 'confirmed');
+      const order = (orderId ? memoryOrders.find((o) => o?.id === orderId) : null) || memoryOrders[0] || {
+        id: orderId || 'ord_1042',
+        orderNumber: 1042,
+        customerName: 'Adriano Saraiva',
+        customerPhone: customPhone || '559181214188',
+        type: 'delivery',
+        deliveryAddress: 'Av. Consolação, 1420 - Centro',
+        deliveryZoneName: 'Centro',
+        estimatedMinutes: 35,
+        items: [{ quantity: 1, productName: 'Smash Burger Artesanal' }],
+        subtotalCents: 3500,
+        deliveryFeeCents: 500,
+        totalCents: 4000,
+        paymentMethod: 'Pix no Recebimento',
+      };
 
-    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const targetPhone = (customPhone || order.customerPhone || '559181214188').replace(/\D/g, '') || '559181214188';
+      const vars = getOrderTemplateVars(order, tenant);
+      const textToSend = customText
+        ? interpolateTemplate(customText, vars)
+        : buildStatusNotificationText(order, tenant, templateKey || 'confirmed');
 
-    // Evolution API credentials from tenant or environment
-    const evolutionApiUrl = (tenant as any).evolutionApiUrl || process.env.EVOLUTION_API_URL || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
-    const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
-    const instanceName = tenant.evolutionInstanceId || 'aladay';
+      const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-    // Record Webhook Log
-    memoryWebhookLogs.unshift({
-      id: `log_notif_test_${Date.now()}`,
-      timestamp: currentTime,
-      source: 'evolution',
-      eventType: 'SEND_MESSAGE',
-      instance: instanceName,
-      senderPhone: targetPhone,
-      messageText: textToSend,
-      direction: 'outbound',
-      status: 'success',
-      payloadSummary: `Disparo de teste da notificação "${templateKey || 'personalizada'}" para ${targetPhone}`,
-      fullPayload: {
-        number: targetPhone,
-        text: textToSend,
-        options: { delay: 1000, presence: 'composing', linkPreview: true },
-      },
-    });
+      // Evolution API credentials from tenant or environment
+      const evolutionApiUrl = (tenant as any).evolutionApiUrl || process.env.EVOLUTION_API_URL || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
+      const evolutionApiKey = (tenant as any).evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
+      const instanceName = tenant.evolutionInstanceId || 'aladay';
 
-    let evolutionResult: any = { status: 'logged_locally' };
-    if (evolutionApiKey) {
-      try {
-        const response = await fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${instanceName}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: evolutionApiKey,
-          },
-          body: JSON.stringify({
-            number: targetPhone,
-            text: textToSend,
-            options: {
-              delay: 1000,
-              presence: 'composing',
-              linkPreview: true,
+      // Record Webhook Log
+      memoryWebhookLogs.unshift({
+        id: `log_notif_test_${Date.now()}`,
+        timestamp: currentTime,
+        source: 'evolution',
+        eventType: 'SEND_MESSAGE',
+        instance: instanceName,
+        senderPhone: targetPhone,
+        messageText: textToSend,
+        direction: 'outbound',
+        status: 'success',
+        payloadSummary: `Disparo de teste da notificação "${templateKey || 'personalizada'}" para ${targetPhone}`,
+        fullPayload: {
+          number: targetPhone,
+          text: textToSend,
+          options: { delay: 1000, presence: 'composing', linkPreview: true },
+        },
+      });
+
+      let evolutionResult: any = { status: 'logged_locally' };
+      if (evolutionApiKey) {
+        try {
+          const response = await fetch(`${evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${instanceName}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              apikey: evolutionApiKey,
             },
-          }),
-        });
+            body: JSON.stringify({
+              number: targetPhone,
+              text: textToSend,
+              options: {
+                delay: 1000,
+                presence: 'composing',
+                linkPreview: true,
+              },
+            }),
+          });
 
-        if (response.ok) {
-          evolutionResult = await response.json();
-        } else {
-          const errorText = await response.text();
-          evolutionResult = { status: 'error_response', code: response.status, details: errorText };
+          if (response.ok) {
+            evolutionResult = await response.json();
+          } else {
+            const errorText = await response.text();
+            evolutionResult = { status: 'error_response', code: response.status, details: errorText };
+          }
+        } catch (err: any) {
+          evolutionResult = { status: 'network_fallback', error: err?.message };
         }
-      } catch (err: any) {
-        evolutionResult = { status: 'network_fallback', error: err?.message };
       }
-    }
 
-    res.json({
-      success: true,
-      renderedText: textToSend,
-      targetPhone,
-      instance: instanceName,
-      evolutionResult,
-      currentTime,
-    });
+      return res.json({
+        success: true,
+        renderedText: textToSend,
+        targetPhone,
+        instance: instanceName,
+        evolutionResult,
+        currentTime,
+      });
+    } catch (err: any) {
+      console.error('Error in /api/v1/notifications/test-send:', err);
+      return res.status(500).json({
+        success: false,
+        error: err?.message || 'Erro interno ao processar disparo de teste',
+      });
+    }
   });
 
   // Update tenant general settings

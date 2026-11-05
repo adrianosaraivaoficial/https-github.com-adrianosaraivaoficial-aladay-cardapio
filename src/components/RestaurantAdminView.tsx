@@ -40,7 +40,7 @@ import {
   FileSpreadsheet,
   Upload
 } from 'lucide-react';
-import { AuthSession, Category, CustomerRecord, DeliveryZone, OptionGroup, OptionItem, Order, OrderStatus, PixGatewayConfig, Product, RestaurantTenant, UserRole } from '../types';
+import { AuthSession, Category, CustomerRecord, DeliveryZone, NormalizedTenantCatalog, OptionGroup, OptionItem, Order, OrderStatus, PixGatewayConfig, Product, RestaurantTenant, UserRole } from '../types';
 import { ThermalTicketModal } from './ThermalTicketModal';
 import { ConsumerMenuView } from './ConsumerMenuView';
 import { WhatsAppAutomationView } from './WhatsAppAutomationView';
@@ -66,6 +66,8 @@ interface RestaurantAdminViewProps {
   categories: Category[];
   customers: CustomerRecord[];
   allTenants?: RestaurantTenant[];
+  catalogsByTenant?: Record<string, NormalizedTenantCatalog>;
+  onCreateTenant?: (newTenant: RestaurantTenant) => void;
   onSelectTenant?: (tenant: RestaurantTenant) => void;
   onUpdateTenant: (updatedTenant: RestaurantTenant) => void;
   onUpdateOrderStatus: (orderId: string, nextStatus: OrderStatus) => void;
@@ -87,6 +89,8 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   categories,
   customers,
   allTenants = [],
+  catalogsByTenant = {},
+  onCreateTenant,
   onSelectTenant,
   onUpdateTenant,
   onUpdateOrderStatus,
@@ -100,13 +104,26 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   authSession,
   onOpenAuthPortal,
 }) => {
-  const [activeTab, setActiveTab] = useState<'kds' | 'menu' | 'categories' | 'settings' | 'billing' | 'whatsapp' | 'crm' | 'reports'>('menu');
+  const isSuperAdmin = authSession?.user?.role === 'SUPER_ADMIN';
+  const [activeTab, setActiveTab] = useState<'super_subscriptions' | 'kds' | 'menu' | 'categories' | 'settings' | 'billing' | 'whatsapp' | 'crm' | 'reports'>(() =>
+    authSession?.user?.role === 'SUPER_ADMIN' ? 'super_subscriptions' : 'menu'
+  );
   const [printingOrder, setPrintingOrder] = useState<Order | null>(null);
   const [trackingOrderModal, setTrackingOrderModal] = useState<Order | null>(null);
   const [statusUpdateToast, setStatusUpdateToast] = useState<string | null>(null);
   const [testMsgStatus, setTestMsgStatus] = useState<string | null>(null);
   const [isQrPairingModalOpen, setIsQrPairingModalOpen] = useState(false);
   const [spreadsheetModalTab, setSpreadsheetModalTab] = useState<'export' | 'import' | null>(null);
+
+  // Super Admin state for filtering and provisioning restaurants
+  const [superAdminSearch, setSuperAdminSearch] = useState('');
+  const [superAdminStatusFilter, setSuperAdminStatusFilter] = useState<'all' | 'active' | 'trial' | 'past_due'>('all');
+  const [isCreatingNewTenant, setIsCreatingNewTenant] = useState(false);
+  const [newTenantName, setNewTenantName] = useState('');
+  const [newTenantSlug, setNewTenantSlug] = useState('');
+  const [newTenantPhone, setNewTenantPhone] = useState('');
+  const [newTenantPlanStatus, setNewTenantPlanStatus] = useState<'active' | 'trial'>('trial');
+  const [superAdminActionNotice, setSuperAdminActionNotice] = useState<string | null>(null);
 
   // Dedicated 'Importação de Cardápio' Modal State
   const [isImportMenuModalOpen, setIsImportMenuModalOpen] = useState(false);
@@ -121,11 +138,19 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
   useEffect(() => {
     if (!authSession) return;
-    if (authSession.user.role === 'KITCHEN_STAFF') {
+    if (authSession.user.role === 'SUPER_ADMIN') {
+      setUserRole('owner');
+      setActiveTab((prev) =>
+        prev === 'menu' || prev === 'categories' || prev === 'kds' || prev === 'crm'
+          ? 'super_subscriptions'
+          : prev
+      );
+    } else if (authSession.user.role === 'KITCHEN_STAFF') {
       setUserRole('kitchen');
       setActiveTab('kds');
     } else {
       setUserRole('owner');
+      setActiveTab((prev) => (prev === 'super_subscriptions' ? 'menu' : prev));
     }
   }, [authSession]);
 
@@ -1339,122 +1364,154 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
   return (
     <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden min-h-[720px] flex flex-col shadow-xs">
-      {/* Top Header of the Restaurant Member Area */}
-      <div className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <div
-            className="w-10 h-10 rounded-lg text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0"
-            style={{ backgroundColor: tenant.primaryColor }}
-          >
-            {tenant.name.slice(0, 2).toUpperCase()}
-          </div>
-          <div>
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className="font-bold text-slate-900">{tenant.name}</span>
-              <span aria-hidden="true">·</span>
-              <span className="font-mono text-[11px]">slug: {tenant.slug}</span>
-              <span aria-hidden="true">·</span>
-              <span className="text-blue-700 font-medium">Assinatura Ativa</span>
+      {/* Top Header: Dedicated Global Console for Super Admin vs Restaurant Profile for Tenants */}
+      {isSuperAdmin ? (
+        <div className="bg-slate-900 text-white border-b border-slate-800 px-6 py-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-base shadow-sm shrink-0 border border-indigo-400/30">
+              👑
             </div>
-            <div className="flex flex-wrap items-center gap-2 mt-1">
-              <span className="text-[11px] text-slate-500 font-medium">Perfil RBAC:</span>
-              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-[11px]">
-                <button
-                  type="button"
-                  onClick={() => setUserRole('owner')}
-                  className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
-                    userRole === 'owner'
-                      ? 'bg-white text-blue-700 shadow-2xs font-semibold'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  👑 Proprietário (Total)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setUserRole('manager')}
-                  className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
-                    userRole === 'manager'
-                      ? 'bg-white text-blue-700 shadow-2xs font-semibold'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  📋 Gerente
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setUserRole('kitchen');
-                    setActiveTab('kds');
-                  }}
-                  className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
-                    userRole === 'kitchen'
-                      ? 'bg-white text-blue-700 shadow-2xs font-semibold'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  🍳 Cozinha (KDS)
-                </button>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-sm sm:text-base font-bold text-white tracking-tight">
+                  Central Super Admin · Gestão Global da Plataforma
+                </h1>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 uppercase tracking-wider">
+                  Acesso Total Multi-Tenant
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 mt-0.5">
+                Acompanhamento de assinaturas, relatórios de vendas e configuração completa da aplicação e de qualquer restaurante.
+              </p>
+            </div>
+          </div>
+
+          {/* Global Restaurant Selector for Super Admin */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-2 bg-slate-800/90 border border-slate-700 rounded-xl px-3 py-1.5 text-xs">
+              <span className="text-slate-400 font-medium whitespace-nowrap">Restaurante em Foco:</span>
+              <select
+                value={tenant.slug}
+                onChange={(e) => {
+                  const found = (allTenants.length > 0 ? allTenants : [tenant]).find((t) => t.slug === e.target.value);
+                  if (found && onSelectTenant) onSelectTenant(found);
+                }}
+                className="bg-slate-900 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1 font-semibold focus:outline-none focus:border-indigo-500"
+              >
+                {(allTenants.length > 0 ? allTenants : [tenant]).map((t) => (
+                  <option key={t.slug} value={t.slug}>
+                    {t.name} ({t.slug})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('super_subscriptions');
+                setIsCreatingNewTenant(true);
+              }}
+              className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Novo Restaurante</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div
+              className="w-10 h-10 rounded-lg text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0"
+              style={{ backgroundColor: tenant.primaryColor }}
+            >
+              {tenant.name.slice(0, 2).toUpperCase()}
+            </div>
+            <div>
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <span className="font-bold text-slate-900">{tenant.name}</span>
+                <span aria-hidden="true">·</span>
+                <span className="font-mono text-[11px]">slug: {tenant.slug}</span>
+                <span aria-hidden="true">·</span>
+                <span className="text-blue-700 font-medium">Assinatura Ativa</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 mt-1">
+                <span className="text-[11px] text-slate-500 font-medium">Perfil RBAC:</span>
+                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setUserRole('owner')}
+                    className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+                      userRole === 'owner'
+                        ? 'bg-white text-blue-700 shadow-2xs font-semibold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    👑 Proprietário (Total)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUserRole('manager')}
+                    className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+                      userRole === 'manager'
+                        ? 'bg-white text-blue-700 shadow-2xs font-semibold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    📋 Gerente
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUserRole('kitchen');
+                      setActiveTab('kds');
+                    }}
+                    className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+                      userRole === 'kitchen'
+                        ? 'bg-white text-blue-700 shadow-2xs font-semibold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    🍳 Cozinha (KDS)
+                  </button>
+                </div>
               </div>
             </div>
           </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setIsQrPairingModalOpen(true)}
+              className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200/80 rounded-lg text-xs cursor-pointer transition-colors shadow-2xs group"
+              title="Clique para abrir o Pareamento com Evolution API via QR Code na tela"
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  tenant.evolutionStatus === 'connected' ? 'bg-blue-500 ring-2 ring-blue-200' : 'bg-rose-500 ring-2 ring-rose-200 animate-pulse'
+                }`}
+              />
+              <span className="text-slate-700 font-medium group-hover:text-slate-900">
+                WhatsApp {tenant.evolutionStatus === 'connected' ? 'Conectado' : 'Desconectado'}
+              </span>
+              <QrCode className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-700 ml-0.5" />
+            </button>
+
+            <a
+              href={`#cardapio-${tenant.slug}`}
+              onClick={(e) => {
+                e.preventDefault();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="px-3 py-1.5 text-xs font-semibold text-white rounded-lg shadow-xs transition-opacity hover:opacity-90"
+              style={{ backgroundColor: tenant.primaryColor }}
+            >
+              Ver Cardápio Público
+            </a>
+          </div>
         </div>
-
-        {/* Tenant selector (Super Admin) and WhatsApp Status */}
-        <div className="flex flex-wrap items-center gap-3">
-          {authSession?.user?.role === 'SUPER_ADMIN' &&
-            allTenants &&
-            allTenants.length > 1 &&
-            onSelectTenant && (
-              <div className="flex items-center gap-1.5 text-xs">
-                <span className="text-slate-500">Trocar Loja (Super Admin):</span>
-                <select
-                  value={tenant.slug}
-                  onChange={(e) => {
-                    const found = allTenants.find((t) => t.slug === e.target.value);
-                    if (found) onSelectTenant(found);
-                  }}
-                  className="bg-slate-100 border border-slate-200 text-slate-800 text-xs rounded-md px-2 py-1 font-medium"
-                >
-                  {allTenants.map((t) => (
-                    <option key={t.slug} value={t.slug}>
-                      {t.name} ({t.slug})
-                    </option>
-                  ))}
-                </select>
-              </div>
-          )}
-
-          <button
-            type="button"
-            onClick={() => setIsQrPairingModalOpen(true)}
-            className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200/80 rounded-lg text-xs cursor-pointer transition-colors shadow-2xs group"
-            title="Clique para abrir o Pareamento com Evolution API via QR Code na tela"
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                tenant.evolutionStatus === 'connected' ? 'bg-blue-500 ring-2 ring-blue-200' : 'bg-rose-500 ring-2 ring-rose-200 animate-pulse'
-              }`}
-            />
-            <span className="text-slate-700 font-medium group-hover:text-slate-900">
-              WhatsApp {tenant.evolutionStatus === 'connected' ? 'Conectado' : 'Desconectado'}
-            </span>
-            <QrCode className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-700 ml-0.5" />
-          </button>
-
-          <a
-            href={`#cardapio-${tenant.slug}`}
-            onClick={(e) => {
-              e.preventDefault();
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-            className="px-3 py-1.5 text-xs font-semibold text-white rounded-lg shadow-xs transition-opacity hover:opacity-90"
-            style={{ backgroundColor: tenant.primaryColor }}
-          >
-            Ver Cardápio Público
-          </a>
-        </div>
-      </div>
+      )}
 
       {/* Real-time Synchronization Notice */}
       {liveSyncNotice && (
@@ -1473,7 +1530,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       )}
 
       {/* Kitchen Mode Info Banner */}
-      {userRole === 'kitchen' && (
+      {!isSuperAdmin && userRole === 'kitchen' && (
         <div className="bg-amber-50 border-b border-amber-200 px-6 py-2.5 text-xs text-amber-900 flex items-center justify-between gap-3 font-medium">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 text-amber-700 shrink-0" />
@@ -1492,114 +1549,186 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
       {/* Tabs navigation */}
       <div className="bg-white border-b border-slate-200 px-4 sm:px-6 flex gap-4 sm:gap-6 text-xs font-medium overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('menu')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
-            activeTab === 'menu'
-              ? 'border-blue-600 text-blue-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <Utensils className="w-4 h-4 shrink-0" />
-          <span>Cardápio &amp; Produtos</span>
-          <span className="bg-blue-50 text-blue-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">
-            {products.length}
-          </span>
-        </button>
+        {isSuperAdmin ? (
+          <>
+            <button
+              onClick={() => setActiveTab('super_subscriptions')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'super_subscriptions'
+                  ? 'border-indigo-600 text-indigo-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4 shrink-0" />
+              <span>Assinaturas &amp; Restaurantes</span>
+              <span className="bg-indigo-50 text-indigo-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">
+                {(allTenants.length > 0 ? allTenants : [tenant]).length}
+              </span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('categories')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
-            activeTab === 'categories'
-              ? 'border-blue-600 text-blue-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <span>Categorias &amp; Grupos</span>
-        </button>
+            <button
+              onClick={() => setActiveTab('reports')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'reports'
+                  ? 'border-indigo-600 text-indigo-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4 shrink-0" />
+              <span>Relatórios dos Restaurantes</span>
+              <span className="bg-indigo-100 text-indigo-800 text-[9px] px-1.5 py-0.2 rounded font-semibold uppercase tracking-wider">
+                {tenant.name}
+              </span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('kds')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
-            activeTab === 'kds'
-              ? 'border-blue-600 text-blue-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <LayoutGrid className="w-4 h-4 shrink-0" />
-          <span>Gestão de Pedidos (KDS)</span>
-          {ordersByStatus.received.length > 0 && (
-            <span className="bg-blue-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-mono">
-              {ordersByStatus.received.length}
-            </span>
-          )}
-        </button>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'settings'
+                  ? 'border-indigo-600 text-indigo-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Settings className="w-4 h-4 shrink-0" />
+              <span>Configurar Restaurante ({tenant.name})</span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
-            activeTab === 'settings'
-              ? 'border-blue-600 text-blue-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <Settings className="w-4 h-4 shrink-0" />
-          <span>Configurações &amp; Identidade</span>
-        </button>
+            <button
+              onClick={() => setActiveTab('whatsapp')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'whatsapp'
+                  ? 'border-indigo-600 text-indigo-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <MessageSquare className="w-4 h-4 shrink-0" />
+              <span>Configurações da Aplicação (Evolution API, n8n &amp; Banco)</span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('billing')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
-            activeTab === 'billing'
-              ? 'border-blue-600 text-blue-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <CreditCard className="w-4 h-4 shrink-0" />
-          <span>Assinatura (Anual R$ 99 / Mensal)</span>
-        </button>
+            <button
+              onClick={() => setActiveTab('billing')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'billing'
+                  ? 'border-indigo-600 text-indigo-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <CreditCard className="w-4 h-4 shrink-0" />
+              <span>Faturamento &amp; Gateway Asaas</span>
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={() => setActiveTab('menu')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'menu'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Utensils className="w-4 h-4 shrink-0" />
+              <span>Cardápio &amp; Produtos</span>
+              <span className="bg-blue-50 text-blue-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">
+                {products.length}
+              </span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('whatsapp')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
-            activeTab === 'whatsapp'
-              ? 'border-blue-600 text-blue-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <MessageSquare className="w-4 h-4 shrink-0" />
-          <span>WhatsApp &amp; Notificações</span>
-        </button>
+            <button
+              onClick={() => setActiveTab('categories')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'categories'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <span>Categorias &amp; Grupos</span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('crm')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
-            activeTab === 'crm'
-              ? 'border-blue-600 text-blue-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <Users className="w-4 h-4 shrink-0" />
-          <span>CRM &amp; Clientes</span>
-          <span className="bg-slate-100 text-slate-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono">
-            {customers.length}
-          </span>
-        </button>
+            <button
+              onClick={() => setActiveTab('kds')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'kds'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <LayoutGrid className="w-4 h-4 shrink-0" />
+              <span>Gestão de Pedidos (KDS)</span>
+              {ordersByStatus.received.length > 0 && (
+                <span className="bg-blue-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-mono">
+                  {ordersByStatus.received.length}
+                </span>
+              )}
+            </button>
 
-        <button
-          onClick={() => setActiveTab('reports')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
-            activeTab === 'reports'
-              ? 'border-blue-600 text-blue-600 font-semibold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <BarChart3 className="w-4 h-4 shrink-0" />
-          <span>Dashboard &amp; Vendas</span>
-          <span className="bg-blue-100 text-blue-800 text-[9px] px-1.5 py-0.2 rounded font-semibold uppercase tracking-wider">
-            Auditado
-          </span>
-        </button>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'settings'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Settings className="w-4 h-4 shrink-0" />
+              <span>Configurações &amp; Identidade</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('billing')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'billing'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <CreditCard className="w-4 h-4 shrink-0" />
+              <span>Assinatura (Anual R$ 99 / Mensal)</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('whatsapp')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'whatsapp'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <MessageSquare className="w-4 h-4 shrink-0" />
+              <span>WhatsApp &amp; Notificações</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('crm')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'crm'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Users className="w-4 h-4 shrink-0" />
+              <span>CRM &amp; Clientes</span>
+              <span className="bg-slate-100 text-slate-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono">
+                {customers.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('reports')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'reports'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4 shrink-0" />
+              <span>Relatórios</span>
+              <span className="bg-blue-100 text-blue-800 text-[9px] px-1.5 py-0.2 rounded font-semibold uppercase tracking-wider">
+                Vendas &amp; Produtos
+              </span>
+            </button>
+          </>
+        )}
       </div>
 
       {/* Main Content Body */}
@@ -2261,11 +2390,52 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
         {/* TAB 3: SETTINGS & BRAND IDENTITY                               */}
         {/* ============================================================== */}
         {activeTab === 'settings' && (
+          <div className="space-y-5">
+            {isSuperAdmin && (
+              <div className="bg-indigo-950 text-white border border-indigo-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-300">
+                    <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                    <span>MODO SUPER ADMIN · CONFIGURAÇÃO DIRETA DO RESTAURANTE</span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Você está editando as configurações de <strong>{tenant.name}</strong> (<code className="text-indigo-200">{tenant.slug}</code>). Qualquer alteração abaixo é aplicada imediatamente ao restaurante selecionado.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <select
+                    value={tenant.slug}
+                    onChange={(e) => {
+                      const found = (allTenants.length > 0 ? allTenants : [tenant]).find((t) => t.slug === e.target.value);
+                      if (found && onSelectTenant) onSelectTenant(found);
+                    }}
+                    className="bg-slate-900 border border-indigo-700 text-white text-xs rounded-lg px-3 py-1.5 font-semibold"
+                  >
+                    {(allTenants.length > 0 ? allTenants : [tenant]).map((t) => (
+                      <option key={t.slug} value={t.slug}>
+                        Trocar: {t.name} ({t.slug})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('super_subscriptions')}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                  >
+                    Ver Todos
+                  </button>
+                </div>
+              </div>
+            )}
+
           <div className="max-w-3xl bg-white border border-neutral-200 rounded-lg p-6 space-y-6">
             <div>
-              <h3 className="text-sm font-bold text-neutral-900">Configurações Gerais do Restaurante</h3>
+              <h3 className="text-sm font-bold text-neutral-900">
+                {isSuperAdmin ? `Configurações do Restaurante: ${tenant.name}` : 'Configurações Gerais do Restaurante'}
+              </h3>
               <p className="text-xs text-neutral-500">
-                Altere dados cadastrais, horários de atendimento, taxa de entrega padrão e a cor da sua marca.
+                Altere dados cadastrais, horários de atendimento, taxa de entrega padrão, chave Pix e a cor da marca.
               </p>
             </div>
 
@@ -2566,323 +2736,84 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
               </div>
             </form>
 
-            {/* PIX GATEWAY & WEBHOOK AUTOMATION CARD (Passo 2) */}
-            <div className="bg-gradient-to-br from-emerald-50 via-white to-neutral-50 border border-emerald-200 rounded-xl p-5 shadow-2xs space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-emerald-100">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shadow-xs shrink-0">
-                    <Zap className="w-4 h-4 fill-current" />
-                  </div>
+            {isSuperAdmin && (
+              <div className="pt-4 border-t border-slate-200 space-y-4">
+                <div className="flex items-center justify-between">
                   <div>
-                    <h4 className="text-sm font-bold text-neutral-900 flex items-center gap-1.5">
-                      <span>Chave Pix Direta do Restaurante &amp; QR Code Oficial (Passo 2)</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-200">
-                        100% Direto na Conta da Loja · 0% Comissão
-                      </span>
+                    <h4 className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-indigo-600" />
+                      <span>Parâmetros Técnicos &amp; Assinatura do Restaurante (Exclusivo Super Admin)</span>
                     </h4>
-                    <p className="text-xs text-neutral-500">
-                      Cada cliente paga o Pix diretamente na conta bancária do seu restaurante. A Aladay não intermedeia suas vendas (o Asaas é usado apenas na assinatura de R$ 129,90/mês).
+                    <p className="text-[11px] text-slate-500">
+                      Configure diretamente a instância Evolution API, status da assinatura e webhook n8n deste restaurante.
                     </p>
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-                      if (authSession?.token) {
-                        headers['Authorization'] = `Bearer ${authSession.token}`;
-                      }
-                      const res = await fetch('/api/v1/pix/simulate-payment', {
-                        method: 'POST',
-                        headers,
-                        body: JSON.stringify({ orderId: orders[0]?.id || 'ord_1042' }),
-                      });
-                      if (res.ok) {
-                        setStatusUpdateToast(
-                          `⚡ Pagamento Pix Direto confirmado! Pedido #${orders[0]?.orderNumber || 1042} aprovado e enviado para a cozinha!`
-                        );
-                        setTimeout(() => setStatusUpdateToast(null), 6000);
-                      }
-                    } catch (e) {
-                      console.error(e);
-                    }
-                  }}
-                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition-colors shrink-0"
-                >
-                  <Zap className="w-3.5 h-3.5 fill-current" />
-                  <span>Simular Pagamento do Cliente (R$ 85,80)</span>
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                {/* 1: Conta Bancária de Destino */}
-                <div className="p-3 bg-white border border-neutral-200 rounded-lg space-y-1">
-                  <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider block">Destino dos Pedidos</span>
-                  <p className="font-bold text-neutral-900 flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>{tenant.pixConfig?.bankName || 'Conta Bancária da Loja'}</span>
-                    <span className="text-[10px] text-emerald-700 font-semibold">· 100% Direto</span>
-                  </p>
-                </div>
-
-                {/* 2: Chave Pix da Loja (Editável por cada restaurante) */}
-                <div
-                  className={`p-3 bg-white border rounded-lg space-y-2 transition-all ${
-                    isEditingPixKey
-                      ? 'md:col-span-3 border-emerald-400 ring-2 ring-emerald-500/10 shadow-sm'
-                      : 'border-neutral-200 hover:border-emerald-300'
-                  }`}
-                >
-                  {pixSaveNotice && (
-                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 font-semibold flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span>{pixSaveNotice}</span>
-                    </div>
-                  )}
-
-                  {!isEditingPixKey ? (
-                    <>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider block">
-                          Chave Pix &amp; Beneficiário da Loja
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setIsEditingPixKey(true)}
-                          className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded transition-colors flex items-center gap-1 cursor-pointer"
-                          title="Editar Chave Pix e Nome do Beneficiário deste restaurante"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                          <span>Editar Chave Pix</span>
-                        </button>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono">
-                          {tenant.pixConfig?.pixKeyType || 'telefone'}
-                        </span>
-                        <p className="font-mono font-bold text-neutral-900 text-xs truncate">
-                          {tenant.pixKey || tenant.pixConfig?.pixKey || tenant.phone || '+5511987654321'}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center justify-between text-[10px] text-neutral-500 pt-1 border-t border-neutral-100">
-                        <span className="truncate">
-                          Beneficiário:{' '}
-                          <strong className="text-neutral-700">
-                            {tenant.pixBeneficiaryName ||
-                              tenant.pixConfig?.beneficiaryName ||
-                              tenant.pixConfig?.merchantName ||
-                              tenant.name}
-                          </strong>{' '}
-                          · {tenant.pixConfig?.merchantCity || 'SAO PAULO'}
-                        </span>
-                        <span className="text-emerald-700 font-medium shrink-0 flex items-center gap-0.5">
-                          <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
-                          BACEN EMV
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <form onSubmit={handleSavePixConfig} className="space-y-3">
-                      <div className="flex items-center justify-between pb-2 border-b border-emerald-100">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                          <span className="font-bold text-neutral-900 text-xs">
-                            Formulário de Chave Pix &amp; Nome do Beneficiário ({tenant.name})
-                          </span>
-                        </div>
-                        <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded">
-                          100% Direto na Conta do Proprietário
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 text-xs">
-                        <div>
-                          <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                            Tipo de Chave
-                          </label>
-                          <select
-                            value={pixKeyType}
-                            onChange={(e) => setPixKeyType(e.target.value as any)}
-                            className="w-full p-2 bg-neutral-50 border border-neutral-300 rounded text-xs text-neutral-900 font-medium focus:bg-white focus:border-emerald-500 outline-none"
-                          >
-                            <option value="phone">Celular / Telefone (+55)</option>
-                            <option value="cnpj">CNPJ (Pessoa Jurídica)</option>
-                            <option value="email">E-mail</option>
-                            <option value="cpf">CPF (Pessoa Física)</option>
-                            <option value="random">Chave Aleatória (EVP)</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                            Chave Pix
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            placeholder={
-                              pixKeyType === 'cnpj'
-                                ? '12.345.678/0001-90'
-                                : pixKeyType === 'email'
-                                ? 'financeiro@restaurante.com.br'
-                                : pixKeyType === 'cpf'
-                                ? '123.456.789-00'
-                                : pixKeyType === 'random'
-                                ? '123e4567-e89b-12d3-a456-426614174000'
-                                : '+55 11 98765-4321'
-                            }
-                            value={pixKey}
-                            onChange={(e) => setPixKey(e.target.value)}
-                            className="w-full p-2 bg-neutral-50 border border-neutral-300 rounded text-xs text-neutral-900 font-mono focus:bg-white focus:border-emerald-500 outline-none"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                            Nome do Beneficiário
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            maxLength={60}
-                            placeholder="Nome do Proprietário / Razão Social"
-                            value={pixMerchantName}
-                            onChange={(e) => setPixMerchantName(e.target.value)}
-                            className="w-full p-2 bg-neutral-50 border border-neutral-300 rounded text-xs text-neutral-900 font-medium focus:bg-white focus:border-emerald-500 outline-none"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                            Cidade da Conta (máx. 15 car.)
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            maxLength={15}
-                            placeholder="SAO PAULO"
-                            value={pixMerchantCity}
-                            onChange={(e) => setPixMerchantCity(e.target.value.toUpperCase())}
-                            className="w-full p-2 bg-neutral-50 border border-neutral-300 rounded text-xs text-neutral-900 font-medium uppercase focus:bg-white focus:border-emerald-500 outline-none"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 text-xs">
-                        <div>
-                          <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                            Instituição Bancária da Loja (Apenas Identificação)
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="Ex: Nubank PJ, Banco Inter, Itaú Empresas, Sicredi..."
-                            value={pixBankName}
-                            onChange={(e) => setPixBankName(e.target.value)}
-                            className="w-full p-2 bg-neutral-50 border border-neutral-300 rounded text-xs text-neutral-900 font-medium focus:bg-white focus:border-emerald-500 outline-none"
-                          />
-                        </div>
-
-                        <div className="flex items-center gap-2 pt-4">
-                          <label className="flex items-center gap-2 cursor-pointer text-[11px] text-neutral-700 font-medium">
-                            <input
-                              type="checkbox"
-                              checked={true}
-                              readOnly
-                              className="w-4 h-4 text-emerald-600 rounded accent-emerald-600"
-                            />
-                            <span>O pagamento do cliente cai 100% direto na conta deste restaurante</span>
-                          </label>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between pt-2 border-t border-neutral-200">
-                        <span className="text-[10px] text-neutral-500">
-                          Ao salvar, os QR Codes Pix dinâmicos gerados no checkout do consumidor utilizarão esta Chave Pix e Nome do Beneficiário.
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="submit"
-                            disabled={pixSaving}
-                            className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded transition-colors flex items-center gap-1.5 shadow-xs disabled:opacity-50 cursor-pointer"
-                          >
-                            {pixSaving ? (
-                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Check className="w-3.5 h-3.5" />
-                            )}
-                            <span>{pixSaving ? 'Salvando...' : 'Salvar Chave Pix & Beneficiário'}</span>
-                          </button>
-                        </div>
-                      </div>
-                    </form>
-                  )}
-                </div>
-
-                {/* 3: Aprovação no KDS */}
-                <div className="p-3 bg-white border border-neutral-200 rounded-lg space-y-1">
-                  <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider block">Aprovação no KDS</span>
-                  <p className="font-bold text-emerald-700 flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5 text-emerald-600" />
-                    Instantânea (Move para Cozinha)
-                  </p>
-                </div>
-              </div>
-
-              {/* DIRECT PIX MODEL & CLOUDFLARE DOMAIN INTEGRATION */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                {/* Direct Pix Explanation */}
-                <div className="p-3.5 bg-white border border-neutral-200 rounded-lg space-y-1.5">
-                  <div className="flex items-center justify-between font-semibold text-neutral-800">
-                    <span className="flex items-center gap-1.5">
-                      <Zap className="w-3.5 h-3.5 text-emerald-600 fill-current" />
-                      Modelo de Recebimento Direto (Cliente &rarr; Restaurante)
-                    </span>
-                    <span className="text-[10px] text-emerald-700 font-mono bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                      0% Taxa Aladay
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-neutral-500">
-                    O QR Code Pix gerado no checkout do cardápio usa o padrão EMV do Banco Central com a chave acima. O dinheiro vai direto do banco do cliente para o banco do restaurante, sem passar pelo Asaas.
-                  </p>
-                  <div className="flex items-center justify-between pt-1 border-t border-neutral-100 text-[11px]">
-                    <span className="text-neutral-500">Assinatura Mensal da Plataforma (R$ 129,90):</span>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('billing')}
-                      className="text-emerald-700 hover:text-emerald-900 font-bold underline cursor-pointer"
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-indigo-50/50 border border-indigo-200 rounded-xl p-4 text-xs">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Status da Assinatura</label>
+                    <select
+                      value={tenant.subscriptionStatus || 'active'}
+                      onChange={(e) => {
+                        const nextStatus = e.target.value as 'active' | 'trial' | 'past_due' | 'suspended';
+                        onUpdateTenant({
+                          ...tenant,
+                          subscriptionStatus: nextStatus,
+                          trialEndsAt:
+                            nextStatus === 'trial'
+                              ? new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString()
+                              : tenant.trialEndsAt,
+                        });
+                        setSettingsSuccessNotice(`Status da assinatura de ${tenant.name} atualizado para "${nextStatus}"!`);
+                        setTimeout(() => setSettingsSuccessNotice(null), 4000);
+                      }}
+                      className="w-full p-2 border border-slate-300 rounded-lg bg-white text-slate-900 font-semibold"
                     >
-                      Gerenciada via Asaas na aba Assinatura &rarr;
-                    </button>
+                      <option value="active">Ativa (Liberada)</option>
+                      <option value="trial">Teste Grátis (15 Dias)</option>
+                      <option value="past_due">Inadimplente / Vencida</option>
+                      <option value="suspended">Suspensa / Bloqueada</option>
+                    </select>
                   </div>
-                </div>
 
-                {/* Cloudflare DNS & Proxy Box */}
-                <div className="p-3.5 bg-white border border-neutral-200 rounded-lg space-y-1.5">
-                  <div className="flex items-center justify-between font-semibold text-neutral-800">
-                    <span className="flex items-center gap-1.5">
-                      <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
-                      Domínio Oficial &amp; Cloudflare
-                    </span>
-                    <span className="text-[10px] text-blue-800 font-bold bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                      aladay.com.br
-                    </span>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Instância Evolution API</label>
+                    <input
+                      type="text"
+                      value={tenant.evolutionInstanceId || ''}
+                      onChange={(e) =>
+                        onUpdateTenant({
+                          ...tenant,
+                          evolutionInstanceId: e.target.value,
+                        })
+                      }
+                      placeholder="Ex: aladay"
+                      className="w-full p-2 border border-slate-300 rounded-lg bg-white text-slate-900 font-mono"
+                    />
                   </div>
-                  <p className="text-[11px] text-neutral-500">
-                    Apontamento DNS com Nuvem Laranja ativa (Proxy, WAF, SSL Full Strict e WebSockets KDS).
-                  </p>
-                  <div className="flex items-center justify-between pt-1 border-t border-neutral-100 text-[11px] font-mono">
-                    <span className="text-neutral-600">Cardápio Público do Restaurante:</span>
-                    <span className="text-emerald-700 font-bold">
-                      https://aladay.com.br/{tenant.slug}
-                    </span>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Status WhatsApp</label>
+                    <select
+                      value={tenant.evolutionStatus || 'disconnected'}
+                      onChange={(e) =>
+                        onUpdateTenant({
+                          ...tenant,
+                          evolutionStatus: e.target.value as 'connected' | 'connecting' | 'disconnected',
+                        })
+                      }
+                      className="w-full p-2 border border-slate-300 rounded-lg bg-white text-slate-900 font-semibold"
+                    >
+                      <option value="connected">Conectado</option>
+                      <option value="connecting">Conectando</option>
+                      <option value="disconnected">Desconectado</option>
+                    </select>
                   </div>
                 </div>
               </div>
-            </div>
+            )}
+          </div>
           </div>
         )}
 
@@ -3287,22 +3218,537 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
         )}
 
         {/* ============================================================== */}
-        {/* TAB 5: WHATSAPP EVOLUTION API                                  */}
+        {/* TAB SUPER ADMIN: ACOMPANHAMENTO DE ASSINATURAS & RESTAURANTES  */}
+        {/* ============================================================== */}
+        {activeTab === 'super_subscriptions' && isSuperAdmin && (
+          <div className="space-y-6">
+            {superAdminActionNotice && (
+              <div className="p-3.5 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-900 font-semibold flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span>{superAdminActionNotice}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSuperAdminActionNotice(null)}
+                  className="text-indigo-500 hover:text-indigo-800"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Global SaaS KPIs */}
+            {(() => {
+              const tenantsToInspect = allTenants.length > 0 ? allTenants : [tenant];
+              const activeCount = tenantsToInspect.filter(
+                (t) =>
+                  t.subscriptionStatus === 'active' ||
+                  t.asaasSubscription?.status === 'ACTIVE' ||
+                  (!t.subscriptionStatus && !t.trialEndsAt)
+              ).length;
+              const trialCount = tenantsToInspect.filter((t) => t.subscriptionStatus === 'trial').length;
+              const overdueCount = tenantsToInspect.filter(
+                (t) => t.subscriptionStatus === 'past_due' || t.subscriptionStatus === 'suspended'
+              ).length;
+              const estimatedMrrCents = activeCount * 12990;
+
+              const totalPlatformOrders = tenantsToInspect.reduce((acc, t) => {
+                const cat = catalogsByTenant[t.slug];
+                return acc + (cat ? cat.orderIds.length : t.slug === tenant.slug ? orders.length : 0);
+              }, 0);
+
+              const totalPlatformGmvCents = tenantsToInspect.reduce((acc, t) => {
+                const cat = catalogsByTenant[t.slug];
+                if (cat) {
+                  return (
+                    acc +
+                    cat.orderIds.reduce((sum, id) => {
+                      const ord = cat.ordersById[id];
+                      return ord && ord.status !== 'cancelled' ? sum + (ord.totalCents || 0) : sum;
+                    }, 0)
+                  );
+                }
+                return acc;
+              }, 0);
+
+              const filteredTenants = tenantsToInspect.filter((t) => {
+                const q = superAdminSearch.trim().toLowerCase();
+                const matchesQuery =
+                  !q ||
+                  t.name.toLowerCase().includes(q) ||
+                  t.slug.toLowerCase().includes(q) ||
+                  (t.phone || '').toLowerCase().includes(q);
+                if (!matchesQuery) return false;
+                if (superAdminStatusFilter === 'all') return true;
+                const status = t.subscriptionStatus || 'active';
+                if (superAdminStatusFilter === 'past_due') {
+                  return status === 'past_due' || status === 'suspended';
+                }
+                return status === superAdminStatusFilter;
+              });
+
+              return (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs">
+                      <span className="text-xs font-semibold text-slate-500 block">
+                        Total de Restaurantes na Plataforma
+                      </span>
+                      <p className="text-2xl font-bold font-mono text-slate-900 mt-1.5">
+                        {tenantsToInspect.length}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        {activeCount} assinaturas ativas • {trialCount} em teste grátis
+                      </p>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs">
+                      <span className="text-xs font-semibold text-slate-500 block">
+                        Receita Recorrente Mensal (MRR)
+                      </span>
+                      <p className="text-2xl font-bold font-mono text-emerald-700 mt-1.5">
+                        {formatBRL(estimatedMrrCents)}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Baseado nas assinaturas ativas (Asaas)
+                      </p>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs">
+                      <span className="text-xs font-semibold text-slate-500 block">
+                        Volume de Vendas dos Restaurantes
+                      </span>
+                      <p className="text-2xl font-bold font-mono text-blue-700 mt-1.5">
+                        {formatBRL(totalPlatformGmvCents)}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        {totalPlatformOrders} pedidos processados na plataforma
+                      </p>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs">
+                      <span className="text-xs font-semibold text-slate-500 block">
+                        Assinaturas Pendentes / Expiradas
+                      </span>
+                      <p className="text-2xl font-bold font-mono text-rose-600 mt-1.5">
+                        {overdueCount}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Controle de bloqueio automático ativo
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Provision / Create New Restaurant Drawer */}
+                  {isCreatingNewTenant && (
+                    <div className="bg-white border-2 border-indigo-600 rounded-xl p-5 shadow-md space-y-4">
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                        <div>
+                          <h3 className="text-sm font-bold text-slate-900">
+                            Cadastrar &amp; Configurar Novo Restaurante na Plataforma
+                          </h3>
+                          <p className="text-xs text-slate-500">
+                            Crie um novo tenant isolado para configurar seus dados, WhatsApp e assinatura.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsCreatingNewTenant(false)}
+                          className="text-slate-400 hover:text-slate-700"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          if (!newTenantName.trim()) return;
+                          const cleanSlug =
+                            (newTenantSlug.trim() || newTenantName.trim())
+                              .toLowerCase()
+                              .normalize('NFD')
+                              .replace(/[\u0300-\u036f]/g, '')
+                              .replace(/[^a-z0-9]+/g, '-')
+                              .replace(/(^-|-$)/g, '') || `restaurante-${Date.now()}`;
+
+                          const created: RestaurantTenant = {
+                            ...tenant,
+                            id: `tenant_${Date.now()}`,
+                            name: newTenantName.trim(),
+                            slug: cleanSlug,
+                            phone: newTenantPhone.trim() || '5511999999999',
+                            evolutionInstanceId: cleanSlug,
+                            evolutionStatus: 'disconnected',
+                            subscriptionStatus: newTenantPlanStatus,
+                            trialEndsAt:
+                              newTenantPlanStatus === 'trial'
+                                ? new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString()
+                                : undefined,
+                          };
+
+                          if (onCreateTenant) {
+                            onCreateTenant(created);
+                          }
+                          if (onSelectTenant) {
+                            onSelectTenant(created);
+                          }
+                          setNewTenantName('');
+                          setNewTenantSlug('');
+                          setNewTenantPhone('');
+                          setIsCreatingNewTenant(false);
+                          setSuperAdminActionNotice(
+                            `Restaurante "${created.name}" (${created.slug}) criado e selecionado para configuração!`
+                          );
+                        }}
+                        className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs"
+                      >
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Nome do Restaurante</label>
+                          <input
+                            type="text"
+                            required
+                            value={newTenantName}
+                            onChange={(e) => setNewTenantName(e.target.value)}
+                            placeholder="Ex: Burger House"
+                            className="w-full p-2.5 border border-slate-300 rounded-lg"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Slug (URL da Loja)</label>
+                          <input
+                            type="text"
+                            value={newTenantSlug}
+                            onChange={(e) => setNewTenantSlug(e.target.value)}
+                            placeholder="Ex: burger-house"
+                            className="w-full p-2.5 border border-slate-300 rounded-lg font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">WhatsApp do Responsável</label>
+                          <input
+                            type="text"
+                            value={newTenantPhone}
+                            onChange={(e) => setNewTenantPhone(e.target.value)}
+                            placeholder="5511999999999"
+                            className="w-full p-2.5 border border-slate-300 rounded-lg font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Status Inicial da Assinatura</label>
+                          <div className="flex gap-2">
+                            <select
+                              value={newTenantPlanStatus}
+                              onChange={(e) => setNewTenantPlanStatus(e.target.value as 'active' | 'trial')}
+                              className="flex-1 p-2.5 border border-slate-300 rounded-lg bg-white font-semibold"
+                            >
+                              <option value="trial">Teste Grátis 15d</option>
+                              <option value="active">Assinatura Ativa</option>
+                            </select>
+                            <button
+                              type="submit"
+                              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-colors cursor-pointer"
+                            >
+                              Criar
+                            </button>
+                          </div>
+                        </div>
+                      </form>
+                    </div>
+                  )}
+
+                  {/* Restaurants & Subscriptions Management Table */}
+                  <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                      <div>
+                        <h2 className="text-base font-bold text-slate-900">
+                          Acompanhamento de Assinaturas, Relatórios e Configurações dos Restaurantes
+                        </h2>
+                        <p className="text-xs text-slate-500">
+                          Selecione qualquer restaurante para configurar sua conta, gerenciar sua assinatura ou visualizar seus relatórios de vendas.
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="relative">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            value={superAdminSearch}
+                            onChange={(e) => setSuperAdminSearch(e.target.value)}
+                            placeholder="Buscar restaurante ou slug..."
+                            className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:border-indigo-500"
+                          />
+                        </div>
+
+                        <select
+                          value={superAdminStatusFilter}
+                          onChange={(e) => setSuperAdminStatusFilter(e.target.value as any)}
+                          className="p-1.5 text-xs border border-slate-200 rounded-lg bg-white font-medium text-slate-700"
+                        >
+                          <option value="all">Todos os Status</option>
+                          <option value="active">Assinatura Ativa</option>
+                          <option value="trial">Em Teste Grátis (15d)</option>
+                          <option value="past_due">Inadimplentes / Suspensos</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="border border-slate-200 rounded-xl overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
+                          <tr>
+                            <th className="p-3">Restaurante / Slug</th>
+                            <th className="p-3">Status da Assinatura</th>
+                            <th className="p-3">Instância WhatsApp &amp; Pix</th>
+                            <th className="p-3 text-right">Pedidos &amp; Vendas</th>
+                            <th className="p-3">Controle de Assinatura</th>
+                            <th className="p-3 text-right">Acesso Total (Super Admin)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200">
+                          {filteredTenants.map((itemTenant) => {
+                            const isSelected = itemTenant.slug === tenant.slug;
+                            const cat = catalogsByTenant[itemTenant.slug];
+                            const tenantOrdersCount = cat
+                              ? cat.orderIds.length
+                              : itemTenant.slug === tenant.slug
+                              ? orders.length
+                              : 0;
+                            const tenantRevenueCents = cat
+                              ? cat.orderIds.reduce((sum, id) => {
+                                  const o = cat.ordersById[id];
+                                  return o && o.status !== 'cancelled' ? sum + (o.totalCents || 0) : sum;
+                                }, 0)
+                              : itemTenant.slug === tenant.slug
+                              ? orders.filter((o) => o.status !== 'cancelled').reduce((s, o) => s + o.totalCents, 0)
+                              : 0;
+
+                            const subStatus = itemTenant.subscriptionStatus || 'active';
+
+                            return (
+                              <tr
+                                key={itemTenant.slug}
+                                className={`transition-colors ${
+                                  isSelected ? 'bg-indigo-50/50' : 'hover:bg-slate-50'
+                                }`}
+                              >
+                                <td className="p-3">
+                                  <div className="flex items-center gap-2.5">
+                                    <div
+                                      className="w-8 h-8 rounded-lg text-white flex items-center justify-center font-bold text-xs shrink-0"
+                                      style={{ backgroundColor: itemTenant.primaryColor || '#2563EB' }}
+                                    >
+                                      {itemTenant.name.slice(0, 2).toUpperCase()}
+                                    </div>
+                                    <div>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="font-bold text-slate-900">{itemTenant.name}</span>
+                                        {isSelected && (
+                                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-600 text-white">
+                                            Em foco
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-[11px] font-mono text-slate-500">
+                                        slug: {itemTenant.slug} {itemTenant.phone ? `• ${itemTenant.phone}` : ''}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </td>
+
+                                <td className="p-3">
+                                  {subStatus === 'active' && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                      <span>Assinatura Ativa</span>
+                                    </span>
+                                  )}
+                                  {subStatus === 'trial' && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-sky-50 text-sky-800 border border-sky-200">
+                                      <Clock className="w-3.5 h-3.5 text-sky-600" />
+                                      <span>Teste Grátis (15 Dias)</span>
+                                    </span>
+                                  )}
+                                  {(subStatus === 'past_due' || subStatus === 'suspended') && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                      <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                                      <span>{subStatus === 'suspended' ? 'Suspensa' : 'Inadimplente / Expirada'}</span>
+                                    </span>
+                                  )}
+                                </td>
+
+                                <td className="p-3">
+                                  <div className="space-y-0.5 text-[11px]">
+                                    <div className="flex items-center gap-1.5">
+                                      <span
+                                        className={`w-2 h-2 rounded-full ${
+                                          itemTenant.evolutionStatus === 'connected' ? 'bg-emerald-500' : 'bg-amber-500'
+                                        }`}
+                                      />
+                                      <span className="font-mono text-slate-700">
+                                        Instância: <strong>{itemTenant.evolutionInstanceId || itemTenant.slug}</strong>
+                                      </span>
+                                    </div>
+                                    <p className="text-slate-500">
+                                      Pix:{' '}
+                                      {itemTenant.pixKey || itemTenant.pixConfig?.pixKey ? (
+                                        <span className="text-emerald-700 font-medium">Configurado</span>
+                                      ) : (
+                                        <span className="text-amber-700">Pendente</span>
+                                      )}
+                                    </p>
+                                  </div>
+                                </td>
+
+                                <td className="p-3 text-right font-mono">
+                                  <p className="font-bold text-slate-900">{formatBRL(tenantRevenueCents)}</p>
+                                  <p className="text-[11px] text-slate-500">{tenantOrdersCount} pedidos</p>
+                                </td>
+
+                                <td className="p-3">
+                                  <select
+                                    value={subStatus}
+                                    onChange={(e) => {
+                                      const nextStatus = e.target.value as 'active' | 'trial' | 'past_due' | 'suspended';
+                                      const updated: RestaurantTenant = {
+                                        ...itemTenant,
+                                        subscriptionStatus: nextStatus,
+                                        trialEndsAt:
+                                          nextStatus === 'trial'
+                                            ? new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString()
+                                            : itemTenant.trialEndsAt,
+                                      };
+                                      if (onSelectTenant) onSelectTenant(updated);
+                                      onUpdateTenant(updated);
+                                      setSuperAdminActionNotice(
+                                        `Status da assinatura de "${itemTenant.name}" alterado para "${nextStatus}".`
+                                      );
+                                    }}
+                                    className="p-1.5 text-[11px] border border-slate-300 rounded-lg bg-white text-slate-800 font-semibold"
+                                  >
+                                    <option value="active">Ativar Assinatura</option>
+                                    <option value="trial">Liberar Teste 15d</option>
+                                    <option value="past_due">Marcar Inadimplente</option>
+                                    <option value="suspended">Suspender Acesso</option>
+                                  </select>
+                                </td>
+
+                                <td className="p-3 text-right">
+                                  <div className="inline-flex flex-wrap justify-end gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (onSelectTenant) onSelectTenant(itemTenant);
+                                        setActiveTab('reports');
+                                      }}
+                                      className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                                    >
+                                      <BarChart3 className="w-3.5 h-3.5" />
+                                      <span>Relatórios</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (onSelectTenant) onSelectTenant(itemTenant);
+                                        setActiveTab('settings');
+                                      }}
+                                      className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                                    >
+                                      <Settings className="w-3.5 h-3.5" />
+                                      <span>Configurar</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (onSelectTenant) onSelectTenant(itemTenant);
+                                        setActiveTab('whatsapp');
+                                      }}
+                                      className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                                    >
+                                      <MessageSquare className="w-3.5 h-3.5" />
+                                      <span>Infra &amp; WhatsApp</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (onSelectTenant) onSelectTenant(itemTenant);
+                                        setActiveTab('billing');
+                                      }}
+                                      className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                                    >
+                                      <CreditCard className="w-3.5 h-3.5" />
+                                      <span>Asaas</span>
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* TAB 5: WHATSAPP EVOLUTION API & INFRASTRUCTURE                 */}
         {/* ============================================================== */}
         {activeTab === 'whatsapp' && (
-          <WhatsAppAutomationView
-            tenant={tenant}
-            orders={orders}
-            onUpdateTenant={onUpdateTenant}
-            onSimulateEvolutionReconnect={onSimulateEvolutionReconnect}
-            authSession={authSession}
-          />
+          <div className="space-y-4">
+            {isSuperAdmin && (
+              <div className="bg-indigo-950 text-white border border-indigo-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-300">
+                    <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                    <span>CONFIGURAÇÕES DA APLICAÇÃO, EVOLUTION API, N8N &amp; BANCO POSTGRESQL</span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Gerencie servidores, fluxos do n8n, banco de dados e pareamento WhatsApp do restaurante em foco: <strong>{tenant.name}</strong> (<code className="text-indigo-200">{tenant.slug}</code>).
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <select
+                    value={tenant.slug}
+                    onChange={(e) => {
+                      const found = (allTenants.length > 0 ? allTenants : [tenant]).find((t) => t.slug === e.target.value);
+                      if (found && onSelectTenant) onSelectTenant(found);
+                    }}
+                    className="bg-slate-900 border border-indigo-700 text-white text-xs rounded-lg px-3 py-1.5 font-semibold"
+                  >
+                    {(allTenants.length > 0 ? allTenants : [tenant]).map((t) => (
+                      <option key={t.slug} value={t.slug}>
+                        Restaurante: {t.name} ({t.slug})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            <WhatsAppAutomationView
+              tenant={tenant}
+              orders={orders}
+              onUpdateTenant={onUpdateTenant}
+              onSimulateEvolutionReconnect={onSimulateEvolutionReconnect}
+              authSession={authSession}
+            />
+          </div>
         )}
 
         {/* ============================================================== */}
         {/* TAB 6: CRM & CLIENTES ISOLADOS COM HISTÓRICO DE PEDIDOS        */}
         {/* ============================================================== */}
-        {activeTab === 'crm' && (
+        {activeTab === 'crm' && !isSuperAdmin && (
           <CrmCustomerManagementView
             tenant={tenant}
             orders={orders}
@@ -3312,26 +3758,104 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
         )}
 
         {/* ============================================================== */}
-        {/* TAB 7: DASHBOARD GERENCIAL COM FÓRMULAS AUDITADAS              */}
+        {/* TAB 7: RELATÓRIOS DE VENDAS POR DIA E PRODUTOS MAIS VENDIDOS   */}
         {/* ============================================================== */}
         {activeTab === 'reports' && (
-          <AuditedDashboardView
-            tenant={tenant}
-            orders={orders}
-            onNavigateToTab={(tab) => {
-              if (tab === 'crm') setActiveTab('crm');
-              if (tab === 'kds') setActiveTab('kds');
-              if (tab === 'menu') setActiveTab('menu');
-            }}
-            onPrintOrder={(order) => setPrintingOrder(order)}
-          />
+          <div className="space-y-4">
+            {isSuperAdmin && (
+              <div className="bg-indigo-950 text-white border border-indigo-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-300">
+                    <BarChart3 className="w-4 h-4 text-indigo-400" />
+                    <span>ACOMPANHAMENTO DE RELATÓRIOS DOS RESTAURANTES (SUPER ADMIN)</span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Visualizando relatórios de vendas por dia e produtos mais vendidos de: <strong>{tenant.name}</strong> (<code className="text-indigo-200">{tenant.slug}</code>).
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <select
+                    value={tenant.slug}
+                    onChange={(e) => {
+                      const found = (allTenants.length > 0 ? allTenants : [tenant]).find((t) => t.slug === e.target.value);
+                      if (found && onSelectTenant) onSelectTenant(found);
+                    }}
+                    className="bg-slate-900 border border-indigo-700 text-white text-xs rounded-lg px-3 py-1.5 font-semibold"
+                  >
+                    {(allTenants.length > 0 ? allTenants : [tenant]).map((t) => (
+                      <option key={t.slug} value={t.slug}>
+                        Analisar: {t.name} ({t.slug})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('super_subscriptions')}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                  >
+                    Todos os Restaurantes
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <AuditedDashboardView
+              tenant={tenant}
+              orders={orders}
+              products={products}
+              onNavigateToTab={
+                isSuperAdmin
+                  ? undefined
+                  : (tab) => {
+                      if (tab === 'crm') setActiveTab('crm');
+                      if (tab === 'kds') setActiveTab('kds');
+                      if (tab === 'menu') setActiveTab('menu');
+                    }
+              }
+              onPrintOrder={(order) => setPrintingOrder(order)}
+            />
+          </div>
         )}
 
         {/* ============================================================== */}
         {/* TAB 8: BILLING & SUBSCRIPTION (R$ 129,90/mês via Asaas)       */}
         {/* ============================================================== */}
         {activeTab === 'billing' && (
-          <AsaasSubscriptionBillingView tenant={tenant} onUpdateTenant={onUpdateTenant} />
+          <div className="space-y-4">
+            {isSuperAdmin && (
+              <div className="bg-indigo-950 text-white border border-indigo-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-300">
+                    <CreditCard className="w-4 h-4 text-indigo-400" />
+                    <span>GESTÃO DE ASSINATURA ASAAS DO RESTAURANTE (SUPER ADMIN)</span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Gerenciando plano e faturas Asaas de: <strong>{tenant.name}</strong> (<code className="text-indigo-200">{tenant.slug}</code>).
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <select
+                    value={tenant.slug}
+                    onChange={(e) => {
+                      const found = (allTenants.length > 0 ? allTenants : [tenant]).find((t) => t.slug === e.target.value);
+                      if (found && onSelectTenant) onSelectTenant(found);
+                    }}
+                    className="bg-slate-900 border border-indigo-700 text-white text-xs rounded-lg px-3 py-1.5 font-semibold"
+                  >
+                    {(allTenants.length > 0 ? allTenants : [tenant]).map((t) => (
+                      <option key={t.slug} value={t.slug}>
+                        Restaurante: {t.name} ({t.slug})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            <AsaasSubscriptionBillingView tenant={tenant} onUpdateTenant={onUpdateTenant} />
+          </div>
         )}
       </div>
 

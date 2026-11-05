@@ -809,8 +809,11 @@ export default function App() {
   );
 
   const hasActiveSubscription = Boolean(
-    !isTrialExpiredWithoutAsaas &&
-      (isSuperAdmin || (Boolean(authSession) && isTenantStaffOrOwner && isTenantSubscribed))
+    isSuperAdmin ||
+      (!isTrialExpiredWithoutAsaas &&
+        Boolean(authSession) &&
+        isTenantStaffOrOwner &&
+        isTenantSubscribed)
   );
 
   // Verifica se a visualização atual é um painel bloqueável (Admin, WhatsApp, Cardápio Digital ou Tracking)
@@ -832,6 +835,7 @@ export default function App() {
   );
 
   React.useEffect(() => {
+    if (isSuperAdmin) return;
     if (
       (isTrialExpiredWithoutAsaas || (!hasActiveSubscription && !isAllowedPublicStoreView)) &&
       isProtectedAdminOrMenuPanel
@@ -840,6 +844,7 @@ export default function App() {
       setShowSubscriptionNoticeModal(true);
     }
   }, [
+    isSuperAdmin,
     isTrialExpiredWithoutAsaas,
     hasActiveSubscription,
     isAllowedPublicStoreView,
@@ -857,6 +862,7 @@ export default function App() {
 
     if (
       isTargetProtected &&
+      !isSuperAdmin &&
       (isTrialExpiredWithoutAsaas || !hasActiveSubscription)
     ) {
       setCurrentView('home');
@@ -950,6 +956,10 @@ export default function App() {
       localStorage.setItem('aladay_auth_session', JSON.stringify(newSession));
     } catch {
       // ignore
+    }
+    if (newSession.user.role === 'SUPER_ADMIN') {
+      setCurrentView('admin');
+      return;
     }
     if (newSession.user.tenantSlug !== '*') {
       const matched = tenantsList.find((t) => t.slug === newSession.user.tenantSlug);
@@ -1350,9 +1360,30 @@ export default function App() {
             )}
           </div>
 
-          {/* Zone 2: Desktop Navigation Links - Unsubscribed clients ONLY see Home & Public Sections */}
+          {/* Zone 2: Desktop Navigation Links */}
           <nav className="hidden md:flex items-center gap-5 text-xs font-semibold text-slate-600">
-            {hasActiveSubscription ? (
+            {isSuperAdmin ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleNavigateSafely('home')}
+                  className={`hover:text-blue-600 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    currentView === 'home' ? 'text-blue-600 font-bold underline decoration-2 underline-offset-8' : ''
+                  }`}
+                >
+                  Início
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNavigateSafely('admin')}
+                  className={`hover:text-indigo-600 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    currentView === 'admin' ? 'text-indigo-600 font-bold underline decoration-2 underline-offset-8' : ''
+                  }`}
+                >
+                  Painel Super Admin (Restaurantes, Assinaturas &amp; Relatórios)
+                </button>
+              </>
+            ) : hasActiveSubscription ? (
               <>
                 <button
                   type="button"
@@ -1523,7 +1554,38 @@ export default function App() {
           aria-label="Navegação rápida mobile"
           className="md:hidden border-t border-slate-200 bg-slate-50/90 px-3 py-2 flex items-center gap-1.5 overflow-x-auto"
         >
-          {hasActiveSubscription ? (
+          {isSuperAdmin ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  handleNavigateSafely('home');
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  currentView === 'home'
+                    ? 'bg-indigo-600 text-white shadow-2xs'
+                    : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                Início
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleNavigateSafely('admin');
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  currentView === 'admin'
+                    ? 'bg-indigo-600 text-white shadow-2xs'
+                    : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                Painel Super Admin
+              </button>
+            </>
+          ) : hasActiveSubscription ? (
             <>
               <button
                 type="button"
@@ -1624,13 +1686,21 @@ export default function App() {
             {authSession && hasActiveSubscription && (
               <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
                 <div className="flex items-center gap-2">
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-blue-50 text-blue-800 border border-blue-200 text-xs font-bold">
-                    <span>🏪 {tenant.name}</span>
-                  </span>
-                  {isTrialActiveAndValid && (
-                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-sky-50 text-sky-800 border border-sky-200 text-[11px] font-bold font-mono">
-                      <span>🎁 Teste Grátis: {trialDaysLeft}d</span>
+                  {isSuperAdmin ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-800 border border-indigo-200 text-xs font-bold">
+                      <span>👑 Super Admin Global</span>
                     </span>
+                  ) : (
+                    <>
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-blue-50 text-blue-800 border border-blue-200 text-xs font-bold">
+                        <span>🏪 {tenant.name}</span>
+                      </span>
+                      {isTrialActiveAndValid && (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-sky-50 text-sky-800 border border-sky-200 text-[11px] font-bold font-mono">
+                          <span>🎁 Teste Grátis: {trialDaysLeft}d</span>
+                        </span>
+                      )}
+                    </>
                   )}
                 </div>
                 <button
@@ -1648,7 +1718,34 @@ export default function App() {
             )}
 
             <div className="grid grid-cols-1 gap-1.5">
-              {hasActiveSubscription ? (
+              {isSuperAdmin ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleNavigateSafely('home');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition-colors ${
+                      currentView === 'home' ? 'bg-indigo-600 text-white' : 'text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    Início
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleNavigateSafely('admin');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition-colors ${
+                      currentView === 'admin' ? 'bg-indigo-600 text-white' : 'text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    Painel Super Admin (Restaurantes, Assinaturas &amp; Relatórios)
+                  </button>
+                </>
+              ) : hasActiveSubscription ? (
                 <>
                   <button
                     type="button"
@@ -1887,7 +1984,7 @@ export default function App() {
           />
         )}
 
-        {currentView === 'admin' && !isTrialExpiredWithoutAsaas && hasActiveSubscription && (
+        {currentView === 'admin' && (isSuperAdmin || (!isTrialExpiredWithoutAsaas && hasActiveSubscription)) && (
           <RestaurantAdminView
             tenant={tenant}
             orders={orders}
@@ -1895,6 +1992,8 @@ export default function App() {
             categories={categories}
             customers={customers}
             allTenants={tenantsList}
+            catalogsByTenant={catalogsByTenant}
+            onCreateTenant={handleTenantCreated}
             onSelectTenant={handleSelectTenant}
             onUpdateTenant={handleUpdateTenant}
             onUpdateOrderStatus={handleUpdateOrderStatus}
@@ -1909,7 +2008,7 @@ export default function App() {
             onOpenAuthPortal={() => handleNavigateSafely('auth')}
           />
         )}
-        {currentView === 'whatsapp' && !isTrialExpiredWithoutAsaas && hasActiveSubscription && (
+        {currentView === 'whatsapp' && (isSuperAdmin || (!isTrialExpiredWithoutAsaas && hasActiveSubscription)) && (
           <WhatsAppAutomationView
             tenant={tenant}
             orders={orders}
@@ -1920,11 +2019,11 @@ export default function App() {
           />
         )}
 
-        {currentView === 'calculator' && !isTrialExpiredWithoutAsaas && hasActiveSubscription && (
+        {currentView === 'calculator' && (isSuperAdmin || (!isTrialExpiredWithoutAsaas && hasActiveSubscription)) && (
           <FinancialCalculator />
         )}
 
-        {currentView === 'diagrams' && !isTrialExpiredWithoutAsaas && hasActiveSubscription && (
+        {currentView === 'diagrams' && (isSuperAdmin || (!isTrialExpiredWithoutAsaas && hasActiveSubscription)) && (
           <TechDiagramsView />
         )}
       </div>

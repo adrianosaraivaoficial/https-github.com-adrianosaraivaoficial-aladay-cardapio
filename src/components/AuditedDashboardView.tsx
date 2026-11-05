@@ -14,30 +14,290 @@ import {
   ShoppingBag,
   ArrowRight,
   ShieldCheck,
-  Percent,
+  BarChart3,
+  Calendar,
+  Download,
+  Award,
   Sparkles,
+  Package,
 } from 'lucide-react';
-import { Order, RestaurantTenant } from '../types';
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  Cell,
+} from 'recharts';
+import { Order, Product, RestaurantTenant } from '../types';
 
 interface AuditedDashboardViewProps {
   tenant: RestaurantTenant;
   orders: Order[];
+  products?: Product[];
   onNavigateToTab?: (tab: 'crm' | 'kds' | 'menu') => void;
   onPrintOrder?: (order: Order) => void;
 }
 
+interface DailySalesPoint {
+  dateKey: string; // DD/MM
+  fullDate: string; // DD/MM/YYYY
+  weekday: string; // Seg, Ter, etc.
+  label: string; // DD/MM (Seg)
+  revenueReais: number;
+  revenueCents: number;
+  ordersCount: number;
+  averageTicketReais: number;
+}
+
+interface TopProductPoint {
+  name: string;
+  shortName: string;
+  quantity: number;
+  revenueCents: number;
+  revenueReais: number;
+  sharePercent: number;
+}
+
+const CHART_COLORS = [
+  '#2563EB', // blue-600
+  '#EA580C', // orange-600
+  '#059669', // emerald-600
+  '#7C3AED', // violet-600
+  '#D97706', // amber-600
+  '#DB2777', // pink-600
+  '#0891B2', // cyan-600
+  '#4F46E5', // indigo-600
+];
+
+const WEEKDAYS_PT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
 export const AuditedDashboardView: React.FC<AuditedDashboardViewProps> = ({
   tenant,
-  orders,
+  orders = [],
+  products = [],
   onNavigateToTab,
   onPrintOrder,
 }) => {
   const [showAuditProof, setShowAuditProof] = useState(false);
-  const [selectedFilterPeriod, setSelectedFilterPeriod] = useState<'all' | 'today' | 'delivered_only'>('all');
+  const [periodDays, setPeriodDays] = useState<7 | 14 | 30>(7);
+  const [salesChartType, setSalesChartType] = useState<'area' | 'bar'>('area');
+  const [topProductMetric, setTopProductMetric] = useState<'revenue' | 'quantity'>('revenue');
+  const [onlyDeliveredInCharts, setOnlyDeliveredInCharts] = useState<boolean>(false);
+  const [useDemoDataWhenEmpty, setUseDemoDataWhenEmpty] = useState<boolean>(false);
 
   const formatBRL = (cents: number) => {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
   };
+
+  const formatReaisBRL = (reais: number) => {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(reais);
+  };
+
+  // Helper to resolve which DD/MM a given Order belongs to
+  const resolveOrderDateKey = (order: Order, today: Date): string => {
+    const raw = String(order.createdAt || '').trim();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const todayKey = `${pad(today.getDate())}/${pad(today.getMonth() + 1)}`;
+
+    if (!raw) return todayKey;
+
+    if (raw.toLowerCase().includes('ontem')) {
+      const yest = new Date(today);
+      yest.setDate(today.getDate() - 1);
+      return `${pad(yest.getDate())}/${pad(yest.getMonth() + 1)}`;
+    }
+
+    // Match DD/MM/YYYY or DD/MM
+    const brDateMatch = raw.match(/(\d{2})\/(\d{2})(?:\/(\d{2,4}))?/);
+    if (brDateMatch) {
+      return `${brDateMatch[1]}/${brDateMatch[2]}`;
+    }
+
+    // Match YYYY-MM-DD (ISO format)
+    const isoMatch = raw.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      return `${isoMatch[3]}/${isoMatch[2]}`;
+    }
+
+    // If only HH:mm is stored (like "12:18"), it belongs to today
+    return todayKey;
+  };
+
+  // ==========================================================================
+  // DAILY SALES & TOP PRODUCTS DATA FOR RECHARTS
+  // ==========================================================================
+  const chartsData = useMemo(() => {
+    const today = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+
+    // Build chronological array of last `periodDays` days
+    const daysList: DailySalesPoint[] = [];
+    const daysMap: Record<string, DailySalesPoint> = {};
+
+    for (let i = periodDays - 1; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      const dateKey = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
+      const fullDate = `${dateKey}/${d.getFullYear()}`;
+      const weekday = WEEKDAYS_PT[d.getDay()];
+      const point: DailySalesPoint = {
+        dateKey,
+        fullDate,
+        weekday,
+        label: periodDays <= 14 ? `${dateKey} (${weekday})` : dateKey,
+        revenueReais: 0,
+        revenueCents: 0,
+        ordersCount: 0,
+        averageTicketReais: 0,
+      };
+      daysList.push(point);
+      daysMap[dateKey] = point;
+    }
+
+    // Filter eligible orders for chart analysis
+    const validOrders = orders.filter((o) => {
+      if (!o || o.status === 'cancelled') return false;
+      if (onlyDeliveredInCharts && o.status !== 'delivered') return false;
+      return true;
+    });
+
+    // If user enabled Demo Simulation mode, synthesize realistic daily & product distribution
+    if (useDemoDataWhenEmpty) {
+      const demoMultipliers = [0.65, 0.78, 0.85, 0.92, 1.25, 1.48, 1.35];
+      let totalDemoRevenueCents = 0;
+      let totalDemoOrders = 0;
+
+      daysList.forEach((pt, idx) => {
+        const mult = demoMultipliers[idx % demoMultipliers.length];
+        const count = Math.max(3, Math.round(8 * mult + (idx % 3)));
+        const avgTicketCents = 6490 + ((idx * 450) % 1800);
+        const revCents = count * avgTicketCents;
+
+        pt.ordersCount = count;
+        pt.revenueCents = revCents;
+        pt.revenueReais = Number((revCents / 100).toFixed(2));
+        pt.averageTicketReais = Number((avgTicketCents / 100).toFixed(2));
+
+        totalDemoRevenueCents += revCents;
+        totalDemoOrders += count;
+      });
+
+      const baseCatalogNames =
+        products.length >= 4
+          ? products.slice(0, 6).map((p) => ({ name: p.name, priceCents: p.priceCents || 3490 }))
+          : [
+              { name: 'Smash Bacon Duplo Especial', priceCents: 3690 },
+              { name: 'Burger de Costela Desfiada', priceCents: 4290 },
+              { name: 'Combo Casal Artesanal + Batata', priceCents: 7890 },
+              { name: 'Batata Rústica com Cheddar & Bacon', priceCents: 2690 },
+              { name: 'Milkshake Pistache Artesanal 400ml', priceCents: 2490 },
+              { name: 'Refrigerante Lata 350ml', priceCents: 790 },
+            ];
+
+      const demoQuantities = [42, 35, 24, 31, 19, 48];
+      const rawProducts = baseCatalogNames.map((prod, idx) => {
+        const qty = demoQuantities[idx % demoQuantities.length];
+        const revCents = qty * prod.priceCents;
+        return {
+          name: prod.name,
+          shortName: prod.name.length > 22 ? `${prod.name.slice(0, 20)}…` : prod.name,
+          quantity: qty,
+          revenueCents: revCents,
+          revenueReais: Number((revCents / 100).toFixed(2)),
+          sharePercent: 0,
+        };
+      });
+
+      const sumProdRev = rawProducts.reduce((s, p) => s + p.revenueCents, 0) || 1;
+      const sortedTopProducts = rawProducts
+        .map((p) => ({
+          ...p,
+          sharePercent: Number(((p.revenueCents / sumProdRev) * 100).toFixed(1)),
+        }))
+        .sort((a, b) =>
+          topProductMetric === 'revenue' ? b.revenueCents - a.revenueCents : b.quantity - a.quantity
+        );
+
+      const bestDay = [...daysList].sort((a, b) => b.revenueCents - a.revenueCents)[0] || daysList[0];
+
+      return {
+        dailySales: daysList,
+        topProducts: sortedTopProducts,
+        periodTotalRevenueCents: totalDemoRevenueCents,
+        periodTotalOrders: totalDemoOrders,
+        dailyAverageRevenueCents: Math.round(totalDemoRevenueCents / daysList.length),
+        bestDay,
+        totalItemsSold: rawProducts.reduce((s, p) => s + p.quantity, 0),
+      };
+    }
+
+    // Populate from real orders
+    const productMap: Record<string, { quantity: number; revenueCents: number }> = {};
+
+    validOrders.forEach((order) => {
+      const key = resolveOrderDateKey(order, today);
+      if (daysMap[key]) {
+        daysMap[key].ordersCount += 1;
+        daysMap[key].revenueCents += order.totalCents || 0;
+        daysMap[key].revenueReais = Number((daysMap[key].revenueCents / 100).toFixed(2));
+        daysMap[key].averageTicketReais =
+          daysMap[key].ordersCount > 0
+            ? Number((daysMap[key].revenueCents / daysMap[key].ordersCount / 100).toFixed(2))
+            : 0;
+      }
+
+      (order.items || []).forEach((item) => {
+        const pName = item.productName || 'Produto';
+        if (!productMap[pName]) {
+          productMap[pName] = { quantity: 0, revenueCents: 0 };
+        }
+        const qty = Number(item.quantity) || 1;
+        const itemTotal = Number(item.totalCents) || (Number(item.unitPriceCents) || 0) * qty;
+        productMap[pName].quantity += qty;
+        productMap[pName].revenueCents += itemTotal;
+      });
+    });
+
+    const totalProductRevenueCents =
+      Object.values(productMap).reduce((sum, item) => sum + item.revenueCents, 0) || 1;
+
+    const topProducts: TopProductPoint[] = Object.entries(productMap)
+      .map(([name, stats]) => ({
+        name,
+        shortName: name.length > 22 ? `${name.slice(0, 20)}…` : name,
+        quantity: stats.quantity,
+        revenueCents: stats.revenueCents,
+        revenueReais: Number((stats.revenueCents / 100).toFixed(2)),
+        sharePercent: Number(((stats.revenueCents / totalProductRevenueCents) * 100).toFixed(1)),
+      }))
+      .sort((a, b) =>
+        topProductMetric === 'revenue' ? b.revenueCents - a.revenueCents : b.quantity - a.quantity
+      )
+      .slice(0, 8);
+
+    const periodTotalRevenueCents = daysList.reduce((sum, d) => sum + d.revenueCents, 0);
+    const periodTotalOrders = daysList.reduce((sum, d) => sum + d.ordersCount, 0);
+    const dailyAverageRevenueCents =
+      daysList.length > 0 ? Math.round(periodTotalRevenueCents / daysList.length) : 0;
+    const bestDay = [...daysList].sort((a, b) => b.revenueCents - a.revenueCents)[0] || daysList[0];
+    const totalItemsSold = Object.values(productMap).reduce((sum, item) => sum + item.quantity, 0);
+
+    return {
+      dailySales: daysList,
+      topProducts,
+      periodTotalRevenueCents,
+      periodTotalOrders,
+      dailyAverageRevenueCents,
+      bestDay,
+      totalItemsSold,
+    };
+  }, [orders, products, periodDays, onlyDeliveredInCharts, topProductMetric, useDemoDataWhenEmpty]);
 
   // ==========================================================================
   // AUDITED METRICS CALCULATION (RIGOROUS AUDIT)
@@ -149,48 +409,454 @@ export const AuditedDashboardView: React.FC<AuditedDashboardViewProps> = ({
     };
   }, [orders]);
 
+  // Export CSV report
+  const handleExportReportCsv = () => {
+    const lines: string[] = [
+      `RELATORIO DE VENDAS POR DIA - ${tenant.name.toUpperCase()}`,
+      'Data;Dia da Semana;Qtd Pedidos;Total Vendas (R$);Ticket Medio (R$)',
+      ...chartsData.dailySales.map(
+        (d) =>
+          `${d.fullDate};${d.weekday};${d.ordersCount};${d.revenueReais.toFixed(2).replace('.', ',')};${d.averageTicketReais.toFixed(2).replace('.', ',')}`
+      ),
+      '',
+      'PRODUTOS MAIS VENDIDOS',
+      'Posicao;Produto;Quantidade Vendida;Receita Total (R$);Participacao (%)',
+      ...chartsData.topProducts.map(
+        (p, idx) =>
+          `${idx + 1};${p.name};${p.quantity};${p.revenueReais.toFixed(2).replace('.', ',')};${p.sharePercent}%`
+      ),
+    ];
+
+    const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `relatorio-vendas-${tenant.slug}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-6">
-      {/* Header & Audit Certifier */}
-      <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* Header & Controls */}
+      <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-2xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-base font-bold text-neutral-900">Dashboard Gerencial &amp; Vendas Auditadas</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-blue-600" />
+            <h2 className="text-base font-bold text-neutral-900">
+              Relatórios de Vendas por Dia &amp; Produtos Mais Vendidos
+            </h2>
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
               <ShieldCheck className="w-3 h-3 text-emerald-600" />
               Auditoria Contábil Ativa
             </span>
           </div>
           <p className="text-xs text-neutral-500 mt-1">
-            Métricas de faturamento calculadas estritamente sobre pedidos concluídos e entregues em {tenant.name}.
-            Cancelamentos e pedidos em rota são auditados separadamente para transparência fiscal e gerencial.
+            Acompanhe a evolução diária do faturamento e o ranking dos itens campeões de venda em{' '}
+            <strong>{tenant.name}</strong>.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Period Filter */}
+          <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-0.5 text-xs">
+            {([7, 14, 30] as const).map((days) => (
+              <button
+                key={days}
+                type="button"
+                onClick={() => setPeriodDays(days)}
+                className={`px-2.5 py-1.5 rounded-md font-semibold transition-all ${
+                  periodDays === days
+                    ? 'bg-neutral-900 text-white shadow-2xs'
+                    : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                {days} Dias
+              </button>
+            ))}
+          </div>
+
+          {/* Toggle Demo / Real Data */}
+          <button
+            type="button"
+            onClick={() => setUseDemoDataWhenEmpty((prev) => !prev)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all border ${
+              useDemoDataWhenEmpty
+                ? 'bg-amber-50 text-amber-800 border-amber-300 shadow-2xs'
+                : 'bg-white text-neutral-700 hover:bg-neutral-50 border-neutral-200'
+            }`}
+            title="Alternar entre os pedidos reais e uma simulação de 7 dias para testar os gráficos"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+            <span>{useDemoDataWhenEmpty ? 'Exibindo Simulação (Voltar ao Real)' : 'Simular Gráficos Cheios'}</span>
+          </button>
+
+          {/* Export CSV */}
+          <button
+            type="button"
+            onClick={handleExportReportCsv}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white hover:bg-neutral-50 text-neutral-700 border border-neutral-200 flex items-center gap-1.5 transition-colors"
+          >
+            <Download className="w-3.5 h-3.5 text-blue-600" />
+            <span>Exportar CSV</span>
+          </button>
+
+          {/* Toggle Mathematical Proof */}
           <button
             type="button"
             onClick={() => setShowAuditProof(!showAuditProof)}
-            className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all border ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all border ${
               showAuditProof
                 ? 'bg-neutral-900 text-white border-neutral-900 shadow-xs'
                 : 'bg-neutral-50 text-neutral-700 hover:bg-neutral-100 border-neutral-200'
             }`}
           >
-            <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-            <span>{showAuditProof ? 'Ocultar Memória de Cálculo' : 'Ver Memória de Cálculo & Fórmulas'}</span>
-            {showAuditProof ? <ChevronUp className="w-3.5 h-3.5 ml-1" /> : <ChevronDown className="w-3.5 h-3.5 ml-1" />}
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+            <span>{showAuditProof ? 'Ocultar Fórmulas' : 'Memória de Cálculo'}</span>
           </button>
+        </div>
+      </div>
 
-          {onNavigateToTab && (
-            <button
-              type="button"
-              onClick={() => onNavigateToTab('crm')}
-              className="px-3 py-2 rounded-lg text-xs font-semibold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 flex items-center gap-1.5 transition-colors"
-            >
-              <span>Ir para CRM de Clientes</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
+      {/* Filter Bar for Chart Status Scope */}
+      <div className="bg-slate-50 border border-slate-200/80 rounded-xl px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2 text-slate-600">
+          <Calendar className="w-4 h-4 text-blue-600 shrink-0" />
+          <span>
+            Período analisado nos gráficos: <strong>Últimos {periodDays} dias</strong> ({chartsData.periodTotalOrders}{' '}
+            pedidos • <strong>{formatBRL(chartsData.periodTotalRevenueCents)}</strong>)
+          </span>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <label className="inline-flex items-center gap-1.5 cursor-pointer text-slate-700 font-medium select-none">
+            <input
+              type="checkbox"
+              checked={onlyDeliveredInCharts}
+              onChange={(e) => setOnlyDeliveredInCharts(e.target.checked)}
+              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span>Considerar apenas pedidos já entregues nos gráficos</span>
+          </label>
+        </div>
+      </div>
+
+      {/* ==================================================================== */}
+      {/* RECHARTS ANALYTICS GRID: TOTAL SALES PER DAY & TOP SELLING PRODUCTS  */}
+      {/* ==================================================================== */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+        {/* CHART 1: Total de Vendas por Dia (7 Cols) */}
+        <div className="xl:col-span-7 bg-white border border-neutral-200 rounded-xl p-5 shadow-2xs flex flex-col justify-between space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-neutral-100">
+            <div>
+              <h3 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-blue-600" />
+                <span>Total de Vendas por Dia</span>
+              </h3>
+              <p className="text-[11px] text-neutral-500 mt-0.5">
+                Evolução diária da receita (R$) e volume de pedidos nos últimos {periodDays} dias
+              </p>
+            </div>
+
+            <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-0.5 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setSalesChartType('area')}
+                className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
+                  salesChartType === 'area'
+                    ? 'bg-white text-blue-600 shadow-2xs border border-neutral-200/60'
+                    : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                Área
+              </button>
+              <button
+                type="button"
+                onClick={() => setSalesChartType('bar')}
+                className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
+                  salesChartType === 'bar'
+                    ? 'bg-white text-blue-600 shadow-2xs border border-neutral-200/60'
+                    : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                Barras
+              </button>
+            </div>
+          </div>
+
+          {/* Mini Summary Strip */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-slate-50 border border-slate-200/70 rounded-lg p-3">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">
+                Total no Período
+              </span>
+              <span className="text-sm sm:text-base font-bold font-mono text-slate-900 mt-0.5 block">
+                {formatBRL(chartsData.periodTotalRevenueCents)}
+              </span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/70 rounded-lg p-3">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">
+                Média por Dia
+              </span>
+              <span className="text-sm sm:text-base font-bold font-mono text-slate-900 mt-0.5 block">
+                {formatBRL(chartsData.dailyAverageRevenueCents)}
+              </span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/70 rounded-lg p-3">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">
+                Melhor Dia ({chartsData.bestDay?.dateKey})
+              </span>
+              <span className="text-sm sm:text-base font-bold font-mono text-emerald-700 mt-0.5 block">
+                {formatBRL(chartsData.bestDay?.revenueCents || 0)}
+              </span>
+            </div>
+          </div>
+
+          {/* Recharts Container */}
+          <div className="h-72 w-full pt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              {salesChartType === 'area' ? (
+                <AreaChart data={chartsData.dailySales} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="salesRevenueGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#2563EB" stopOpacity={0.32} />
+                      <stop offset="95%" stopColor="#2563EB" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 11, fill: '#64748B' }}
+                    axisLine={{ stroke: '#CBD5E1' }}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tickFormatter={(val) => `R$ ${val}`}
+                    tick={{ fontSize: 11, fill: '#64748B' }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={68}
+                  />
+                  <Tooltip
+                    formatter={(value: any, name: any) => {
+                      if (name === 'Vendas (R$)') return [formatReaisBRL(Number(value) || 0), 'Total de Vendas'];
+                      if (name === 'Ticket Médio (R$)') return [formatReaisBRL(Number(value) || 0), 'Ticket Médio'];
+                      return [value, name];
+                    }}
+                    labelFormatter={(label, payload) => {
+                      const item = payload?.[0]?.payload as DailySalesPoint | undefined;
+                      if (!item) return String(label);
+                      return `Data: ${item.fullDate} (${item.weekday}) • ${item.ordersCount} pedido(s)`;
+                    }}
+                    contentStyle={{
+                      backgroundColor: '#0F172A',
+                      borderColor: '#1E293B',
+                      borderRadius: '10px',
+                      color: '#F8FAFC',
+                      fontSize: '12px',
+                    }}
+                    itemStyle={{ color: '#F8FAFC' }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
+                  <Area
+                    type="monotone"
+                    dataKey="revenueReais"
+                    name="Vendas (R$)"
+                    stroke="#2563EB"
+                    strokeWidth={2.5}
+                    fillOpacity={1}
+                    fill="url(#salesRevenueGradient)"
+                    activeDot={{ r: 5, strokeWidth: 0, fill: '#1D4ED8' }}
+                  />
+                </AreaChart>
+              ) : (
+                <BarChart data={chartsData.dailySales} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 11, fill: '#64748B' }}
+                    axisLine={{ stroke: '#CBD5E1' }}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tickFormatter={(val) => `R$ ${val}`}
+                    tick={{ fontSize: 11, fill: '#64748B' }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={68}
+                  />
+                  <Tooltip
+                    formatter={(value: any, name: any) => {
+                      if (name === 'Vendas (R$)') return [formatReaisBRL(Number(value) || 0), 'Total de Vendas'];
+                      return [value, name];
+                    }}
+                    labelFormatter={(label, payload) => {
+                      const item = payload?.[0]?.payload as DailySalesPoint | undefined;
+                      if (!item) return String(label);
+                      return `Data: ${item.fullDate} (${item.weekday}) • ${item.ordersCount} pedido(s)`;
+                    }}
+                    contentStyle={{
+                      backgroundColor: '#0F172A',
+                      borderColor: '#1E293B',
+                      borderRadius: '10px',
+                      color: '#F8FAFC',
+                      fontSize: '12px',
+                    }}
+                    itemStyle={{ color: '#F8FAFC' }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
+                  <Bar dataKey="revenueReais" name="Vendas (R$)" fill="#2563EB" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              )}
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* CHART 2: Produtos Mais Vendidos (5 Cols) */}
+        <div className="xl:col-span-5 bg-white border border-neutral-200 rounded-xl p-5 shadow-2xs flex flex-col justify-between space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-neutral-100">
+            <div>
+              <h3 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
+                <Award className="w-4 h-4 text-orange-600" />
+                <span>Produtos Mais Vendidos</span>
+              </h3>
+              <p className="text-[11px] text-neutral-500 mt-0.5">
+                Ranking de desempenho por {topProductMetric === 'revenue' ? 'faturamento (R$)' : 'unidades vendidas'}
+              </p>
+            </div>
+
+            <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-0.5 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setTopProductMetric('revenue')}
+                className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
+                  topProductMetric === 'revenue'
+                    ? 'bg-white text-orange-600 shadow-2xs border border-neutral-200/60'
+                    : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                Por Receita (R$)
+              </button>
+              <button
+                type="button"
+                onClick={() => setTopProductMetric('quantity')}
+                className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
+                  topProductMetric === 'quantity'
+                    ? 'bg-white text-orange-600 shadow-2xs border border-neutral-200/60'
+                    : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                Por Qtd (Unid.)
+              </button>
+            </div>
+          </div>
+
+          {chartsData.topProducts.length > 0 ? (
+            <>
+              <div className="h-56 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={chartsData.topProducts.slice(0, 6)}
+                    layout="vertical"
+                    margin={{ top: 4, right: 20, left: 8, bottom: 4 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#E2E8F0" />
+                    <XAxis
+                      type="number"
+                      tickFormatter={(val) => (topProductMetric === 'revenue' ? `R$${val}` : `${val}x`)}
+                      tick={{ fontSize: 10, fill: '#64748B' }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="shortName"
+                      width={125}
+                      tick={{ fontSize: 11, fill: '#334155', fontWeight: 500 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      formatter={(value: any, _name: any, props: any) => {
+                        const item = props?.payload as TopProductPoint | undefined;
+                        if (topProductMetric === 'revenue') {
+                          return [
+                            `${formatReaisBRL(Number(value) || 0)} (${item?.quantity || 0} unid.)`,
+                            'Receita Acumulada',
+                          ];
+                        }
+                        return [
+                          `${value} unidades (${formatReaisBRL(item?.revenueReais || 0)})`,
+                          'Quantidade Vendida',
+                        ];
+                      }}
+                      labelFormatter={(_label, payload) => {
+                        const item = payload?.[0]?.payload as TopProductPoint | undefined;
+                        return item?.name || '';
+                      }}
+                      contentStyle={{
+                        backgroundColor: '#0F172A',
+                        borderColor: '#1E293B',
+                        borderRadius: '10px',
+                        color: '#F8FAFC',
+                        fontSize: '12px',
+                      }}
+                      itemStyle={{ color: '#F8FAFC' }}
+                    />
+                    <Bar
+                      dataKey={topProductMetric === 'revenue' ? 'revenueReais' : 'quantity'}
+                      name={topProductMetric === 'revenue' ? 'Receita (R$)' : 'Unidades Vendidas'}
+                      radius={[0, 6, 6, 0]}
+                      barSize={20}
+                    >
+                      {chartsData.topProducts.slice(0, 6).map((entry, index) => (
+                        <Cell key={`cell-${entry.name}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Compact Top Products List */}
+              <div className="space-y-2 pt-2 border-t border-neutral-100 max-h-40 overflow-y-auto pr-1">
+                {chartsData.topProducts.map((prod, idx) => (
+                  <div key={prod.name} className="flex items-center justify-between text-xs py-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className="w-5 h-5 rounded-full text-white text-[10px] flex items-center justify-center font-bold font-mono shrink-0"
+                        style={{ backgroundColor: CHART_COLORS[idx % CHART_COLORS.length] }}
+                      >
+                        {idx + 1}
+                      </span>
+                      <span className="font-medium text-neutral-800 truncate" title={prod.name}>
+                        {prod.name}
+                      </span>
+                    </div>
+                    <div className="text-right shrink-0 font-mono flex items-center gap-2">
+                      <span className="px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-700 text-[10px] font-semibold">
+                        {prod.quantity}x
+                      </span>
+                      <span className="font-bold text-neutral-900">{formatBRL(prod.revenueCents)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-center py-10 px-4 bg-slate-50/70 rounded-xl border border-dashed border-slate-200">
+              <Package className="w-8 h-8 text-slate-400 mb-2" />
+              <p className="text-xs font-bold text-slate-700">Nenhum produto vendido registrado ainda</p>
+              <p className="text-[11px] text-slate-500 mt-1 max-w-xs">
+                Assim que novos pedidos entrarem pelo Cardápio Digital, o ranking de produtos mais vendidos aparecerá automaticamente aqui.
+              </p>
+              <button
+                type="button"
+                onClick={() => setUseDemoDataWhenEmpty(true)}
+                className="mt-3 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white transition-colors flex items-center gap-1.5 shadow-2xs"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Visualizar Exemplo com Dados Simulados</span>
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -567,14 +1233,14 @@ export const AuditedDashboardView: React.FC<AuditedDashboardViewProps> = ({
           </div>
         </div>
 
-        {/* Card: Top Pratos Vendidos */}
+        {/* Card: Top Pratos Entregues (Auditoria Concluídos) */}
         <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-2xs space-y-4">
           <div className="flex items-center justify-between pb-2 border-b border-neutral-100">
             <h3 className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
               <TrendingUp className="w-4 h-4 text-orange-600" />
-              Pratos Mais Vendidos
+              Pratos Entregues (Concluídos)
             </h3>
-            <span className="text-[10px] text-neutral-400">Por receita</span>
+            <span className="text-[10px] text-neutral-400">Receita auditada</span>
           </div>
 
           <div className="space-y-2.5">
@@ -596,9 +1262,22 @@ export const AuditedDashboardView: React.FC<AuditedDashboardViewProps> = ({
             ))}
 
             {auditMetrics.topProducts.length === 0 && (
-              <p className="text-xs text-neutral-400 text-center py-4">Sem dados de pratos vendidos ainda.</p>
+              <p className="text-xs text-neutral-400 text-center py-4">Sem dados de pratos entregues ainda.</p>
             )}
           </div>
+
+          {onNavigateToTab && (
+            <div className="pt-2 border-t border-neutral-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => onNavigateToTab('crm')}
+                className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors"
+              >
+                <span>Ver Histórico no CRM</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
