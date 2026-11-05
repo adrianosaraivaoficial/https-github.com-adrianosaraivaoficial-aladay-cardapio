@@ -1585,7 +1585,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
           }`}
         >
           <MessageSquare className="w-4 h-4 shrink-0" />
-          <span>WhatsApp (Evolution API)</span>
+          <span>WhatsApp &amp; Notificações</span>
         </button>
 
         <button
@@ -3762,6 +3762,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
         onClose={() => setIsQrPairingModalOpen(false)}
         tenant={tenant}
         onTenantUpdated={onUpdateTenant}
+        isSuperAdmin={authSession?.user?.role === 'SUPER_ADMIN'}
       />
 
       {/* ============================================================== */}

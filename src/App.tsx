@@ -1379,16 +1379,7 @@ export default function App() {
                     currentView === 'admin' ? 'text-blue-600 font-bold underline decoration-2 underline-offset-8' : ''
                   }`}
                 >
-                  Painel &amp; KDS (Loja)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleNavigateSafely('whatsapp')}
-                  className={`hover:text-blue-600 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                    currentView === 'whatsapp' ? 'text-blue-600 font-bold underline decoration-2 underline-offset-8' : ''
-                  }`}
-                >
-                  WhatsApp
+                  Painel &amp; KDS
                 </button>
               </>
             ) : (
@@ -1574,21 +1565,7 @@ export default function App() {
                     : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
                 }`}
               >
-                Painel &amp; KDS (Loja)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  handleNavigateSafely('whatsapp');
-                  setIsMobileMenuOpen(false);
-                }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
-                  currentView === 'whatsapp'
-                    ? 'bg-blue-600 text-white shadow-2xs'
-                    : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
-                }`}
-              >
-                WhatsApp
+                Painel &amp; KDS
               </button>
             </>
           ) : (
@@ -1707,19 +1684,7 @@ export default function App() {
                       currentView === 'admin' ? 'bg-blue-600 text-white' : 'text-slate-700 hover:bg-slate-100'
                     }`}
                   >
-                    Painel &amp; KDS (Gestão da Loja)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handleNavigateSafely('whatsapp');
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition-colors ${
-                      currentView === 'whatsapp' ? 'bg-blue-600 text-white' : 'text-slate-700 hover:bg-slate-100'
-                    }`}
-                  >
-                    Automação de WhatsApp
+                    Painel &amp; KDS
                   </button>
                 </>
               ) : (
@@ -1948,7 +1913,7 @@ export default function App() {
           <WhatsAppAutomationView
             tenant={tenant}
             orders={orders}
-            initialSubTab="n8n_workflow"
+            initialSubTab="qrcode_pairing"
             onUpdateTenant={handleUpdateTenant}
             onSimulateEvolutionReconnect={handleSimulateEvolutionReconnect}
             authSession={authSession}

@@ -27,6 +27,7 @@ interface WhatsAppQrPairingModalProps {
   isOpen: boolean;
   onClose: () => void;
   onTenantUpdated: (updatedTenant: RestaurantTenant) => void;
+  isSuperAdmin?: boolean;
 }
 
 export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
@@ -34,8 +35,17 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
   isOpen,
   onClose,
   onTenantUpdated,
+  isSuperAdmin = false,
 }) => {
   const [activeTab, setActiveTab] = useState<'qrcode' | 'pairing_code' | 'config'>('qrcode');
+
+  // Redireciona restaurantes para o QR Code caso tentem acessar abas técnicas
+  useEffect(() => {
+    if (!isSuperAdmin && activeTab === 'config') {
+      setActiveTab('qrcode');
+    }
+  }, [isSuperAdmin, activeTab]);
+
   const [loading, setLoading] = useState(false);
   const [pairingData, setPairingData] = useState<EvolutionQrConnectResponse | null>(null);
   const [secondsRemaining, setSecondsRemaining] = useState(40);
@@ -337,21 +347,37 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
             <Smartphone className="w-3.5 h-3.5" />
             <span>Código de Pareamento (8 Dígitos)</span>
           </button>
-          <button
-            onClick={() => setActiveTab('config')}
-            className={`pb-2.5 px-3 font-semibold transition-colors border-b-2 flex items-center gap-1.5 ${
-              activeTab === 'config'
-                ? 'border-neutral-900 text-neutral-900'
-                : 'border-transparent text-neutral-500 hover:text-neutral-800'
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>Servidor Evolution (VPS)</span>
-          </button>
+          {isSuperAdmin && (
+            <button
+              onClick={() => setActiveTab('config')}
+              className={`pb-2.5 px-3 font-semibold transition-colors border-b-2 flex items-center gap-1.5 ${
+                activeTab === 'config'
+                  ? 'border-neutral-900 text-neutral-900'
+                  : 'border-transparent text-neutral-500 hover:text-neutral-800'
+              }`}
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span>Servidor Evolution (VPS)</span>
+            </button>
+          )}
         </div>
 
         {/* Main Content Body */}
         <div className="p-5 sm:p-6 space-y-6">
+          {!isSuperAdmin && (
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center justify-between gap-2 shadow-2xs">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>
+                  <strong>Configuração Automática Ativa:</strong> A plataforma gerencia todos os servidores e integrações nos bastidores.
+                </span>
+              </div>
+              <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-100 text-blue-800 px-2 py-0.5 rounded shrink-0">
+                100% Automático
+              </span>
+            </div>
+          )}
+
           {/* TAB 1: QR CODE PAIRING (ON SCREEN) */}
           {activeTab === 'qrcode' && (
             <div>
@@ -641,8 +667,8 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
             </div>
           )}
 
-          {/* TAB 3: EVOLUTION API HOSTINGER / EASYPANEL CONFIG */}
-          {activeTab === 'config' && (
+          {/* TAB 3: EVOLUTION API HOSTINGER / EASYPANEL CONFIG (SUPER ADMIN ONLY) */}
+          {isSuperAdmin && activeTab === 'config' && (
             <form onSubmit={handleSaveConfig} className="space-y-4 max-w-lg mx-auto text-xs">
               <div>
                 <h4 className="text-sm font-bold text-neutral-900">

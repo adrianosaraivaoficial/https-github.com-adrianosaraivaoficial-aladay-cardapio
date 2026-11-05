@@ -63,10 +63,20 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   onSimulateEvolutionReconnect,
   authSession,
 }) => {
-  const isSuperAdmin = authSession ? authSession.user.role === 'SUPER_ADMIN' : true;
+  const isSuperAdmin = Boolean(authSession && authSession.user?.role === 'SUPER_ADMIN');
   const [subTab, setSubTab] = useState<'qrcode_pairing' | 'status_notifications' | 'simulator' | 'n8n_workflow' | 'templates' | 'easypanel' | 'logs'>(
-    initialSubTab || 'n8n_workflow'
+    initialSubTab && (isSuperAdmin || (initialSubTab !== 'n8n_workflow' && initialSubTab !== 'easypanel' && initialSubTab !== 'logs'))
+      ? initialSubTab
+      : 'qrcode_pairing'
   );
+
+  // Redireciona restaurantes para o pareamento QR Code caso tentem acessar abas restritas de infraestrutura
+  useEffect(() => {
+    if (!isSuperAdmin && (subTab === 'n8n_workflow' || subTab === 'easypanel' || subTab === 'logs')) {
+      setSubTab('qrcode_pairing');
+    }
+  }, [isSuperAdmin, subTab]);
+
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
 
   // Form settings state (defaults populated from user's Easypanel setup)
@@ -969,80 +979,82 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-neutral-100">
           <div>
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className={`w-2.5 h-2.5 rounded-full ${tenant.evolutionStatus === 'connected' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500 animate-pulse'}`} />
               <h3 className="text-sm font-bold text-neutral-900">
-                Automação de Resposta com n8n &amp; Evolution API (Hostinger VPS / Easypanel)
+                {isSuperAdmin
+                  ? 'Automação de Resposta com n8n & Evolution API (Infraestrutura Geral)'
+                  : `WhatsApp Oficial - ${tenant.name}`}
               </h3>
             </div>
             <p className="text-xs text-neutral-600 mt-1">
-              Conecte sua Evolution API e seus fluxos do n8n para responder instantaneamente clientes no WhatsApp com o cardápio digital e gerenciar pedidos.
+              {isSuperAdmin
+                ? 'Conecte sua Evolution API e seus fluxos do n8n para responder instantaneamente clientes no WhatsApp com o cardápio digital e gerenciar pedidos.'
+                : 'Conecte o WhatsApp do seu estabelecimento para enviar atualizações de pedidos da cozinha e interagir com seus clientes automaticamente. A infraestrutura e a conexão são configuradas de forma 100% automática pela plataforma.'}
             </p>
           </div>
 
-          {/* Service Status Badges on VPS */}
+          {/* Service Status Badges */}
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-neutral-100 rounded-md text-[11px] font-medium text-neutral-700">
-              <Server className="w-3.5 h-3.5 text-neutral-500" />
-              <span>Easypanel VPS</span>
+            {isSuperAdmin && (
+              <>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-neutral-100 rounded-md text-[11px] font-medium text-neutral-700">
+                  <Server className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>Easypanel VPS</span>
+                </div>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded-md text-[11px] font-medium text-emerald-800">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                  <span>Evolution API Online</span>
+                </div>
+              </>
+            )}
+
+            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[11px] font-bold border ${
+              tenant.evolutionStatus === 'connected'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-amber-50 border-amber-200 text-amber-800'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${tenant.evolutionStatus === 'connected' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              <span>{tenant.evolutionStatus === 'connected' ? 'WhatsApp Conectado' : 'Aguardando Leitura'}</span>
             </div>
-            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded-md text-[11px] font-medium text-emerald-800">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-              <span>Evolution API Online</span>
-            </div>
+
             <button
               type="button"
-              onClick={() => setIsQrModalOpen(true)}
+              onClick={() => {
+                setSubTab('qrcode_pairing');
+                fetchEmbeddedQr(true);
+              }}
               className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-[11px] font-bold transition-colors shadow-2xs cursor-pointer"
-              title="Abrir Pareamento com Evolution API via QR Code"
+              title="Abrir Pareamento com WhatsApp via QR Code"
             >
               <QrCode className="w-3.5 h-3.5" />
-              <span>{tenant.evolutionStatus === 'connected' ? 'WhatsApp Pareado' : 'Parear WhatsApp (QR Code)'}</span>
+              <span>{tenant.evolutionStatus === 'connected' ? 'Ver Status / Reconectar' : 'Ler QR Code'}</span>
             </button>
-            <button
-              onClick={onSimulateEvolutionReconnect}
-              className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-md transition-colors"
-              title="Testar Ping de Conexão com Evolution API"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
+
+            {isSuperAdmin && (
+              <button
+                onClick={onSimulateEvolutionReconnect}
+                className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-md transition-colors"
+                title="Testar Ping de Conexão com Evolution API"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
         {/* Sub-tabs strip */}
         <div className="flex items-center gap-2 pt-3 overflow-x-auto text-xs font-medium">
-          <button
-            onClick={() => setSubTab('n8n_workflow')}
-            className={`px-3.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer border ${
-              subTab === 'n8n_workflow'
-                ? 'bg-blue-600 text-white border-blue-600 font-bold shadow-xs'
-                : 'text-blue-700 bg-blue-50 hover:bg-blue-100 border-blue-200 font-semibold'
-            }`}
-            title="Configurar Agente de IA e exportar Workflow JSON para o n8n"
-          >
-            <Bot className="w-4 h-4" />
-            <span>Configurar Agente IA no n8n</span>
-            <span
-              className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
-                subTab === 'n8n_workflow'
-                  ? 'bg-white/20 text-white'
-                  : 'bg-blue-200 text-blue-900'
-              }`}
-            >
-              IA + Evolution
-            </span>
-          </button>
-
-          {/* Lojista / Restaurante Functions */}
+          {/* Aba Principal do Restaurante: QR Code */}
           <button
             onClick={() => setSubTab('qrcode_pairing')}
-            className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+            className={`px-3.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
               subTab === 'qrcode_pairing'
                 ? 'bg-neutral-900 text-white font-semibold shadow-xs'
                 : 'text-neutral-600 hover:bg-neutral-100'
             }`}
           >
             <QrCode className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Pareamento QR Code (Na Tela)</span>
+            <span>Conectar WhatsApp (QR Code)</span>
             <span
               className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold border ${
                 tenant.evolutionStatus === 'connected'
@@ -1063,7 +1075,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
             }`}
           >
             <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Notificações de Status do Pedido (KDS)</span>
+            <span>Avisos de Pedidos (KDS)</span>
           </button>
 
           <button
@@ -1075,7 +1087,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
             }`}
           >
             <MessageSquare className="w-3.5 h-3.5" />
-            <span>Mensagens &amp; Textos do Bot</span>
+            <span>Mensagens do Restaurante</span>
           </button>
 
           <button
@@ -1087,16 +1099,38 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
             }`}
           >
             <Smartphone className="w-3.5 h-3.5" />
-            <span>Simulador de Resposta (Chat ao Vivo)</span>
+            <span>Simulador de Atendimento</span>
           </button>
 
-          {/* Somente para o ADM (Super Admin da Plataforma) */}
+          {/* Somente para o Administrador Geral da Plataforma (Super Admin) */}
           {isSuperAdmin && (
             <>
               <div className="h-5 w-px bg-neutral-300 mx-1 shrink-0" />
-              <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 shrink-0">
-                Infra VPS:
+              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-800 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 shrink-0">
+                Infra Plataforma:
               </span>
+
+              <button
+                onClick={() => setSubTab('n8n_workflow')}
+                className={`px-3.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer border ${
+                  subTab === 'n8n_workflow'
+                    ? 'bg-blue-600 text-white border-blue-600 font-bold shadow-xs'
+                    : 'text-blue-700 bg-blue-50 hover:bg-blue-100 border-blue-200 font-semibold'
+                }`}
+                title="Configurar Agente de IA e exportar Workflow JSON para o n8n"
+              >
+                <Bot className="w-4 h-4" />
+                <span>Configurar Agente IA no n8n</span>
+                <span
+                  className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                    subTab === 'n8n_workflow'
+                      ? 'bg-white/20 text-white'
+                      : 'bg-blue-200 text-blue-900'
+                  }`}
+                >
+                  Super Admin
+                </span>
+              </button>
 
               <button
                 onClick={() => setSubTab('easypanel')}
@@ -1140,6 +1174,19 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
       {/* ============================================================== */}
       {subTab === 'qrcode_pairing' && (
         <div className="space-y-6">
+          {/* Automatic Configuration Assurance Notice */}
+          <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center justify-between gap-3 shadow-2xs">
+            <div className="flex items-center gap-2.5">
+              <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
+              <span>
+                <strong>Configuração Automática Ativa:</strong> A plataforma gerencia todos os servidores, webhooks e conexões em nuvem nos bastidores. Você só precisa manter o QR Code conectado abaixo.
+              </span>
+            </div>
+            <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-200/80 text-blue-900 px-2 py-0.5 rounded shrink-0">
+              100% Automático
+            </span>
+          </div>
+
           {/* Top Status Banner */}
           <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-2xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1154,16 +1201,18 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-bold text-neutral-900">
-                      Pareamento de WhatsApp em Tempo Real
+                      Conexão do WhatsApp do Restaurante
                     </h3>
-                    <span className="font-mono text-[10px] bg-neutral-100 text-neutral-700 px-2 py-0.5 rounded font-bold">
-                      Instância: {tenant.evolutionInstanceId || 'aladay'}
-                    </span>
+                    {isSuperAdmin && (
+                      <span className="font-mono text-[10px] bg-neutral-100 text-neutral-700 px-2 py-0.5 rounded font-bold">
+                        Instância: {tenant.evolutionInstanceId || 'aladay'}
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-neutral-500 mt-0.5">
                     {tenant.evolutionStatus === 'connected'
-                      ? 'WhatsApp conectado e pronto para enviar mensagens de confirmação e rastreamento do KDS.'
-                      : 'Aponte a câmera do seu WhatsApp para o QR Code abaixo para conectar este restaurante.'}
+                      ? 'WhatsApp conectado e pronto para enviar mensagens de confirmação e rastreamento da cozinha.'
+                      : 'Aponte a câmera do seu WhatsApp para o QR Code abaixo para conectar seu restaurante.'}
                   </p>
                 </div>
               </div>
@@ -1444,7 +1493,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
           tenant={tenant}
           orders={orders}
           onUpdateTenant={onUpdateTenant}
-          onNavigateToLogs={() => setSubTab('logs')}
+          onNavigateToLogs={isSuperAdmin ? () => setSubTab('logs') : undefined}
         />
       )}
 
@@ -1477,7 +1526,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span>1. WhatsApp Inbound (Evolution API)</span>
+                    <span>1. Mensagem Recebida do Cliente</span>
                     {activePipelineStep === 1 && (
                       <span className="font-mono text-[10px] bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded">
                         Recebendo...
@@ -1485,7 +1534,9 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                     )}
                   </div>
                   <p className="text-[11px] text-neutral-500 font-normal mt-0.5">
-                    Cliente envia texto. Evolution API dispara webhook <code className="bg-neutral-200 px-1 py-0.2 rounded font-mono text-[10px]">MESSAGES_UPSERT</code>.
+                    {isSuperAdmin
+                      ? 'Cliente envia texto. Evolution API dispara webhook MESSAGES_UPSERT.'
+                      : 'Cliente envia mensagem para o número de WhatsApp conectado do seu restaurante.'}
                   </p>
                 </div>
 
@@ -1497,15 +1548,17 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span>2. Webhook acionado no n8n</span>
+                    <span>2. Verificação Automática da Loja</span>
                     {activePipelineStep === 2 && (
                       <span className="font-mono text-[10px] bg-indigo-200 text-indigo-900 px-1.5 py-0.5 rounded">
-                        Processando nós...
+                        Processando...
                       </span>
                     )}
                   </div>
                   <p className="text-[11px] text-neutral-500 font-normal mt-0.5">
-                    O n8n recebe o payload na URL <code className="bg-neutral-200 px-1 py-0.2 rounded font-mono text-[10px]">/webhook/evolution-messages-upsert</code>.
+                    {isSuperAdmin
+                      ? 'O n8n recebe o payload na URL /webhook/evolution-messages-upsert.'
+                      : 'O sistema verifica se o restaurante está aberto e seleciona a mensagem apropriada.'}
                   </p>
                 </div>
 
@@ -1517,7 +1570,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span>3. Regras de Negócio &amp; Decisão no n8n</span>
+                    <span>3. Geração do Link do Cardápio</span>
                     {activePipelineStep === 3 && (
                       <span className="font-mono text-[10px] bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded">
                         Avaliando...
@@ -1525,7 +1578,9 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                     )}
                   </div>
                   <p className="text-[11px] text-neutral-500 font-normal mt-0.5">
-                    Verifica: restaurante aberto? Cliente pediu atendente (2)? Extrai link do cardápio de {tenant.name}.
+                    {isSuperAdmin
+                      ? `Verifica: restaurante aberto? Cliente pediu atendente (2)? Extrai link do cardápio de ${tenant.name}.`
+                      : `Insere o link oficial do cardápio digital de ${tenant.name} com fotos e preços atualizados.`}
                   </p>
                 </div>
 
@@ -1537,7 +1592,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span>4. Disparo de Resposta via Evolution API</span>
+                    <span>4. Resposta Entregue no WhatsApp</span>
                     {activePipelineStep === 4 && (
                       <span className="font-mono text-[10px] bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded">
                         Enviando resposta...
@@ -1545,7 +1600,9 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                     )}
                   </div>
                   <p className="text-[11px] text-neutral-500 font-normal mt-0.5">
-                    O nó HTTP Request do n8n executa <code className="bg-neutral-200 px-1 py-0.2 rounded font-mono text-[10px]">POST /message/sendText/{tenant.evolutionInstanceId}</code>.
+                    {isSuperAdmin
+                      ? `O nó HTTP Request do n8n executa POST /message/sendText/${tenant.evolutionInstanceId}.`
+                      : 'O cliente recebe instantaneamente a resposta no WhatsApp e clica no cardápio para pedir.'}
                   </p>
                 </div>
               </div>
@@ -1722,32 +1779,32 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
         </div>
       )}
 
-      {/* Access Denied Card for Non-Admin trying to access infrastructure tools */}
-      {!isSuperAdmin && (subTab === 'easypanel' || subTab === 'logs') && (
-        <div className="bg-white border border-amber-200 rounded-xl p-8 text-center space-y-3 shadow-2xs">
-          <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto font-bold text-lg">
-            🛡️
+      {/* Access Notice for Non-Admin trying to access infrastructure tools */}
+      {!isSuperAdmin && (subTab === 'easypanel' || subTab === 'logs' || subTab === 'n8n_workflow') && (
+        <div className="bg-white border border-neutral-200 rounded-xl p-8 text-center space-y-3 shadow-2xs">
+          <div className="w-12 h-12 rounded-full bg-blue-50 text-blue-700 flex items-center justify-center mx-auto font-bold text-lg">
+            📱
           </div>
-          <h4 className="text-base font-bold text-neutral-900">Ferramenta de Infraestrutura (Exclusivo ADM)</h4>
+          <h4 className="text-base font-bold text-neutral-900">Configuração Automática da Plataforma</h4>
           <p className="text-xs text-neutral-600 max-w-md mx-auto">
-            Esta área (Passo a Passo na VPS e Logs de Webhooks) é de controle exclusivo da equipe técnica e do Administrador Geral da plataforma Aladay.
+            Toda a inteligência e infraestrutura de servidores em nuvem são gerenciadas automaticamente pela Aladay. Como restaurante, você só precisa conectar seu WhatsApp lendo o QR Code.
           </p>
           <div className="pt-2">
             <button
               type="button"
-              onClick={() => setSubTab('n8n_workflow')}
-              className="px-4 py-2 bg-neutral-900 text-white rounded-lg text-xs font-semibold hover:bg-neutral-800 transition-colors cursor-pointer"
+              onClick={() => setSubTab('qrcode_pairing')}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 transition-colors cursor-pointer"
             >
-              Voltar para Configuração do Agente n8n
+              Ir para Conectar WhatsApp (QR Code)
             </button>
           </div>
         </div>
       )}
 
       {/* ============================================================== */}
-      {/* SUB-TAB 2: N8N AI AGENT CONFIGURATOR & WORKFLOW STUDIO         */}
+      {/* SUB-TAB 2: N8N AI AGENT CONFIGURATOR & WORKFLOW STUDIO (SUPER ADMIN) */}
       {/* ============================================================== */}
-      {subTab === 'n8n_workflow' && (
+      {isSuperAdmin && subTab === 'n8n_workflow' && (
         <div className="space-y-6">
           {/* STEP 1: SELECT AGENT ARCHITECTURE PROFILE */}
           <div className="bg-white border border-neutral-200 rounded-2xl p-6 shadow-2xs space-y-5">
@@ -3131,6 +3188,7 @@ EXECUTIONS_DATA_MAX_AGE=168`}
         onClose={() => setIsQrModalOpen(false)}
         tenant={tenant}
         onTenantUpdated={onUpdateTenant}
+        isSuperAdmin={isSuperAdmin}
       />
     </div>
   );
