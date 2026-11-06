@@ -408,4 +408,9 @@ export interface EvolutionQrConnectResponse {
   batteryLevel?: number;
   serverUrl?: string;
   lastSync?: string;
+  remoteFetched?: boolean;
+  remoteErrorReason?: string;
+  remoteErrorMessage?: string;
+  normalizedPhone?: string;
 }
+

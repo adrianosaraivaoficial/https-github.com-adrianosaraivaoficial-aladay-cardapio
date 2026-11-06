@@ -55,8 +55,23 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
   const [isSimulatingScan, setIsSimulatingScan] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
 
+  const normalizeBrPhone = useCallback((raw?: string) => {
+    const digits = String(raw || '').replace(/\D/g, '').replace(/^0+/, '');
+    if (!digits) return '5591981214188';
+    if (digits.length === 10 || digits.length === 11) {
+      return `55${digits}`;
+    }
+    return digits;
+  }, []);
+
   // Phone input for pairing code alternative
-  const [phoneInput, setPhoneInput] = useState(tenant.phone || '5511987654321');
+  const [phoneInput, setPhoneInput] = useState(() => normalizeBrPhone(tenant.phone || '5591981214188'));
+
+  useEffect(() => {
+    if (tenant.phone) {
+      setPhoneInput(normalizeBrPhone(tenant.phone));
+    }
+  }, [tenant.phone, normalizeBrPhone]);
 
   // VPS Evolution API Config State
   const [vpsUrl, setVpsUrl] = useState(
@@ -76,14 +91,17 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
   // Timer reference for QR countdown
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Fetch fresh QR code
-  const fetchQrCode = useCallback(async (isManualRefresh = false) => {
+  // Fetch fresh QR code & 8-digit pairing code
+  const fetchQrCode = useCallback(async (isManualRefresh = false, overridePhone?: string) => {
     if (isConnected && !isManualRefresh) return;
     setLoading(true);
     setErrorNotice(null);
 
     try {
-      const res = await fetch(`/api/v1/evolution/instance/${instanceId}/connect`);
+      const cleanPhone = normalizeBrPhone(overridePhone ?? phoneInput ?? tenant.phone);
+      const res = await fetch(
+        `/api/v1/evolution/instance/${encodeURIComponent(instanceId)}/connect?number=${encodeURIComponent(cleanPhone)}`
+      );
       if (res.ok) {
         const data: EvolutionQrConnectResponse = await res.json();
         setPairingData(data);
@@ -96,7 +114,7 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [instanceId, isConnected]);
+  }, [instanceId, isConnected, phoneInput, tenant.phone, normalizeBrPhone]);
 
   // Check instance status
   const checkStatus = useCallback(async () => {
@@ -636,21 +654,36 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
                 </p>
               </div>
 
-              {/* Test Phone Input */}
+              {/* Phone Input for Real 8-Digit Code + Simulation */}
               <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-xl space-y-3 text-xs">
                 <div>
                   <label className="font-bold text-neutral-800 block">
-                    Número do WhatsApp do Restaurante (com DDD):
+                    Número do WhatsApp do Restaurante (com DDI 55 + DDD):
                   </label>
-                  <input
-                    type="text"
-                    value={phoneInput}
-                    onChange={(e) => setPhoneInput(e.target.value)}
-                    placeholder="5511987654321"
-                    className="mt-1 w-full p-2.5 bg-white border border-neutral-300 rounded-lg font-mono text-neutral-900"
-                  />
-                  <span className="text-[10px] text-neutral-500 mt-1 block">
-                    Formato: Código do país (55) + DDD (11) + 9 dígitos.
+                  <div className="mt-1 flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={phoneInput}
+                      onChange={(e) => setPhoneInput(e.target.value)}
+                      onBlur={() => setPhoneInput(normalizeBrPhone(phoneInput))}
+                      placeholder="5591981214188"
+                      className="w-full p-2.5 bg-white border border-neutral-300 rounded-lg font-mono text-neutral-900"
+                    />
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={() => {
+                        const norm = normalizeBrPhone(phoneInput);
+                        setPhoneInput(norm);
+                        fetchQrCode(true, norm);
+                      }}
+                      className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg whitespace-nowrap cursor-pointer disabled:opacity-50"
+                    >
+                      {loading ? 'Gerando...' : 'Gerar Código Real'}
+                    </button>
+                  </div>
+                  <span className="text-[10px] text-emerald-700 font-semibold mt-1 block">
+                    Formato Brasil automático: <strong>+{normalizeBrPhone(phoneInput)}</strong> (Ex: 55 + 91 + 981214188)
                   </span>
                 </div>
 
@@ -661,7 +694,7 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
                   className="w-full py-2 px-3 text-xs font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors flex items-center justify-center gap-2"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Confirmar Pareamento deste Número</span>
+                  <span>Confirmar / Simular Pareamento deste Número</span>
                 </button>
               </div>
             </div>

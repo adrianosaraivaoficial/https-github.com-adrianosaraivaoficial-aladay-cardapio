@@ -113,6 +113,15 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
 
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
 
+  const normalizeBrPhone = useCallback((raw?: string) => {
+    const digits = String(raw || '').replace(/\D/g, '').replace(/^0+/, '');
+    if (!digits) return '5591981214188';
+    if (digits.length === 10 || digits.length === 11) {
+      return `55${digits}`;
+    }
+    return digits;
+  }, []);
+
   // On-Screen QR Code Pairing State
   const [embeddedQrData, setEmbeddedQrData] = useState<EvolutionQrConnectResponse | null>(null);
   const [embeddedQrSeconds, setEmbeddedQrSeconds] = useState(40);
@@ -120,9 +129,16 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const [copiedEmbeddedCode, setCopiedEmbeddedCode] = useState(false);
   const [isSimulatingEmbeddedScan, setIsSimulatingEmbeddedScan] = useState(false);
   const [isDisconnectingEmbedded, setIsDisconnectingEmbedded] = useState(false);
-  const [embeddedPhoneInput, setEmbeddedPhoneInput] = useState(tenant.phone || '5511987654321');
+  const [embeddedPhoneInput, setEmbeddedPhoneInput] = useState(() => normalizeBrPhone(tenant.phone || '5591981214188'));
   const [embeddedPairingMode, setEmbeddedPairingMode] = useState<'qr' | 'code'>('qr');
   const [embeddedErrorNotice, setEmbeddedErrorNotice] = useState<string | null>(null);
+  const [inlineGlobalApiKey, setInlineGlobalApiKey] = useState(tenant.evolutionApiKey || '');
+
+  useEffect(() => {
+    if (tenant.phone) {
+      setEmbeddedPhoneInput(normalizeBrPhone(tenant.phone));
+    }
+  }, [tenant.phone, normalizeBrPhone]);
 
   // EasyPanel PostgreSQL Database Configurator State (Super Admin)
   const [epProjectName, setEpProjectName] = useState('agencia');
@@ -237,32 +253,79 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
 
   const qrTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const fetchEmbeddedQr = useCallback(async (force = false) => {
-    if (tenant.evolutionStatus === 'connected' && !force) return;
-    setLoadingEmbeddedQr(true);
-    setEmbeddedErrorNotice(null);
-    try {
-      const res = await fetch(`/api/v1/evolution/instance/${tenant.evolutionInstanceId || 'aladay'}/connect`);
-      if (res.ok) {
-        const data: EvolutionQrConnectResponse = await res.json();
-        setEmbeddedQrData(data);
-        setEmbeddedQrSeconds(data.expiresInSeconds || 40);
-      } else {
-        setEmbeddedErrorNotice('Não foi possível carregar o QR Code no momento.');
+  const fetchEmbeddedQr = useCallback(
+    async (force = false, overridePhone?: string, overrideApiKey?: string) => {
+      if (tenant.evolutionStatus === 'connected' && !force) return;
+      setLoadingEmbeddedQr(true);
+      setEmbeddedErrorNotice(null);
+      try {
+        const phoneToUse = normalizeBrPhone(overridePhone ?? embeddedPhoneInput ?? tenant.phone);
+        const params = new URLSearchParams();
+        if (phoneToUse) params.set('number', phoneToUse);
+        if (overrideApiKey && overrideApiKey.trim()) params.set('apiKey', overrideApiKey.trim());
+
+        const instanceId = tenant.evolutionInstanceId || `instancia_${tenant.slug}`;
+        const res = await fetch(
+          `/api/v1/evolution/instance/${encodeURIComponent(instanceId)}/connect?${params.toString()}`
+        );
+        if (res.ok) {
+          const data: EvolutionQrConnectResponse = await res.json();
+          setEmbeddedQrData(data);
+          setEmbeddedQrSeconds(data.expiresInSeconds || 40);
+          if (data.state === 'open' && tenant.evolutionStatus !== 'connected') {
+            onUpdateTenant({
+              ...tenant,
+              evolutionStatus: 'connected',
+              phone: data.connectedPhone || phoneToUse || tenant.phone,
+            });
+            setSaveNotice('WhatsApp conectado com sucesso na Evolution API!');
+            setTimeout(() => setSaveNotice(null), 4000);
+          }
+        } else {
+          setEmbeddedErrorNotice('Não foi possível carregar o QR Code no momento.');
+        }
+      } catch {
+        setEmbeddedErrorNotice('Erro ao buscar QR Code da Evolution API.');
+      } finally {
+        setLoadingEmbeddedQr(false);
       }
-    } catch {
-      setEmbeddedErrorNotice('Erro ao buscar QR Code da Evolution API.');
-    } finally {
-      setLoadingEmbeddedQr(false);
-    }
-  }, [tenant.evolutionInstanceId, tenant.evolutionStatus]);
+    },
+    [tenant, embeddedPhoneInput, normalizeBrPhone, onUpdateTenant]
+  );
 
   // Load QR code when subTab is qrcode_pairing
   useEffect(() => {
     if (subTab === 'qrcode_pairing') {
-      fetchEmbeddedQr();
+      fetchEmbeddedQr(true);
     }
-  }, [subTab, fetchEmbeddedQr]);
+  }, [subTab, tenant.slug]);
+
+  // Poll real-time status from Evolution API every 3.5s while on qrcode_pairing tab
+  useEffect(() => {
+    if (subTab !== 'qrcode_pairing') return;
+    const instanceId = tenant.evolutionInstanceId || `instancia_${tenant.slug}`;
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/v1/evolution/instance/${encodeURIComponent(instanceId)}/status`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.state === 'open' && tenant.evolutionStatus !== 'connected') {
+            onUpdateTenant({
+              ...tenant,
+              evolutionStatus: 'connected',
+              phone: data.connectedPhone || normalizeBrPhone(embeddedPhoneInput || tenant.phone),
+            });
+            setSaveNotice(`WhatsApp pareado e conectado com sucesso (+${data.connectedPhone || normalizeBrPhone(tenant.phone)})!`);
+            setTimeout(() => setSaveNotice(null), 4500);
+          }
+        }
+      } catch {
+        // Ignore transient status poll error
+      }
+    }, 3500);
+
+    return () => clearInterval(poll);
+  }, [subTab, tenant, embeddedPhoneInput, normalizeBrPhone, onUpdateTenant]);
 
   // Countdown timer for QR refresh
   useEffect(() => {
@@ -286,11 +349,13 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const handleEmbeddedSimulateScan = async () => {
     setIsSimulatingEmbeddedScan(true);
     try {
+      const normalized = normalizeBrPhone(embeddedPhoneInput || tenant.phone || '5591981214188');
+      setEmbeddedPhoneInput(normalized);
       const res = await fetch(`/api/v1/evolution/instance/${tenant.evolutionInstanceId || 'aladay'}/simulate-scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone: embeddedPhoneInput || tenant.phone || '5511987654321',
+          phone: normalized,
           profileName: `${tenant.name} Atendimento`,
         }),
       });
@@ -299,10 +364,10 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
         const updated: RestaurantTenant = {
           ...tenant,
           evolutionStatus: 'connected',
-          phone: data.connectedPhone || tenant.phone,
+          phone: data.connectedPhone || normalized,
         };
         onUpdateTenant(updated);
-        setSaveNotice(`WhatsApp pareado com sucesso no número +${data.connectedPhone}!`);
+        setSaveNotice(`WhatsApp pareado com sucesso no número +${data.connectedPhone || normalized}!`);
         setTimeout(() => setSaveNotice(null), 4000);
       }
     } catch {
@@ -325,7 +390,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
           evolutionStatus: 'disconnected',
         };
         onUpdateTenant(updated);
-        setSaveNotice('Instância desconectada. Pronto para novo pareamento via QR Code.');
+        setSaveNotice('Instância desconectada. Pronto para novo pareamento via QR Code ou Código de 8 Dígitos.');
         setTimeout(() => setSaveNotice(null), 4000);
         fetchEmbeddedQr(true);
       }
@@ -476,26 +541,16 @@ REGRAS DE ATENDIMENTO NO WHATSAPP:
 - Se o cliente pedir para falar com um atendente humano ou digitar "2", encaminhe imediatamente para o WhatsApp oficial: https://wa.me/559131976334 (+55 91 3197-6334).
 - Sempre finalize com uma pergunta engajadora convidando para criar a conta em: ${appOriginUrl}`;
 
-  const defaultRestaurantSystemPrompt = `Você é o Assistente Virtual Oficial de Atendimento e Cardápio Digital do restaurante *${tenant.name}*.
-Seu objetivo é atender os clientes do restaurante no WhatsApp com simpatia, rapidez e precisão, respondendo dúvidas sobre o cardápio e direcionando o cliente para fechar o pedido no link oficial.
-
-DADOS OFICIAIS DO RESTAURANTE:
-- Nome do Restaurante: *${tenant.name}*
-- Status Atual na Barra Superior: *${tenant.isOpen ? '🟢 ABERTO AGORA (Recebendo Pedidos)' : '🔴 FECHADO NO MOMENTO'}*
-- Horário de Funcionamento: *${tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45'}*
-- Taxa de Entrega Padrão: *${(tenant.deliveryFeeCents || 0) === 0 ? 'Grátis (R$ 0,00)' : `R$ ${((tenant.deliveryFeeCents || 0) / 100).toFixed(2).replace('.', ',')}`}*
-- Pedido Mínimo: *R$ ${((tenant.minOrderCents || 0) / 100).toFixed(2).replace('.', ',')}*
-- Link Direto Oficial do Cardápio Digital (Delivery e Retirada): ${appOriginUrl}/?loja=${tenant.slug}
-- Link Direto para Pedido na Mesa (QR Code Salão): ${appOriginUrl}/?loja=${tenant.slug}&mesa=01
+  const defaultRestaurantSystemPrompt = `Você é o Assistente Virtual Oficial de Atendimento e Cardápio Digital do restaurante identificado no contexto em tempo real abaixo (ex: *${tenant.name}*).
+Este workflow no n8n é MULTI-TENANT (Único para todos os restaurantes da plataforma): você identifica automaticamente qual restaurante recebeu a mensagem através dos dados em "CONTEXTO EM TEMPO REAL DA LOJA" e responde exclusivamente em nome daquele restaurante.
 
 REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
-1. ENVIO DO LINK DO CARDÁPIO DIGITAL: Em toda saudação ("Oi", "Boa noite", "Quero pedir", "Manda o cardápio") ou dúvida sobre produtos, SEMPRE envie em destaque o link direto do Cardápio Digital oficial do restaurante:
-👉 ${appOriginUrl}/?loja=${tenant.slug}
-2. CONSULTA EM TEMPO REAL AO CATÁLOGO E HORÁRIO: Utilize os dados vivos do restaurante (ou acione a ferramenta HTTP "consultar_cardapio_e_loja" em ${appOriginUrl}/api/v1/n8n/agent-context/${tenant.slug}) para informar se a loja está ABERTA ou FECHADA agora, o horário configurado na barra superior, os itens disponíveis por categoria e seus preços exatos.
-3. PROIBIDO INVENTAR PRODUTOS OU PREÇOS: Responda apenas com os produtos e valores reais cadastrados no cardápio de *${tenant.name}*.
+1. IDENTIDADE E LINK DIRETO DA LOJA: Cumprimente o cliente pelo nome, fale sempre em nome do restaurante indicado em "CONTEXTO EM TEMPO REAL DA LOJA" e SEMPRE envie em destaque o "Link Direto do Cardápio Digital" daquela loja (ex: ${appOriginUrl}/?loja=${tenant.slug}).
+2. STATUS E HORÁRIO DA BARRA SUPERIOR: Informe sempre o "Status Atual" (🟢 ABERTO AGORA ou 🔴 FECHADO NO MOMENTO) e o "Horário Configurado na Barra Superior" exatamente como constam no contexto em tempo real da loja.
+3. PROIBIDO INVENTAR PRODUTOS OU PREÇOS: Responda apenas com os produtos, categorias e valores reais listados em "PRODUTOS E PREÇOS DISPONÍVEIS NO CARDÁPIO" daquele restaurante.
 4. MODALIDADES E PAGAMENTO: Explique que pelo link do Cardápio Digital o cliente pode escolher *Delivery (Entrega)*, *Retirada no Balcão* ou *Pedido na Mesa*, pagando via *Pix Automático na Hora (QR Code / Copia e Cola)*, *Cartão* ou *Dinheiro (com troco)*.
-5. STATUS DE PEDIDOS NA COZINHA: Se o cliente perguntar sobre um pedido em andamento ("Onde está meu pedido?", "Já saiu?"), acione a ferramenta HTTP "consultar_status_pedido" passando o WhatsApp do cliente.
-6. ATENDENTE HUMANO (OPÇÃO 2): Se o cliente digitar "2" ou pedir para falar com um atendente humano, informe que o atendimento automático foi pausado e que um atendente da equipe do *${tenant.name}* vai atendê-lo em instantes.`;
+5. STATUS DE PEDIDOS NA COZINHA: Se o cliente perguntar sobre um pedido em andamento ("Onde está meu pedido?", "Já saiu?"), utilize os dados de "PEDIDOS RECENTES DESTE CLIENTE" ou acione a ferramenta HTTP "consultar_status_pedido".
+6. ATENDENTE HUMANO (OPÇÃO 2): Se o cliente digitar "2" ou pedir para falar com um atendente humano, informe que o atendimento automático foi pausado e que um atendente da equipe do restaurante vai atendê-lo em instantes.`;
 
   const [agentSystemPrompt, setAgentSystemPrompt] = useState<string>(defaultRestaurantSystemPrompt);
 
@@ -528,7 +583,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
   const [isSendingTestWebhook, setIsSendingTestWebhook] = useState(false);
   const [testWebhookResult, setTestWebhookResult] = useState<any>(null);
 
-  // Build the dynamic n8n Workflow JSON according to the selected mode (AI Agent Restaurant, Deterministic Restaurant, or AI Agent SDR)
+  // Build the dynamic n8n Workflow JSON according to the selected mode (Single Multi-Tenant Workflow for all restaurants)
   const n8nWorkflowJSON = React.useMemo(() => {
     const cleanEvoUrl = (evolutionUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host').replace(/\/$/, '');
     const cleanInstance = tenant.evolutionInstanceId || 'aladay';
@@ -537,7 +592,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
     if (n8nAgentMode === 'deterministico') {
       return JSON.stringify(
         {
-          name: `${tenant.name} - Auto-Resposta Inteligente Cardapio Digital [${cleanInstance}]`,
+          name: `Aladay Multi-Tenant - Auto-Resposta Cardapio Digital (Todos os Restaurantes)`,
           nodes: [
             {
               parameters: {
@@ -556,7 +611,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
             },
             {
               parameters: {
-                jsCode: `// =========================================================================\n// 1. Sanitizador & Filtro Anti-Loop Evolution API v2 (${tenant.name})\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // Ignorar mensagens de grupos e status/canais\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/') ||\n                      String(body.destination || '').includes('/webhook-test/');\n\n  // Ignorar mensagens enviadas pelo proprio restaurante (fromMe)\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    ''\n  ).trim();\n\n  if (!messageText) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  const instance = body.instance || '${cleanInstance}';\n\n  results.push({\n    json: {\n      tenantSlug: '${tenant.slug}',\n      customerPhone,\n      customerName,\n      messageText,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n    },\n  });\n}\n\nreturn results;`,
+                jsCode: `// =========================================================================\n// 1. Roteador Multi-Tenant & Anti-Loop Evolution API v2 (Todos os Restaurantes)\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // Ignorar mensagens de grupos e status/canais\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/') ||\n                      String(body.destination || '').includes('/webhook-test/');\n\n  // Ignorar mensagens enviadas pelo proprio restaurante (fromMe)\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    ''\n  ).trim();\n\n  if (!messageText) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  // Identifica automaticamente qual restaurante recebeu a mensagem pela instancia da Evolution API\n  const instance = body.instance || '${cleanInstance}';\n  const dynamicSlug = String(instance).replace(/^instancia_/i, '').replace(/_/g, '-');\n\n  results.push({\n    json: {\n      tenantSlug: dynamicSlug || '${tenant.slug}',\n      customerPhone,\n      customerName,\n      messageText,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n    },\n  });\n}\n\nreturn results;`,
               },
               id: 'node-code-process',
               name: 'Tratar Payload Evolution API',
@@ -627,7 +682,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
       );
     }
 
-    // AI Agent Workflow (LangChain n8n Agent + Chat Model + Window Buffer Memory + Live Catalog Context + HTTP Tools + Evolution API v2)
+    // AI Agent Workflow (Single Multi-Tenant LangChain n8n Agent + Chat Model + Window Buffer Memory + Live Catalog Context + HTTP Tools)
     const llmNode =
       n8nLlmProvider === 'gemini'
         ? {
@@ -677,12 +732,12 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
             parameters: {
               name: 'consultar_cardapio_e_loja',
               description:
-                'Consulta em tempo real se o restaurante está aberto, horário de funcionamento na barra superior, lista completa de produtos disponíveis no cardápio com preços, suporte a QR Code de Mesa, taxa de entrega e link direto do cardápio digital.',
+                'Consulta dinamicamente em tempo real os dados do restaurante que recebeu a mensagem (pela instância da Evolution API), incluindo se está aberto, horário na barra superior, produtos com preços, taxa de entrega e link direto do cardápio digital.',
               method: 'GET',
-              url: `=${appOriginUrl}/api/v1/n8n/agent-context/${tenant.slug}?instance={{ $("Tratar Payload & Anti-Loop").item.json.instance }}&phone={{ $("Tratar Payload & Anti-Loop").item.json.customerPhone }}`,
+              url: `=${appOriginUrl}/api/v1/n8n/agent-context?instance={{ $("Tratar Payload & Anti-Loop").item.json.instance }}&slug={{ $("Tratar Payload & Anti-Loop").item.json.tenantSlug }}&phone={{ $("Tratar Payload & Anti-Loop").item.json.customerPhone }}`,
             },
             id: 'node-http-tool-catalog',
-            name: 'Tool: Consultar Cardápio ao Vivo',
+            name: 'Tool: Consultar Cardápio ao Vivo (Multi-Tenant)',
             type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
             typeVersion: 1.1,
             position: [960, 560],
@@ -693,9 +748,9 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
         ? {
             parameters: {
               name: 'consultar_status_pedido',
-              description: 'Consulta o status em tempo real dos pedidos recentes do cliente na cozinha pelo número de WhatsApp.',
+              description: 'Consulta o status em tempo real dos pedidos recentes do cliente na cozinha daquele restaurante pelo número de WhatsApp.',
               method: 'GET',
-              url: `=${appOriginUrl}/api/v1/n8n/order-status?phone={{ $("Tratar Payload & Anti-Loop").item.json.customerPhone }}&tenantSlug=${tenant.slug}`,
+              url: `=${appOriginUrl}/api/v1/n8n/order-status?phone={{ $("Tratar Payload & Anti-Loop").item.json.customerPhone }}&tenantSlug={{ $("Carregar Cardápio e Horário ao Vivo").item.json.restaurant.slug }}`,
             },
             id: 'node-http-tool-orders',
             name: 'Tool: Consultar Status do Pedido',
@@ -710,7 +765,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
         ? {
             parameters: {
               method: 'GET',
-              url: `=${appOriginUrl}/api/v1/n8n/agent-context/${tenant.slug}?instance={{ $json.instance }}&phone={{ $json.customerPhone }}`,
+              url: `=${appOriginUrl}/api/v1/n8n/agent-context?instance={{ $json.instance }}&slug={{ $json.tenantSlug }}&phone={{ $json.customerPhone }}`,
               options: {},
             },
             id: 'node-preload-catalog-context',
@@ -729,7 +784,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
     const agentNodeName =
       n8nAgentMode === 'sdr_aladay'
         ? 'Agente IA Comercial Aladay (SDR)'
-        : `Agente IA Cardápio Digital (${tenant.name})`;
+        : 'Agente IA Cardápio Digital (Multi-Restaurantes)';
 
     const nodesList: any[] = [
       {
@@ -749,7 +804,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
       },
       {
         parameters: {
-          jsCode: `// =========================================================================\n// Sanitizador & Filtro Anti-Loop Evolution API v2 -> Agente de IA n8n\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // 1. Ignorar grupos e canais\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  // 2. Ignorar mensagens enviadas pelo proprio bot (fromMe), exceto em Teste no n8n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/');\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    ''\n  ).trim();\n\n  if (!messageText) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  const instance = body.instance || '${cleanInstance}';\n\n  results.push({\n    json: {\n      tenantSlug: '${tenant.slug}',\n      customerPhone,\n      customerName,\n      messageText,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n      chatInput: \`Cliente (\${customerName} - WhatsApp \${customerPhone}): \${messageText}\`,\n    },\n  });\n}\n\nreturn results;`,
+          jsCode: `// =========================================================================\n// Roteador Multi-Tenant & Filtro Anti-Loop Evolution API v2 -> Agente IA n8n\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // 1. Ignorar grupos e canais\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  // 2. Ignorar mensagens enviadas pelo proprio bot (fromMe), exceto em Teste no n8n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/');\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    ''\n  ).trim();\n\n  if (!messageText) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  // Identifica automaticamente qual restaurante recebeu a mensagem pela instancia da Evolution API\n  const instance = body.instance || '${cleanInstance}';\n  const dynamicSlug = String(instance).replace(/^instancia_/i, '').replace(/_/g, '-');\n\n  results.push({\n    json: {\n      tenantSlug: dynamicSlug || '${tenant.slug}',\n      customerPhone,\n      customerName,\n      messageText,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n      chatInput: \`Cliente (\${customerName} - WhatsApp \${customerPhone}): \${messageText}\`,\n    },\n  });\n}\n\nreturn results;`,
         },
         id: 'node-code-sanitize',
         name: 'Tratar Payload & Anti-Loop',
@@ -776,7 +831,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
       {
         parameters: {
           sessionIdType: 'customKey',
-          sessionKey: '={{ $("Tratar Payload & Anti-Loop").item.json.customerPhone }}',
+          sessionKey: '={{ $("Tratar Payload & Anti-Loop").item.json.instance + "_" + $("Tratar Payload & Anti-Loop").item.json.customerPhone }}',
           contextWindowLength: n8nMemoryWindow,
         },
         id: 'node-memory-window',
@@ -1462,6 +1517,28 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                   </button>
                 </div>
 
+                {/* Status Badge: Real Evolution API vs Simulation */}
+                {embeddedQrData && (
+                  <div
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold border ${
+                      embeddedQrData.remoteFetched
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : 'bg-amber-50 border-amber-300 text-amber-900'
+                    }`}
+                  >
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        embeddedQrData.remoteFetched ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                      }`}
+                    />
+                    <span>
+                      {embeddedQrData.remoteFetched
+                        ? 'Conectado à Evolution API v2 (QR/Código Oficial)'
+                        : 'Instância Aguardando Criação na Evolution API'}
+                    </span>
+                  </div>
+                )}
+
                 {embeddedPairingMode === 'qr' ? (
                   <div className="space-y-3">
                     {/* The QR Container */}
@@ -1502,7 +1579,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                     </div>
 
                     {/* Expiration Bar & Countdown */}
-                    <div className="w-full max-w-[280px] space-y-1.5">
+                    <div className="w-full max-w-[280px] space-y-1.5 mx-auto">
                       <div className="flex items-center justify-between text-[11px] text-neutral-500">
                         <span className="flex items-center gap-1 font-medium">
                           <RefreshCw className="w-3 h-3 animate-spin text-neutral-400" />
@@ -1510,7 +1587,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                         </span>
                         <button
                           type="button"
-                          onClick={() => fetchEmbeddedQr(true)}
+                          onClick={() => fetchEmbeddedQr(true, embeddedPhoneInput, inlineGlobalApiKey)}
                           className="text-emerald-700 hover:text-emerald-900 font-bold hover:underline cursor-pointer"
                         >
                           Atualizar agora
@@ -1527,30 +1604,124 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                   </div>
                 ) : (
                   /* 8 Digits Pairing Code Card */
-                  <div className="w-full max-w-[320px] p-6 bg-neutral-900 text-white rounded-2xl text-center space-y-4">
+                  <div className="w-full max-w-[340px] p-5 bg-neutral-900 text-white rounded-2xl text-center space-y-4">
                     <span className="text-[10px] uppercase font-bold text-neutral-400 tracking-wider block">
-                      Código de Pareamento
+                      Código de Pareamento WhatsApp (8 Dígitos)
                     </span>
+
+                    {/* Phone Input with Automatic Brazil DDI 55 */}
+                    <div className="text-left space-y-1.5 bg-neutral-800/70 p-3 rounded-xl border border-neutral-700">
+                      <label className="text-[11px] font-bold text-neutral-200 block">
+                        Número do WhatsApp (com DDI 55 + DDD):
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={embeddedPhoneInput}
+                          onChange={(e) => setEmbeddedPhoneInput(e.target.value)}
+                          onBlur={() => setEmbeddedPhoneInput(normalizeBrPhone(embeddedPhoneInput))}
+                          placeholder="5591981214188"
+                          className="w-full p-2 bg-neutral-900 border border-neutral-600 rounded-lg text-xs font-mono text-white"
+                        />
+                        <button
+                          type="button"
+                          disabled={loadingEmbeddedQr}
+                          onClick={() => {
+                            const norm = normalizeBrPhone(embeddedPhoneInput);
+                            setEmbeddedPhoneInput(norm);
+                            fetchEmbeddedQr(true, norm, inlineGlobalApiKey);
+                          }}
+                          className="px-3 py-2 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded-lg text-xs whitespace-nowrap cursor-pointer disabled:opacity-50"
+                        >
+                          {loadingEmbeddedQr ? 'Gerando...' : 'Gerar Código'}
+                        </button>
+                      </div>
+                      <span className="text-[10px] text-emerald-400 block">
+                        Formato automático Brasil: <strong>+{normalizeBrPhone(embeddedPhoneInput)}</strong> (Ex: 55 + 91 + 981214188)
+                      </span>
+                    </div>
+
                     <div className="py-2.5 px-4 bg-neutral-800/80 border border-neutral-700 rounded-xl inline-flex items-center gap-3">
                       <span className="font-mono text-2xl font-bold tracking-widest text-emerald-400">
-                        {embeddedQrData?.pairingCode || 'ALAD-8492'}
+                        {embeddedQrData?.pairingCode || 'Clique em Gerar'}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(embeddedQrData?.pairingCode || 'ALAD-8492');
-                          setCopiedEmbeddedCode(true);
-                          setTimeout(() => setCopiedEmbeddedCode(false), 2500);
-                        }}
-                        className="p-1 text-neutral-400 hover:text-white rounded"
-                        title="Copiar código"
-                      >
-                        {copiedEmbeddedCode ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                      </button>
+                      {embeddedQrData?.pairingCode && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(
+                              String(embeddedQrData?.pairingCode || '').replace(/[^A-Z0-9]/gi, '')
+                            );
+                            setCopiedEmbeddedCode(true);
+                            setTimeout(() => setCopiedEmbeddedCode(false), 2500);
+                          }}
+                          className="p-1 text-neutral-400 hover:text-white rounded cursor-pointer"
+                          title="Copiar código"
+                        >
+                          {copiedEmbeddedCode ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                        </button>
+                      )}
                     </div>
-                    <p className="text-[11px] text-neutral-400">
-                      No WhatsApp, em <strong>Aparelhos conectados</strong>, toque em <strong>Conectar com número de telefone</strong> e digite o código acima.
+                    <p className="text-[11px] text-neutral-400 leading-relaxed">
+                      No WhatsApp do celular <strong>+{normalizeBrPhone(embeddedPhoneInput)}</strong>, vá em{' '}
+                      <strong>Aparelhos conectados &rarr; Conectar com número de telefone</strong> e digite o código acima.
                     </p>
+                  </div>
+                )}
+
+                {/* Diagnostic Box if Instance Needs Global API Key on Evolution API */}
+                {embeddedQrData && !embeddedQrData.remoteFetched && (
+                  <div className="w-full max-w-[350px] p-3.5 bg-amber-50 border border-amber-300 rounded-xl text-left space-y-2.5 text-xs text-amber-950">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="font-bold text-amber-950">
+                          Por que o celular não leu o QR Code / Código?
+                        </p>
+                        <p className="text-[11px] text-amber-900 leading-relaxed">
+                          {embeddedQrData.remoteErrorMessage ||
+                            `A instância "${tenant.evolutionInstanceId}" ainda não foi criada na Evolution API.`}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="pt-1 space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-amber-900 block">
+                        Global API Key (AUTHENTICATION_API_KEY do EasyPanel) ou Token da Instância:
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={inlineGlobalApiKey}
+                          onChange={(e) => setInlineGlobalApiKey(e.target.value)}
+                          placeholder="Cole a AUTHENTICATION_API_KEY do EasyPanel"
+                          className="w-full p-2 bg-white border border-amber-300 rounded-lg text-[11px] font-mono text-neutral-900"
+                        />
+                        <button
+                          type="button"
+                          disabled={loadingEmbeddedQr}
+                          onClick={async () => {
+                            const normPhone = normalizeBrPhone(embeddedPhoneInput);
+                            setEmbeddedPhoneInput(normPhone);
+                            if (inlineGlobalApiKey.trim()) {
+                              setEvolutionApiKey(inlineGlobalApiKey.trim());
+                              await fetch(`/api/v1/tenants/${tenant.slug}/evolution-config`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  evolutionApiKey: inlineGlobalApiKey.trim(),
+                                  phone: normPhone,
+                                }),
+                              }).catch(() => {});
+                            }
+                            fetchEmbeddedQr(true, normPhone, inlineGlobalApiKey.trim());
+                          }}
+                          className="px-3 py-2 bg-amber-900 hover:bg-amber-950 text-white font-bold rounded-lg text-[11px] whitespace-nowrap cursor-pointer"
+                        >
+                          Criar &amp; Gerar Real
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
 

@@ -643,18 +643,24 @@ async function startServer() {
       return res.status(409).json({ error: `O slug "${cleanSlug}" já está em uso por outro restaurante.` });
     }
 
+    const rawPhoneDigits = String(phone).replace(/\D/g, '').replace(/^0+/, '');
+    const normalizedPhone =
+      rawPhoneDigits.length === 10 || rawPhoneDigits.length === 11
+        ? `55${rawPhoneDigits}`
+        : rawPhoneDigits;
+
     const newTenant: InMemTenant = {
       id: `tenant_${Date.now()}`,
       name: String(name).trim(),
       slug: cleanSlug,
-      phone: String(phone).replace(/\D/g, ''),
+      phone: normalizedPhone,
       address: address ? String(address).trim() : 'Endereço a configurar',
       primaryColor: primaryColor || '#EA580C',
       isOpen: true,
       deliveryFeeCents: 700,
       minOrderCents: 2000,
       evolutionInstanceId: `instancia_${cleanSlug}`,
-      evolutionStatus: 'connected',
+      evolutionStatus: 'disconnected',
     };
 
     memoryTenants.push(newTenant);
@@ -2519,25 +2525,34 @@ async function startServer() {
     });
   });
 
-  // Helper to resolve tenant by slug or Evolution API instance name
+  // Helper to resolve tenant dynamically by Evolution API instance name (Multi-Tenant Priority) or slug
   const resolveTenantForAgent = (slugOrInstance?: string, fallbackInstance?: string) => {
-    const rawCandidate = String(slugOrInstance || fallbackInstance || '').trim().toLowerCase();
-    const strippedCandidate = rawCandidate.replace(/^instancia_/, '');
-    const hyphenCandidate = strippedCandidate.replace(/_/g, '-');
-
-    const matched =
-      memoryTenants.find((t) => t.slug.toLowerCase() === rawCandidate) ||
-      memoryTenants.find((t) => t.slug.toLowerCase() === strippedCandidate) ||
-      memoryTenants.find((t) => t.slug.toLowerCase() === hyphenCandidate) ||
-      memoryTenants.find((t) => String(t.evolutionInstanceId || '').toLowerCase() === rawCandidate) ||
-      memoryTenants.find(
-        (t) =>
-          fallbackInstance &&
-          (String(t.evolutionInstanceId || '').toLowerCase() === String(fallbackInstance).toLowerCase() ||
-            t.slug.toLowerCase() === String(fallbackInstance).toLowerCase().replace(/^instancia_/, '').replace(/_/g, '-'))
+    const findByCandidate = (candidateRaw?: string) => {
+      const clean = String(candidateRaw || '').trim().toLowerCase();
+      if (!clean) return undefined;
+      const stripped = clean.replace(/^instancia_/, '');
+      const hyphenated = stripped.replace(/_/g, '-');
+      return (
+        memoryTenants.find((t) => String(t.evolutionInstanceId || '').toLowerCase() === clean) ||
+        memoryTenants.find((t) => t.slug.toLowerCase() === clean) ||
+        memoryTenants.find((t) => t.slug.toLowerCase() === stripped) ||
+        memoryTenants.find((t) => t.slug.toLowerCase() === hyphenated)
       );
+    };
 
-    return matched || memoryTenants[0];
+    // 1. Prioritize the live Evolution API instance that received the WhatsApp message
+    if (fallbackInstance) {
+      const byInstance = findByCandidate(fallbackInstance);
+      if (byInstance) return byInstance;
+    }
+
+    // 2. Otherwise resolve by slugOrInstance parameter
+    if (slugOrInstance) {
+      const bySlug = findByCandidate(slugOrInstance);
+      if (bySlug) return bySlug;
+    }
+
+    return memoryTenants[0];
   };
 
   // Helper to build full catalog context and formatted text for a restaurant
@@ -3801,18 +3816,23 @@ async function startServer() {
 
       // Ensure tenant exists in memoryTenants
       if (!memoryTenants.some((t) => t.slug === fallbackSlug)) {
+        const rawPhoneDigits = String(user.phone || '').replace(/\D/g, '').replace(/^0+/, '');
+        const normalizedPhone =
+          rawPhoneDigits.length === 10 || rawPhoneDigits.length === 11
+            ? `55${rawPhoneDigits}`
+            : rawPhoneDigits;
         memoryTenants.push({
           id: user.tenantId,
           name: fallbackTenantName,
           slug: fallbackSlug,
-          phone: user.phone || '',
+          phone: normalizedPhone,
           address: clientTenant?.address || '',
           primaryColor: clientTenant?.primaryColor || '#2563EB',
           isOpen: true,
           deliveryFeeCents: clientTenant?.deliveryFeeCents || 0,
           minOrderCents: clientTenant?.minOrderCents || 0,
           evolutionInstanceId: `instancia_${fallbackSlug}`,
-          evolutionStatus: 'connected',
+          evolutionStatus: 'disconnected',
           subscriptionStatus: 'active',
         });
       }
@@ -4299,6 +4319,29 @@ async function startServer() {
     serverUrl?: string;
   }
 
+  let runtimeGlobalEvolutionApiKey =
+    process.env.EVOLUTION_API_KEY || '21C3D49F3F00-48FA-BFA2-2CD290850405';
+
+  // Normalizes Brazilian phone numbers so 10 or 11 digits (e.g. 91981214188) always get DDI 55 (5591981214188).
+  // Without 55, DDD 91 (Pará) is misinterpreted by WhatsApp Baileys as country code +91 (India).
+  const normalizeBrazilWhatsAppNumber = (rawPhone?: string): string => {
+    const digits = String(rawPhone || '').replace(/\D/g, '').replace(/^0+/, '');
+    if (!digits) return '';
+    if (digits.length === 10 || digits.length === 11) {
+      return `55${digits}`;
+    }
+    return digits;
+  };
+
+  const formatPairingCodeDisplay = (rawCode?: string | null): string | undefined => {
+    if (!rawCode) return undefined;
+    const clean = String(rawCode).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (clean.length === 8) {
+      return `${clean.slice(0, 4)}-${clean.slice(4)}`;
+    }
+    return String(rawCode).trim();
+  };
+
   const memoryEvolutionInstances: Record<string, InMemEvolutionInstance> = {
     aladay: {
       instanceName: 'aladay',
@@ -4308,14 +4351,38 @@ async function startServer() {
     },
   };
 
-  const getTenantEvolutionConfig = (instanceName: string) => {
-    const tenant = memoryTenants.find((t) => t.evolutionInstanceId === instanceName || t.slug === instanceName) || memoryTenants[0];
-    const apiUrl = (tenant as any)?.evolutionApiUrl || process.env.EVOLUTION_API_URL || 'https://agencia-evolution-api.2eoc7n.easypanel.host';
-    const apiKey = (tenant as any)?.evolutionApiKey || process.env.EVOLUTION_API_KEY || '';
-    return { tenant, apiUrl: apiUrl.replace(/\/$/, ''), apiKey };
+  const getTenantEvolutionConfig = (instanceName: string, overrideApiKey?: string, overrideApiUrl?: string) => {
+    const cleanTarget = String(instanceName || '').trim().toLowerCase();
+    const tenant =
+      memoryTenants.find(
+        (t) =>
+          String(t.evolutionInstanceId || '').toLowerCase() === cleanTarget ||
+          String(t.slug || '').toLowerCase() === cleanTarget ||
+          `instancia_${String(t.slug || '').toLowerCase()}` === cleanTarget
+      ) || memoryTenants[0];
+
+    if (overrideApiKey && overrideApiKey.trim()) {
+      runtimeGlobalEvolutionApiKey = overrideApiKey.trim();
+      if (tenant) (tenant as any).evolutionApiKey = overrideApiKey.trim();
+    }
+    if (overrideApiUrl && overrideApiUrl.trim() && tenant) {
+      (tenant as any).evolutionApiUrl = overrideApiUrl.trim();
+    }
+
+    const apiUrl =
+      overrideApiUrl?.trim() ||
+      (tenant as any)?.evolutionApiUrl ||
+      process.env.EVOLUTION_API_URL ||
+      'https://agencia-evolution-api.2eoc7n.easypanel.host';
+    const apiKey =
+      overrideApiKey?.trim() ||
+      (tenant as any)?.evolutionApiKey ||
+      runtimeGlobalEvolutionApiKey ||
+      '21C3D49F3F00-48FA-BFA2-2CD290850405';
+    return { tenant, apiUrl: apiUrl.replace(/\/$/, ''), apiKey: apiKey.trim() };
   };
 
-  // Helper to generate a realistic Baileys QR Code and Pairing Code
+  // Helper to generate a fallback local QR Code when Evolution API instance is not yet reachable
   const generateLocalQrAndPairingCode = async (instanceName: string) => {
     const inst = memoryEvolutionInstances[instanceName] || {
       instanceName,
@@ -4343,9 +4410,8 @@ async function startServer() {
       },
     });
 
-    // 8-character pairing code format (e.g. ALAD-7391)
     const randomDigits = Math.floor(1000 + Math.random() * 9000);
-    const pairingCode = `ALAD-${randomDigits}`;
+    const pairingCode = `DEMO-${randomDigits}`;
 
     inst.lastQrCode = qrString;
     inst.lastQrBase64 = qrBase64;
@@ -4380,9 +4446,9 @@ async function startServer() {
     if (!inst) {
       inst = {
         instanceName,
-        state: tenant.evolutionStatus === 'connected' ? 'open' : 'close',
-        connectedPhone: tenant.phone,
-        profileName: tenant.name,
+        state: tenant?.evolutionStatus === 'connected' ? 'open' : 'close',
+        connectedPhone: normalizeBrazilWhatsAppNumber(tenant?.phone),
+        profileName: tenant?.name,
         batteryLevel: 95,
         qrCount: 1,
       };
@@ -4391,12 +4457,13 @@ async function startServer() {
 
     let remoteChecked = false;
     let remoteState: string | null = null;
+    let remoteOwnerPhone: string | undefined;
 
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
+      const timeoutId = setTimeout(() => controller.abort(), 4500);
 
-      const response = await fetch(`${apiUrl}/instance/connectionState/${instanceName}`, {
+      const response = await fetch(`${apiUrl}/instance/connectionState/${encodeURIComponent(instanceName)}`, {
         method: 'GET',
         headers: { apikey: apiKey },
         signal: controller.signal,
@@ -4410,12 +4477,20 @@ async function startServer() {
         if (remoteState === 'open' || remoteState === 'close' || remoteState === 'connecting') {
           inst.state = remoteState as any;
           if (tenant) {
-            tenant.evolutionStatus = remoteState === 'open' ? 'connected' : remoteState === 'connecting' ? 'connecting' : 'disconnected';
+            tenant.evolutionStatus =
+              remoteState === 'open' ? 'connected' : remoteState === 'connecting' ? 'connecting' : 'disconnected';
           }
+        }
+      } else if (response.status === 404) {
+        remoteChecked = true;
+        remoteState = 'not_created';
+        // If remote instance does not exist yet and wasn't explicitly simulated in this session
+        if (!inst.connectedPhone && tenant && tenant.evolutionStatus === 'connected') {
+          tenant.evolutionStatus = 'disconnected';
+          inst.state = 'close';
         }
       }
     } catch {
-      // Remote unavailable; fallback to memory state
       remoteChecked = false;
     }
 
@@ -4423,8 +4498,8 @@ async function startServer() {
       success: true,
       instanceName,
       state: inst.state,
-      connectedPhone: inst.connectedPhone || tenant.phone,
-      profileName: inst.profileName || tenant.name,
+      connectedPhone: remoteOwnerPhone || inst.connectedPhone || normalizeBrazilWhatsAppNumber(tenant?.phone),
+      profileName: inst.profileName || tenant?.name,
       batteryLevel: inst.batteryLevel || 98,
       serverUrl: apiUrl,
       remoteChecked,
@@ -4433,69 +4508,219 @@ async function startServer() {
     });
   });
 
-  // GET or POST /api/v1/evolution/instance/:instanceName/connect (QR Code + Pairing Code)
+  // GET or POST /api/v1/evolution/instance/:instanceName/connect (Real QR Code + Real 8-Digit Pairing Code)
   const handleConnectInstance = async (req: Request, res: Response) => {
     const { instanceName } = req.params;
-    const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+    const queryOrBodyApiKey = String(req.query.apiKey || req.body?.apiKey || '').trim();
+    const queryOrBodyApiUrl = String(req.query.apiUrl || req.body?.apiUrl || '').trim();
+    const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName, queryOrBodyApiKey, queryOrBodyApiUrl);
 
-    let remoteFetched = false;
+    const rawPhoneInput = String(
+      req.query.number || req.body?.number || tenant?.phone || ''
+    ).trim();
+    const normalizedPhone = normalizeBrazilWhatsAppNumber(rawPhoneInput);
+    if (normalizedPhone && tenant) {
+      tenant.phone = normalizedPhone;
+    }
+
     let remoteResult: any = null;
+    let remoteErrorReason: string | undefined;
+    let remoteErrorMessage: string | undefined;
+
+    const extractQrAndPairing = (payload: any) => {
+      if (!payload) return null;
+      const qrObj = payload.qrcode || payload;
+      const base64 = qrObj?.base64 || payload?.base64;
+      const code = qrObj?.code || payload?.code;
+      const pairingCode = formatPairingCodeDisplay(
+        qrObj?.pairingCode || payload?.pairingCode || payload?.qrcode?.pairingCode
+      );
+      const state = payload?.instance?.state || payload?.state;
+      if (base64 || code || pairingCode || state === 'open') {
+        return {
+          base64,
+          code,
+          pairingCode,
+          count: qrObj?.count || payload?.count || 1,
+          state: state === 'open' ? 'open' : 'connecting',
+        };
+      }
+      return null;
+    };
 
     try {
+      const connectQuery = normalizedPhone ? `?number=${encodeURIComponent(normalizedPhone)}` : '';
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2800);
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      const response = await fetch(`${apiUrl}/instance/connect/${instanceName}`, {
+      let response = await fetch(`${apiUrl}/instance/connect/${encodeURIComponent(instanceName)}${connectQuery}`, {
         method: 'GET',
         headers: { apikey: apiKey },
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
 
-      if (response.ok) {
-        remoteResult = await response.json();
-        if (remoteResult && (remoteResult.base64 || remoteResult.code)) {
-          remoteFetched = true;
-          let inst = memoryEvolutionInstances[instanceName];
-          if (!inst) {
-            inst = { instanceName, state: 'connecting', qrCount: 1 };
-            memoryEvolutionInstances[instanceName] = inst;
-          }
-          inst.state = 'connecting';
-          inst.lastQrCode = remoteResult.code;
-          inst.lastQrBase64 = remoteResult.base64;
-          inst.pairingCode = remoteResult.pairingCode || `ALAD-${Math.floor(1000 + Math.random() * 9000)}`;
-          inst.qrGeneratedAt = Date.now();
-          if (tenant) tenant.evolutionStatus = 'connecting';
+      // If instance does not exist yet (404), auto-create it on Evolution API v2 and bind webhook
+      if (response.status === 404) {
+        const createCtrl = new AbortController();
+        const createTimeout = setTimeout(() => createCtrl.abort(), 9000);
+        const webhookUrlToBind =
+          (tenant as any)?.n8nWebhookUrl ||
+          process.env.N8N_WEBHOOK_URL ||
+          'https://agencia-n8n.2eoc7n.easypanel.host/webhook/whatsapp-webhook';
 
+        const createRes = await fetch(`${apiUrl}/instance/create`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: apiKey,
+          },
+          body: JSON.stringify({
+            instanceName,
+            qrcode: true,
+            number: normalizedPhone || undefined,
+            integration: 'WHATSAPP-BAILEYS',
+            webhook: {
+              url: webhookUrlToBind,
+              byEvents: false,
+              base64: false,
+              events: ['MESSAGES_UPSERT'],
+            },
+          }),
+          signal: createCtrl.signal,
+        });
+        clearTimeout(createTimeout);
+
+        if (createRes.ok) {
+          const createData = await createRes.json().catch(() => ({}));
+          remoteResult = extractQrAndPairing(createData);
+
+          // If pairingCode for normalizedPhone or base64 wasn't returned on create, call /instance/connect?number=...
+          if (!remoteResult || (normalizedPhone && !remoteResult.pairingCode) || !remoteResult.base64) {
+            await new Promise((r) => setTimeout(r, 700));
+            const retryCtrl = new AbortController();
+            const retryTimeout = setTimeout(() => retryCtrl.abort(), 7000);
+            const retryRes = await fetch(
+              `${apiUrl}/instance/connect/${encodeURIComponent(instanceName)}${connectQuery}`,
+              {
+                method: 'GET',
+                headers: { apikey: apiKey },
+                signal: retryCtrl.signal,
+              }
+            );
+            clearTimeout(retryTimeout);
+            if (retryRes.ok) {
+              const retryData = await retryRes.json().catch(() => ({}));
+              const extractedRetry = extractQrAndPairing(retryData);
+              if (extractedRetry) {
+                remoteResult = {
+                  ...remoteResult,
+                  ...extractedRetry,
+                  base64: extractedRetry.base64 || remoteResult?.base64,
+                  pairingCode: extractedRetry.pairingCode || remoteResult?.pairingCode,
+                };
+              }
+            }
+          }
+        } else if (createRes.status === 401 || createRes.status === 403) {
+          remoteErrorReason = 'GLOBAL_API_KEY_REQUIRED';
+          remoteErrorMessage = `A instância "${instanceName}" ainda não existe na Evolution API e a chave configurada (${apiKey.slice(0, 8)}...) é o Token individual da instância "aladay", sem permissão para criar novas instâncias. Informe a Global API Key (AUTHENTICATION_API_KEY do EasyPanel) abaixo para criar "${instanceName}" automaticamente, ou crie a instância "${instanceName}" no painel /manager da Evolution API.`;
+        } else {
+          const errText = await createRes.text().catch(() => '');
+          remoteErrorReason = 'CREATE_INSTANCE_FAILED';
+          remoteErrorMessage = `Não foi possível criar a instância "${instanceName}" na Evolution API (HTTP ${createRes.status}): ${errText.slice(0, 180)}`;
+        }
+      } else if (response.ok) {
+        const data = await response.json().catch(() => ({}));
+        remoteResult = extractQrAndPairing(data);
+      } else if (response.status === 401 || response.status === 403) {
+        remoteErrorReason = 'UNAUTHORIZED_API_KEY';
+        remoteErrorMessage = `A chave da Evolution API (${apiKey.slice(0, 8)}...) não tem permissão para acessar a instância "${instanceName}". Verifique a Global API Key (AUTHENTICATION_API_KEY).`;
+      } else {
+        remoteErrorReason = `HTTP_${response.status}`;
+        remoteErrorMessage = `A Evolution API respondeu com status HTTP ${response.status} ao conectar a instância "${instanceName}".`;
+      }
+
+      if (remoteResult) {
+        let inst = memoryEvolutionInstances[instanceName];
+        if (!inst) {
+          inst = { instanceName, state: remoteResult.state, qrCount: 1 };
+          memoryEvolutionInstances[instanceName] = inst;
+        }
+        inst.state = remoteResult.state;
+        inst.lastQrCode = remoteResult.code;
+        inst.lastQrBase64 = remoteResult.base64;
+        inst.pairingCode = remoteResult.pairingCode;
+        inst.qrGeneratedAt = Date.now();
+        if (tenant) {
+          tenant.evolutionStatus = remoteResult.state === 'open' ? 'connected' : 'connecting';
+        }
+
+        // If instance is already open on Evolution API, return connected state immediately
+        if (remoteResult.state === 'open') {
           return res.json({
             success: true,
             instanceName,
-            state: 'connecting',
-            count: remoteResult.count || 1,
-            code: remoteResult.code,
-            base64: remoteResult.base64?.startsWith('data:') ? remoteResult.base64 : `data:image/png;base64,${remoteResult.base64}`,
-            pairingCode: inst.pairingCode,
-            expiresInSeconds: 40,
+            state: 'open',
+            connectedPhone: normalizedPhone || tenant?.phone,
+            profileName: tenant?.name,
             remoteFetched: true,
+            normalizedPhone,
             serverUrl: apiUrl,
             serverTime: new Date().toISOString(),
           });
         }
+
+        // If Evolution API returned code string but no base64 image, render real QR image from Evolution's code
+        let finalBase64 = remoteResult.base64;
+        if (!finalBase64 && remoteResult.code) {
+          finalBase64 = await QRCode.toDataURL(remoteResult.code, {
+            width: 340,
+            margin: 2,
+            errorCorrectionLevel: 'M',
+          });
+        } else if (finalBase64 && !finalBase64.startsWith('data:')) {
+          finalBase64 = `data:image/png;base64,${finalBase64}`;
+        }
+
+        return res.json({
+          success: true,
+          instanceName,
+          state: 'connecting',
+          count: remoteResult.count || 1,
+          code: remoteResult.code,
+          base64: finalBase64,
+          pairingCode: remoteResult.pairingCode,
+          expiresInSeconds: 40,
+          remoteFetched: true,
+          normalizedPhone,
+          serverUrl: apiUrl,
+          serverTime: new Date().toISOString(),
+        });
       }
-    } catch {
-      // Remote connection failed or timed out, fallback to local high-fidelity generator
+    } catch (err: any) {
+      remoteErrorReason = remoteErrorReason || 'NETWORK_TIMEOUT';
+      remoteErrorMessage =
+        remoteErrorMessage ||
+        `Tempo limite ou falha de conexão com ${apiUrl} (${err?.message || 'Timeout'}).`;
     }
 
-    // Generate local QR Code with real PNG data URL
+    // Fallback local QR Code when Evolution API could not create/connect the remote instance
     const localPairing = await generateLocalQrAndPairingCode(instanceName);
-    if (tenant) tenant.evolutionStatus = 'connecting';
+    if (tenant && tenant.evolutionStatus !== 'connected') {
+      tenant.evolutionStatus = 'disconnected';
+    }
 
     res.json({
       ...localPairing,
       remoteFetched: false,
+      remoteErrorReason,
+      remoteErrorMessage,
+      normalizedPhone,
       serverUrl: apiUrl,
-      note: 'QR Code oficial gerado para pareamento em tela com Evolution API.',
+      note:
+        remoteErrorMessage ||
+        'Modo de simulação ativo: para conectar um celular real no WhatsApp, a instância precisa estar criada na Evolution API com a Global API Key.',
     });
   };
 
@@ -4508,7 +4733,7 @@ async function startServer() {
     const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
 
     try {
-      await fetch(`${apiUrl}/instance/logout/${instanceName}`, {
+      await fetch(`${apiUrl}/instance/logout/${encodeURIComponent(instanceName)}`, {
         method: 'DELETE',
         headers: { apikey: apiKey },
       });
@@ -4557,7 +4782,7 @@ async function startServer() {
     const { phone, profileName } = req.body;
     const { tenant } = getTenantEvolutionConfig(instanceName);
 
-    const pairedPhone = (phone || tenant?.phone || '').replace(/\D/g, '');
+    const pairedPhone = normalizeBrazilWhatsAppNumber(phone || tenant?.phone || '');
     const pairedProfile = profileName || tenant?.name || 'Restaurante Oficial';
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -4612,15 +4837,23 @@ async function startServer() {
 
   // POST /api/v1/evolution/instance/create
   app.post('/api/v1/evolution/instance/create', async (req: Request, res: Response) => {
-    const { instanceName, number } = req.body;
+    const { instanceName, number, apiKey: customApiKey, apiUrl: customApiUrl } = req.body;
     if (!instanceName) {
       return res.status(400).json({ error: 'Nome da instância é obrigatório.' });
     }
 
-    const { apiUrl, apiKey } = getTenantEvolutionConfig(instanceName);
+    const { tenant, apiUrl, apiKey } = getTenantEvolutionConfig(instanceName, customApiKey, customApiUrl);
+    const normalizedPhone = normalizeBrazilWhatsAppNumber(number || tenant?.phone || '');
+    const webhookUrlToBind =
+      (tenant as any)?.n8nWebhookUrl ||
+      process.env.N8N_WEBHOOK_URL ||
+      'https://agencia-n8n.2eoc7n.easypanel.host/webhook/whatsapp-webhook';
+
+    let remoteCreated = false;
+    let remoteError: string | undefined;
 
     try {
-      await fetch(`${apiUrl}/instance/create`, {
+      const createRes = await fetch(`${apiUrl}/instance/create`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -4628,14 +4861,25 @@ async function startServer() {
         },
         body: JSON.stringify({
           instanceName,
-          token: crypto.randomBytes(16).toString('hex'),
           qrcode: true,
-          number: number ? String(number).replace(/\D/g, '') : undefined,
+          number: normalizedPhone || undefined,
           integration: 'WHATSAPP-BAILEYS',
+          webhook: {
+            url: webhookUrlToBind,
+            byEvents: false,
+            base64: false,
+            events: ['MESSAGES_UPSERT'],
+          },
         }),
       });
-    } catch {
-      // Fallback local
+      if (createRes.ok) {
+        remoteCreated = true;
+      } else {
+        const errBody = await createRes.text().catch(() => '');
+        remoteError = `HTTP ${createRes.status}: ${errBody.slice(0, 160)}`;
+      }
+    } catch (e: any) {
+      remoteError = e?.message || 'Erro de rede';
     }
 
     const inst = {
@@ -4648,7 +4892,12 @@ async function startServer() {
 
     res.status(201).json({
       success: true,
-      message: `Instância "${instanceName}" criada com sucesso!`,
+      remoteCreated,
+      remoteError,
+      normalizedPhone,
+      message: remoteCreated
+        ? `Instância "${instanceName}" criada com sucesso na Evolution API!`
+        : `Instância "${instanceName}" registrada localmente (${remoteError || 'aguardando Global API Key'}).`,
       instance: inst,
     });
   });
@@ -4658,17 +4907,22 @@ async function startServer() {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
 
-    const { evolutionApiUrl, evolutionApiKey, evolutionInstanceId, n8nWebhookUrl } = req.body;
+    const { evolutionApiUrl, evolutionApiKey, evolutionInstanceId, n8nWebhookUrl, phone } = req.body;
     if (evolutionApiUrl) (tenant as any).evolutionApiUrl = String(evolutionApiUrl).trim();
-    if (evolutionApiKey) (tenant as any).evolutionApiKey = String(evolutionApiKey).trim();
+    if (evolutionApiKey) {
+      (tenant as any).evolutionApiKey = String(evolutionApiKey).trim();
+      runtimeGlobalEvolutionApiKey = String(evolutionApiKey).trim();
+    }
     if (evolutionInstanceId) tenant.evolutionInstanceId = String(evolutionInstanceId).trim();
     if (n8nWebhookUrl) (tenant as any).n8nWebhookUrl = String(n8nWebhookUrl).trim();
+    if (phone) tenant.phone = normalizeBrazilWhatsAppNumber(phone);
 
     res.json({
       success: true,
       message: 'Credenciais da Evolution API atualizadas com sucesso!',
       tenant: {
         slug: tenant.slug,
+        phone: tenant.phone,
         evolutionInstanceId: tenant.evolutionInstanceId,
         evolutionApiUrl: (tenant as any).evolutionApiUrl,
         evolutionApiKeyConfigured: Boolean((tenant as any).evolutionApiKey),
