@@ -32,7 +32,8 @@ import {
   Eye,
   LogOut,
   BatteryCharging,
-  Database
+  Database,
+  Loader2
 } from 'lucide-react';
 import { Order, RestaurantTenant, WebhookLogEvent, EvolutionQrConnectResponse, AuthSession } from '../types';
 import { NotificationTemplatesEditor } from './NotificationTemplatesEditor';
@@ -368,11 +369,80 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
       ? window.location.origin
       : 'https://aladay.com.br';
 
-  const defaultSdrSystemPrompt = `Você é o Consultor Comercial Especialista (SDR / Closer) da Aladay Cardápios Digitais (https://aladay.com.br).
+  // Live Knowledge Base Editor State
+  const [isKbModalOpen, setIsKbModalOpen] = useState(false);
+  const [kbContent, setKbContent] = useState('');
+  const [kbVersion, setKbVersion] = useState('4.0 (Novembro 2026)');
+  const [isLoadingKb, setIsLoadingKb] = useState(false);
+  const [isSavingKb, setIsSavingKb] = useState(false);
+  const [kbSaveFeedback, setKbSaveFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const handleOpenKbModal = async () => {
+    setIsKbModalOpen(true);
+    setKbSaveFeedback(null);
+    setIsLoadingKb(true);
+    try {
+      const res = await fetch('/api/v1/n8n/knowledge-base');
+      const data = await res.json();
+      if (data?.knowledgeBase) {
+        setKbContent(data.knowledgeBase);
+      }
+      if (data?.version) {
+        setKbVersion(data.version);
+      }
+    } catch {
+      setKbSaveFeedback({
+        type: 'error',
+        message: 'Não foi possível carregar a Base de Conhecimento do servidor.',
+      });
+    } finally {
+      setIsLoadingKb(false);
+    }
+  };
+
+  const handleSaveKbContent = async () => {
+    if (!kbContent || kbContent.trim().length < 50) {
+      setKbSaveFeedback({
+        type: 'error',
+        message: 'O conteúdo da Base de Conhecimento está muito curto.',
+      });
+      return;
+    }
+    setIsSavingKb(true);
+    setKbSaveFeedback(null);
+    try {
+      const res = await fetch('/api/v1/n8n/knowledge-base', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: kbContent }),
+      });
+      const data = await res.json();
+      if (res.ok && data?.ok) {
+        setKbSaveFeedback({
+          type: 'success',
+          message: data.message || 'Base de Conhecimento v4.0 salva e atualizada em tempo real!',
+        });
+      } else {
+        setKbSaveFeedback({
+          type: 'error',
+          message: data?.error || 'Erro ao salvar alterações na Base de Conhecimento.',
+        });
+      }
+    } catch {
+      setKbSaveFeedback({
+        type: 'error',
+        message: 'Falha de conexão ao salvar a Base de Conhecimento.',
+      });
+    } finally {
+      setIsSavingKb(false);
+    }
+  };
+
+  const defaultSdrSystemPrompt = `Você é o Consultor Comercial Especialista (SDR / Closer) da Aladay Cardápios Digitais (${appOriginUrl}) — Base de Conhecimento v4.0.
 WhatsApp Oficial de Suporte e Vendas: +55 (91) 3197-6334 (https://wa.me/559131976334).
 
 SEU OBJETIVO PRINCIPAL:
-1. Responder com clareza, rapidez, empatia e autoridade a qualquer dúvida de leads (donos de restaurantes, hamburguerias, pizzarias, lanchonetes, açaíterias, sushi bars, padarias e dark kitchens).
+1. Responder com clareza, rapidez, empatia e autoridade a qualquer dúvida de leads (donos de restaurantes, hamburguerias, pizzarias, churrascarias, lanchonetes, açaíterias, sushi bars, padarias e dark kitchens).
 2. Demonstrar como o restaurante economiza milhares de reais por mês trocando comissões abusivas (de 12% a 27% dos aplicativos tradicionais) por uma assinatura fixa acessível com 0% de comissão.
 3. Conduzir o lead para iniciar imediatamente o TESTE GRÁTIS DE 15 DIAS (no Plano Mensal) ou garantir o desconto máximo no PLANO ANUAL (12x de R$ 99,00 no cartão de crédito).
 
@@ -387,12 +457,16 @@ PLANOS E PREÇOS OFICIAIS (0% DE COMISSÃO SEMPRE):
    - Teste Grátis: 15 dias 100% gratuitos para testar todas as funcionalidades na prática (R$ 0,00 hoje).
    - Formas de pagamento após os 15 dias: Pix, Boleto Bancário ou Cartão de Crédito. Sem fidelidade.
 
-DIFERENCIAIS EXCLUSIVOS INCLUSOS EM TODOS OS PLANOS:
+ECOSSISTEMA COMPLETO INCLUSO EM TODOS OS PLANOS (VERSÃO 4.0):
 - Pedidos, produtos e fotos ilimitados com 0% de comissão sobre vendas.
-- Três modalidades no mesmo cardápio: Delivery (Entrega), Retirada no Balcão e QR Code de Mesa.
+- Link Direto Exclusivo do Restaurante (${appOriginUrl}/?loja=slug-do-restaurante) que abre diretamente o cardápio para o cliente final.
+- Configurador Rápido de Horário na Barra Superior (Aberto/Fechado em 1 clique e relógio sincronizado em tempo real).
+- Módulo Completo de Salão, Mesas & Garçom: Mapa visual de mesas (Livre, Ocupada, Fechando Conta), Comanda Digital para Garçom lançar pelo celular/tablet, QR Code individual por mesa (?loja=slug&mesa=01), pedidos parciais na mesma conta e fechamento com divisão por pessoa e taxa opcional de 10%.
+- Integração Oficial iFood Partner API: Recebe os pedidos do iFood direto na mesma tela da cozinha (KDS) com selo vermelho iFood, sincronizando confirmação, preparo e despacho sem precisar abrir dois sistemas.
 - Pagamento Pix Direto 100% na conta bancária do restaurante na mesma hora (QR Code + Pix Copia e Cola).
-- Automação de WhatsApp via Evolution API inclusa (dispara automaticamente: 1. Pedido Recebido, 2. Em Preparo na Cozinha, 3. Saiu para Entrega / Pronto).
+- Automação de WhatsApp via Evolution API + n8n inclusa (dispara automaticamente: 1. Pedido Recebido, 2. Em Preparo na Cozinha, 3. Saiu para Entrega / Pronto).
 - Painel de Cozinha KDS em tempo real com alerta sonoro e impressão térmica 80mm.
+- Relatórios Analíticos Recharts & CRM de Clientes (faturamento líquido, ticket médio, ranking de campeões e lista de clientes VIP).
 - Importador inteligente de cardápio via planilha Excel/CSV em menos de 10 segundos.
 
 REGRAS DE ATENDIMENTO NO WHATSAPP:
@@ -405,10 +479,11 @@ REGRAS DE ATENDIMENTO NO WHATSAPP:
   const defaultRestaurantSystemPrompt = `Você é o Assistente Virtual de Atendimento do restaurante *${tenant.name}*.
 Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisão:
 1. Sempre envie o link direto do Cardápio Digital oficial para o cliente fazer o pedido sem fila: ${appOriginUrl}/?loja=${tenant.slug}
-2. Use a ferramenta HTTP "consultar_cardapio_e_loja" para verificar em tempo real se o restaurante está aberto, os produtos disponíveis, preços atualizados e taxa de entrega.
-3. Se o cliente perguntar sobre o andamento do pedido ("Onde está meu pedido?"), use a ferramenta HTTP "consultar_status_pedido" passando o telefone do cliente.
-4. Nunca invente produtos ou preços fora do cardápio retornado pela ferramenta.
-5. Se o cliente digitar "2" ou pedir um atendente humano, informe que um atendente da equipe do ${tenant.name} já vai atendê-lo.`;
+2. Use a ferramenta HTTP "consultar_cardapio_e_loja" para verificar em tempo real se o restaurante está aberto, o horário de funcionamento configurado na barra superior, os produtos disponíveis, preços atualizados e taxa de entrega.
+3. Informe que o cliente pode pedir tanto para *Delivery*, *Retirada no Balcão* quanto direto na *Mesa do Salão via QR Code* (${appOriginUrl}/?loja=${tenant.slug}&mesa=01).
+4. Se o cliente perguntar sobre o andamento do pedido ("Onde está meu pedido?"), use a ferramenta HTTP "consultar_status_pedido" passando o telefone do cliente.
+5. Nunca invente produtos ou preços fora do cardápio retornado pela ferramenta.
+6. Se o cliente digitar "2" ou pedir um atendente humano, informe que um atendente da equipe do ${tenant.name} já vai atendê-lo.`;
 
   const [agentSystemPrompt, setAgentSystemPrompt] = useState<string>(defaultSdrSystemPrompt);
 
@@ -422,7 +497,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
     } else if (mode === 'restaurante_ia') {
       setAgentSystemPrompt(defaultRestaurantSystemPrompt);
       setAgentTestCustomerName('Adriano Saraiva');
-      setAgentTestMessage('Boa noite! Vocês estão abertos? Quero ver o cardápio.');
+      setAgentTestMessage('Boa noite! Vocês estão abertos? Qual o horário de funcionamento e o cardápio?');
     }
   };
 
@@ -545,12 +620,12 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
             parameters: {
               name: 'consultar_base_conhecimento_aladay',
               description:
-                'Consulta a Base de Conhecimento Oficial da Aladay Cardápios Digitais, incluindo planos (Anual R$ 99/mês no cartão e Mensal R$ 129,90/mês com 15 dias grátis), funcionalidades, comparativo de comissão 0% vs marketplaces e FAQ.',
+                'Consulta a Base de Conhecimento Oficial v4.0 da Aladay Cardápios Digitais, incluindo planos (Anual R$ 99/mês no cartão e Mensal R$ 129,90/mês com 15 dias grátis), Módulo de Salão/Mesas/Garçom, Integração Oficial iFood no KDS, Relatórios Analíticos Recharts, Configurador de Horário e FAQ.',
               method: 'GET',
               url: `${appOriginUrl}/api/v1/n8n/knowledge-base`,
             },
             id: 'node-http-tool-kb',
-            name: 'Tool: Base de Conhecimento Aladay',
+            name: 'Tool: Base de Conhecimento Aladay v4.0',
             type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
             typeVersion: 1.1,
             position: [880, 540],
@@ -559,7 +634,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
             parameters: {
               name: 'consultar_cardapio_e_loja',
               description:
-                'Consulta em tempo real se o restaurante está aberto, produtos disponíveis no cardápio com preços, taxa de entrega e link direto do cardápio digital.',
+                'Consulta em tempo real se o restaurante está aberto, horário de funcionamento, produtos disponíveis no cardápio com preços, suporte a QR Code de Mesa, taxa de entrega e link direto do cardápio digital.',
               method: 'GET',
               url: `${appOriginUrl}/api/v1/n8n/agent-context/${tenant.slug}`,
             },
@@ -1834,13 +1909,21 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
               </div>
 
               <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleOpenKbModal}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                >
+                  <FileCode className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Ver / Editar Base de Conhecimento (v4.0)</span>
+                </button>
                 <a
                   href="/base-conhecimento-agente-ia-aladay.txt"
                   download="base-conhecimento-agente-ia-aladay.txt"
                   className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl transition-colors"
                 >
                   <FileCode className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Baixar Base de Conhecimento (.TXT)</span>
+                  <span>Baixar .TXT (v4.0)</span>
                 </a>
                 <button
                   type="button"
@@ -1861,6 +1944,85 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                 </button>
               </div>
             </div>
+
+            {/* LIVE KNOWLEDGE BASE EDITOR MODAL */}
+            {isKbModalOpen && (
+              <div className="bg-slate-900 text-slate-100 rounded-2xl p-5 border border-slate-700 space-y-4 shadow-xl">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        Base Oficial Ativa • {kbVersion}
+                      </span>
+                      <h5 className="text-sm font-bold text-white">
+                        Base de Conhecimento Oficial do Agente IA (RAG / HTTP Tool n8n)
+                      </h5>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Inclui Salão/Mesas & Garçom, Integração Oficial iFood no KDS, Relatórios Recharts, Configurador de Horário na Barra Superior e Link Direto. Qualquer edição abaixo atualiza o endpoint <code className="text-emerald-300">/api/v1/n8n/knowledge-base</code> em tempo real.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleSaveKbContent}
+                      disabled={isSavingKb || isLoadingKb}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                    >
+                      {isSavingKb ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Salvando...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Salvar Base de Conhecimento</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsKbModalOpen(false)}
+                      className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                </div>
+
+                {kbSaveFeedback && (
+                  <div
+                    className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 ${
+                      kbSaveFeedback.type === 'success'
+                        ? 'bg-emerald-950/80 text-emerald-200 border border-emerald-700/60'
+                        : 'bg-rose-950/80 text-rose-200 border border-rose-700/60'
+                    }`}
+                  >
+                    {kbSaveFeedback.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    )}
+                    <span>{kbSaveFeedback.message}</span>
+                  </div>
+                )}
+
+                {isLoadingKb ? (
+                  <div className="py-12 flex items-center justify-center gap-2 text-xs text-slate-400">
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                    <span>Carregando Base de Conhecimento v4.0...</span>
+                  </div>
+                ) : (
+                  <textarea
+                    rows={16}
+                    value={kbContent}
+                    onChange={(e) => setKbContent(e.target.value)}
+                    className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl font-mono text-[11px] text-slate-200 focus:outline-hidden focus:border-blue-500 leading-relaxed"
+                  />
+                )}
+              </div>
+            )}
 
             {/* 3 Profile Cards */}
             <div className="space-y-2">
@@ -2262,7 +2424,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
 
               {/* Quick Preset Questions */}
               <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                <span className="font-semibold text-slate-600">Perguntas de Teste:</span>
+                <span className="font-semibold text-slate-600">Perguntas de Teste (Base v4.0):</span>
                 {n8nAgentMode === 'sdr_aladay' ? (
                   <>
                     <button
@@ -2274,18 +2436,40 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                       }
                       className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
                     >
-                      💰 &ldquo;Quanto custa e quais os planos?&rdquo;
+                      💰 &ldquo;Planos e Preços&rdquo;
                     </button>
                     <button
                       type="button"
                       onClick={() =>
                         handleRunAgentLiveTest(
-                          'Eu já vendo pelo iFood. Vocês cobram comissão por pedido também?'
+                          'Como funciona o controle de mesas e comanda digital para os garçons no salão?'
                         )
                       }
                       className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
                     >
-                      📊 &ldquo;Vocês cobram comissão igual ao iFood?&rdquo;
+                      🍽️ &ldquo;Mesas, Comanda & Garçom&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest(
+                          'Vocês têm integração oficial com o iFood para cair tudo na mesma cozinha?'
+                        )
+                      }
+                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      🛵 &ldquo;Integração Oficial iFood&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest(
+                          'Como funcionam os relatórios financeiros e o configurador de horário do cardápio?'
+                        )
+                      }
+                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      📈 &ldquo;Relatórios & Horário&rdquo;
                     </button>
                     <button
                       type="button"
@@ -2296,7 +2480,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                       }
                       className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
                     >
-                      📑 &ldquo;Dá para importar cardápio por planilha?&rdquo;
+                      📑 &ldquo;Importar Planilha Excel&rdquo;
                     </button>
                     <button
                       type="button"
@@ -2310,10 +2494,10 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                   <>
                     <button
                       type="button"
-                      onClick={() => handleRunAgentLiveTest('Boa noite! Vocês estão abertos? Quero ver o cardápio.')}
+                      onClick={() => handleRunAgentLiveTest('Boa noite! Vocês estão abertos? Qual o horário e o cardápio?')}
                       className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
                     >
-                      🍔 &ldquo;Quero ver o cardápio de hoje&rdquo;
+                      🍔 &ldquo;Horário e Cardápio de Hoje&rdquo;
                     </button>
                     <button
                       type="button"

@@ -2651,7 +2651,7 @@ async function startServer() {
   // N8N AI AGENT TOOLS & EVOLUTION API WEBHOOK INTEGRATION ENDPOINTS
   // ============================================================================
 
-  // 1. GET /api/v1/n8n/knowledge-base (HTTP Tool for the n8n Commercial SDR AI Agent)
+  // 1. GET & PUT /api/v1/n8n/knowledge-base (HTTP Tool for the n8n Commercial SDR AI Agent + Live Editor)
   app.get('/api/v1/n8n/knowledge-base', (_req: Request, res: Response) => {
     const kbPath = path.join(process.cwd(), 'public', 'base-conhecimento-agente-ia-aladay.txt');
     let rawKnowledgeBase = '';
@@ -2665,6 +2665,7 @@ async function startServer() {
 
     res.json({
       success: true,
+      version: '4.0 (Novembro 2026)',
       platform: 'Aladay Cardápios Digitais (SaaS)',
       officialWebsite: 'https://aladay.com.br',
       supportWhatsapp: '559131976334',
@@ -2689,16 +2690,43 @@ async function startServer() {
         },
       },
       highlights: [
-        '0% de comissão sobre pedidos (pedidos e produtos ilimitados)',
+        '0% de comissão sobre pedidos (pedidos, produtos e fotos ilimitados)',
         'Pix Direto 100% na conta bancária do restaurante na mesma hora',
-        '3 Modalidades no mesmo link: Delivery, Retirada no Balcão e QR Code de Mesa',
-        'Automação de WhatsApp via Evolution API (3 avisos automáticos: Recebido, Em Preparo e Saiu para Entrega)',
-        'Painel de Cozinha KDS em tempo real com alerta sonoro e impressão térmica 80mm',
+        '3 Modalidades no mesmo link: Delivery, Retirada no Balcão e Salão / QR Code de Mesa',
+        'Módulo Completo de Mesas & Garçom (Salão): Mapa de mesas em tempo real, comanda digital p/ garçons, divisão de conta por pessoa e Pix na mesa',
+        'Integração Oficial iFood Partner API: Recebimento unificado de pedidos do iFood direto na tela da cozinha (KDS) com alerta sonoro e impressão 80mm',
+        'Automação de WhatsApp via Evolution API + Agente IA n8n (3 avisos automáticos: Recebido, Em Preparo e Saiu para Entrega)',
+        'Aba de Relatórios Analíticos (Recharts): Gráficos de Total de Vendas por Dia e Ranking dos Produtos Mais Vendidos + CRM de Clientes',
+        'Configurador Rápido de Horário na Barra Superior e Link Direto Exclusivo do Restaurante (/?loja=slug)',
         'Importador inteligente de cardápio via planilha Excel/CSV em segundos',
       ],
       knowledgeBaseText: rawKnowledgeBase,
       updatedAt: new Date().toISOString(),
     });
+  });
+
+  app.put('/api/v1/n8n/knowledge-base', (req: Request, res: Response) => {
+    const { knowledgeBaseText } = req.body || {};
+    if (typeof knowledgeBaseText !== 'string' || !knowledgeBaseText.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'O conteúdo da Base de Conhecimento não pode estar vazio.',
+      });
+    }
+    const kbPath = path.join(process.cwd(), 'public', 'base-conhecimento-agente-ia-aladay.txt');
+    try {
+      fs.writeFileSync(kbPath, knowledgeBaseText, 'utf-8');
+      res.json({
+        success: true,
+        message: 'Base de Conhecimento Oficial atualizada com sucesso!',
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        error: err?.message || 'Erro ao salvar o arquivo da Base de Conhecimento.',
+      });
+    }
   });
 
   // 2. GET /api/v1/n8n/agent-context/:slug (HTTP Tool for the n8n Restaurant Atendimento AI Agent)
@@ -2736,11 +2764,15 @@ async function startServer() {
         phone: tenant.phone,
         address: tenant.address,
         isOpen: tenant.isOpen,
+        openingHoursText: tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45',
         digitalMenuUrl: `${baseAppUrl}/?loja=${tenant.slug}`,
+        tableQrCodeUrlExample: `${baseAppUrl}/?loja=${tenant.slug}&mesa=01`,
         deliveryFeeFormatted: `R$ ${((tenant.deliveryFeeCents || 0) / 100).toFixed(2).replace('.', ',')}`,
         minOrderFormatted: `R$ ${((tenant.minOrderCents || 0) / 100).toFixed(2).replace('.', ',')}`,
         deliveryZones: tenant.deliveryZones || [],
         pixKey: tenant.pixKey || tenant.pixConfig?.pixKey || '',
+        tablesModuleEnabled: true,
+        ifoodIntegrated: Boolean(tenant.ifoodConfig?.status === 'connected'),
       },
       catalogSummary: catalogByCategory,
       totalAvailableProducts: tenantProducts.length,
@@ -2954,29 +2986,49 @@ async function startServer() {
         triggeredTool = 'tool_consultar_planos_aladay';
         agentReply =
           `Olá, *${customerName.split(' ')[0]}*! Tudo bem? 🚀\n\n` +
-          `Na *Aladay Cardápios Digitais*, você tem *0% de comissão* sobre os pedidos (pedidos, produtos e fotos ilimitados + Pix caindo na hora na sua conta + Automação de WhatsApp e Painel KDS).\n\n` +
+          `Na *Aladay Cardápios Digitais*, você tem *0% de comissão* sobre os pedidos (pedidos, produtos e fotos ilimitados + Módulo de Mesas & Garçons + Integração Oficial iFood + Relatórios de Vendas + Pix caindo na hora na sua conta).\n\n` +
           `Temos duas opções para o seu restaurante:\n` +
           `1️⃣ *Plano Anual Aladay Pro (Mais Vantajoso):* *12x de R$ 99,00* sem juros no cartão de crédito (você economiza R$ 370,80 no ano!).\n` +
           `2️⃣ *Plano Mensal com 15 Dias Grátis:* Você começa hoje pagando *R$ 0,00*, testa todas as funções por 15 dias na prática, e só depois investe *R$ 129,90/mês* (no Pix, Boleto ou Cartão, sem fidelidade).\n\n` +
           `👉 Crie sua conta em menos de 1 minuto aqui: ${baseAppUrl}\n\n` +
           `Prefere começar pelos *15 dias grátis* no plano mensal ou garantir o desconto de *R$ 99/mês* no plano anual?`;
+      } else if (cleanText.includes('mesa') || cleanText.includes('garçom') || cleanText.includes('garcom') || cleanText.includes('salão') || cleanText.includes('salao') || cleanText.includes('comanda')) {
+        triggeredTool = 'tool_modulo_mesas_garcom';
+        agentReply =
+          `Excelente pergunta, *${customerName.split(' ')[0]}*! 🍽️🧑‍🍳\n\n` +
+          `A *Aladay* já inclui o *Módulo Completo de Salão, Mesas & Garçons* sem nenhum custo extra:\n` +
+          `1️⃣ *Mapa Interativo de Mesas:* Acompanhe em tempo real quais mesas estão *Livres*, *Ocupadas* ou *Aguardando Conta*.\n` +
+          `2️⃣ *Comanda no Celular do Garçom:* O garçom lança os pedidos na mesa pelo próprio celular e o pedido já sai direto no KDS da cozinha.\n` +
+          `3️⃣ *QR Code Individual por Mesa:* O cliente também pode escanear o QR Code da mesa e pedir sem fila (com taxa de entrega zero).\n` +
+          `4️⃣ *Divisão de Conta e Pix na Mesa:* Soma todas as parciais, divide o valor por pessoa automaticamente e gera o QR Code Pix na hora!\n\n` +
+          `👉 Comece a testar agora com *15 dias grátis* em: ${baseAppUrl}`;
       } else if (cleanText.includes('ifood') || cleanText.includes('comissão') || cleanText.includes('comissao') || cleanText.includes('taxa')) {
-        triggeredTool = 'tool_comparativo_roi_aladay';
+        triggeredTool = 'tool_integracao_ifood_e_roi';
         agentReply =
           `Excelente pergunta, *${customerName.split(' ')[0]}*! 💡\n\n` +
-          `Enquanto os marketplaces tradicionais cobram de *12% a 27% de comissão* sobre cada pedido e seguram seu dinheiro por até 30 dias, na *Aladay* você paga *0% de comissão* e o *Pix cai 100% direto na conta bancária do seu restaurante* em segundos!\n\n` +
-          `📊 *Na prática:* Em um restaurante que vende R$ 18.000/mês, 20% de comissão representa R$ 3.600 perdidos todo mês. Na Aladay você investe apenas *R$ 99,00/mês* (no plano anual) e fica com 100% do lucro.\n\n` +
-          `E você pode usar a Aladay junto com os aplicativos: basta enviar seu QR Code Aladay nas embalagens para fidelizar o cliente a partir do 2º pedido!\n\n` +
+          `A *Aladay* possui *Integração Oficial iFood Partner API*! Você vincula sua loja em 1 clique por Código de Autorização e recebe todos os pedidos do iFood direto na mesma tela do nosso *Painel de Cozinha (KDS)* com alerta sonoro e impressão térmica 80mm.\n\n` +
+          `💰 *E o melhor:* Enquanto o iFood cobra de *12% a 27% de comissão*, no seu cardápio próprio Aladay você paga *0% de comissão* e o *Pix cai 100% direto na sua conta bancária na hora*! Você envia o QR Code da Aladay nas embalagens do iFood e fideliza o cliente no seu link próprio a partir do 2º pedido.\n\n` +
           `Vamos liberar seus *15 dias grátis* agora mesmo em ${baseAppUrl}?`;
-      } else if (cleanText.includes('planilha') || cleanText.includes('cadastrar') || cleanText.includes('importar') || cleanText.includes('produtos')) {
+      } else if (cleanText.includes('relatório') || cleanText.includes('relatorio') || cleanText.includes('gráfico') || cleanText.includes('grafico') || cleanText.includes('mais vendidos')) {
+        triggeredTool = 'tool_relatorios_analiticos';
+        agentReply =
+          `Sim, *${customerName.split(' ')[0]}*! 📊\n\n` +
+          `No painel da *Aladay*, você conta com a aba *Relatórios Analíticos & Dashboard Financeiro* em tempo real:\n` +
+          `📈 *Gráfico de Vendas por Dia* (7, 15 e 30 dias)\n` +
+          `🏆 *Ranking dos Produtos Mais Vendidos* (em quantidade e faturamento)\n` +
+          `💳 *Ticket Médio, Receita Auditada e Economia de Comissões*\n` +
+          `👥 *CRM de Clientes* com histórico completo de compras no WhatsApp e exportação em CSV/Excel!\n\n` +
+          `👉 Teste gratuitamente por 15 dias em: ${baseAppUrl}`;
+      } else if (cleanText.includes('planilha') || cleanText.includes('cadastrar') || cleanText.includes('importar') || cleanText.includes('produtos') || cleanText.includes('horário') || cleanText.includes('horario')) {
         triggeredTool = 'tool_onboarding_cardapio';
         agentReply =
           `É super rápido, *${customerName.split(' ')[0]}*! ⚡\n\n` +
-          `Você não precisa cadastrar item por item se não quiser: a Aladay tem um *Importador Inteligente de Planilhas (Excel/CSV)*! Você baixa nosso modelo no painel, cola seus produtos e preços e sobe o cardápio inteiro em menos de 10 segundos.\n\n` +
+          `Você configura o *Horário de Funcionamento e status Aberto/Fechado* com 1 clique direto na barra superior do painel, e conta com o *Importador Inteligente de Planilhas (Excel/CSV)* para subir todo o cardápio em menos de 10 segundos!\n\n` +
           `Além disso, seu cardápio já funciona para:\n` +
           `🛵 *Delivery* (com cálculo automático de entrega)\n` +
           `🛍️ *Retirada no Balcão*\n` +
-          `🍽️ *QR Code para Mesas no Salão*\n\n` +
+          `🍽️ *Mesas & Garçom no Salão (QR Code de Mesa)*\n` +
+          `🔴 *Integração Oficial iFood no KDS*\n\n` +
           `Quer testar agora sem compromisso? Acesse ${baseAppUrl} ou fale com nosso especialista no WhatsApp: https://wa.me/559131976334`;
       } else if (cleanText === '2' || cleanText.includes('humano') || cleanText.includes('atendente') || cleanText.includes('consultor')) {
         triggeredTool = 'tool_human_handoff';
@@ -2988,13 +3040,14 @@ async function startServer() {
         agentReply =
           `Olá, *${customerName.split(' ')[0]}*! Seja muito bem-vindo(a) à *Aladay Cardápios Digitais*! 🚀\n\n` +
           `Nós transformamos o WhatsApp e as mesas do seu restaurante em uma máquina de vendas própria:\n` +
-          `✅ *0% de comissão* (Pedidos ilimitados)\n` +
+          `✅ *0% de comissão* (Pedidos e produtos ilimitados)\n` +
           `✅ *Pix Direto* na conta do restaurante na hora\n` +
-          `✅ *Automação de WhatsApp* via Evolution API (avisa o cliente quando o pedido é confirmado, entra em preparo e sai para entrega)\n` +
-          `✅ *Painel de Cozinha KDS* com alerta sonoro e impressão térmica 80mm\n\n` +
+          `✅ *Salão, Mesas & Garçom* (Mapa de mesas, comanda no celular do garçom e QR Code na mesa)\n` +
+          `✅ *Integração Oficial iFood* direto no Painel de Cozinha KDS (com impressão 80mm)\n` +
+          `✅ *Automação de WhatsApp* via Evolution API + *Relatórios de Vendas*\n\n` +
           `Você pode começar hoje com *15 Dias de Teste Grátis* no Plano Mensal (R$ 129,90/mês) ou assinar o *Plano Anual por 12x de R$ 99,00* no cartão!\n\n` +
           `👉 Conheça e crie sua loja agora: ${baseAppUrl}\n` +
-          `Qual é o segmento do seu negócio hoje (hamburgueria, pizzaria, restaurante, açaí...)?`;
+          `Qual é o segmento do seu negócio hoje (hamburgueria, pizzaria, churrascaria, restaurante, açaí...)?`;
       }
     } else {
       // Restaurant Customer Support Agent Profile
@@ -3015,6 +3068,7 @@ async function startServer() {
         agentReply =
           `Olá, *${customerName.split(' ')[0]}*! Seja bem-vindo(a) ao *${tenant.name}*! 🍔\n\n` +
           `Status da loja agora: *${tenant.isOpen ? '🟢 ABERTA (Recebendo Pedidos)' : '🔴 FECHADA'}*\n` +
+          `🕒 Horário: *${tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45'}*\n` +
           (topItems ? `\n🔥 *Destaques de hoje no cardápio:*\n${topItems}\n` : '') +
           `\n👉 *Faça seu pedido direto pelo nosso Cardápio Digital (sem fila e com Pix na hora):*\n${baseAppUrl}/?loja=${tenant.slug}\n\n` +
           `Se quiser falar com um atendente humano, responda *2*.`;
