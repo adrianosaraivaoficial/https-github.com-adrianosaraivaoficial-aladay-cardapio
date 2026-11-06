@@ -2519,30 +2519,477 @@ async function startServer() {
     });
   });
 
+  // Helper to resolve tenant by slug or Evolution API instance name
+  const resolveTenantForAgent = (slugOrInstance?: string, fallbackInstance?: string) => {
+    const rawCandidate = String(slugOrInstance || fallbackInstance || '').trim().toLowerCase();
+    const strippedCandidate = rawCandidate.replace(/^instancia_/, '');
+    const hyphenCandidate = strippedCandidate.replace(/_/g, '-');
+
+    const matched =
+      memoryTenants.find((t) => t.slug.toLowerCase() === rawCandidate) ||
+      memoryTenants.find((t) => t.slug.toLowerCase() === strippedCandidate) ||
+      memoryTenants.find((t) => t.slug.toLowerCase() === hyphenCandidate) ||
+      memoryTenants.find((t) => String(t.evolutionInstanceId || '').toLowerCase() === rawCandidate) ||
+      memoryTenants.find(
+        (t) =>
+          fallbackInstance &&
+          (String(t.evolutionInstanceId || '').toLowerCase() === String(fallbackInstance).toLowerCase() ||
+            t.slug.toLowerCase() === String(fallbackInstance).toLowerCase().replace(/^instancia_/, '').replace(/_/g, '-'))
+      );
+
+    return matched || memoryTenants[0];
+  };
+
+  // Helper to build full catalog context and formatted text for a restaurant
+  const buildRestaurantCatalogContext = (tenant: any, baseAppUrl: string, customerPhone?: string) => {
+    const slugLower = String(tenant.slug || '').toLowerCase();
+    const tenantCategories = memoryCategories
+      .filter((c) => String(c.tenantSlug || '').toLowerCase() === slugLower)
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
+    const tenantProducts = memoryProducts.filter(
+      (p) => String(p.tenantSlug || '').toLowerCase() === slugLower && p.isAvailable !== false
+    );
+
+    const catalogByCategory = tenantCategories.map((cat) => ({
+      categoryId: cat.id,
+      category: cat.name,
+      items: tenantProducts
+        .filter((p) => p.categoryId === cat.id)
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description || '',
+          priceFormatted: `R$ ${(p.priceCents / 100).toFixed(2).replace('.', ',')}`,
+          priceCents: p.priceCents,
+        })),
+    }));
+
+    // Include uncategorized products if any
+    const categorizedIds = new Set(catalogByCategory.flatMap((c) => c.items.map((i) => i.id)));
+    const uncategorized = tenantProducts.filter((p) => !categorizedIds.has(p.id));
+    if (uncategorized.length > 0) {
+      catalogByCategory.push({
+        categoryId: 'cat_outros',
+        category: 'Itens do Cardápio',
+        items: uncategorized.map((p) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description || '',
+          priceFormatted: `R$ ${(p.priceCents / 100).toFixed(2).replace('.', ',')}`,
+          priceCents: p.priceCents,
+        })),
+      });
+    }
+
+    const catalogTextFormatted = catalogByCategory
+      .filter((c) => c.items.length > 0)
+      .map(
+        (c) =>
+          `*📌 ${c.category}:*\n` +
+          c.items
+            .map(
+              (item) =>
+                `• *${item.name}* — ${item.priceFormatted}${item.description ? ` _(${item.description})_` : ''}`
+            )
+            .join('\n')
+      )
+      .join('\n\n');
+
+    const topItemsText = tenantProducts
+      .slice(0, 6)
+      .map((p) => `• *${p.name}* — R$ ${(p.priceCents / 100).toFixed(2).replace('.', ',')}`)
+      .join('\n');
+
+    const digitalMenuUrl = `${baseAppUrl}/?loja=${tenant.slug}`;
+    const tableQrCodeUrlExample = `${baseAppUrl}/?loja=${tenant.slug}&mesa=01`;
+    const openingHoursText = tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45';
+    const deliveryFeeFormatted =
+      (tenant.deliveryFeeCents || 0) === 0
+        ? 'Grátis (R$ 0,00)'
+        : `R$ ${((tenant.deliveryFeeCents || 0) / 100).toFixed(2).replace('.', ',')}`;
+    const minOrderFormatted = `R$ ${((tenant.minOrderCents || 0) / 100).toFixed(2).replace('.', ',')}`;
+
+    const cleanPhone = String(customerPhone || '').replace(/\D/g, '');
+    const statusLabels: Record<string, string> = {
+      received: 'Pedido Recebido (Aguardando Confirmação)',
+      pending_payment: 'Aguardando Pagamento / Confirmação',
+      confirmed: 'Pedido Confirmado pela Loja',
+      preparing: 'Em Preparo na Cozinha 👨‍🍳',
+      ready: 'Pronto / Saiu para Entrega 🛵',
+      out_for_delivery: 'Saiu para Entrega 🛵',
+      delivered: 'Entregue / Concluído ✅',
+      completed: 'Entregue / Concluído ✅',
+      cancelled: 'Cancelado ❌',
+    };
+
+    const customerRecentOrders = cleanPhone
+      ? memoryOrders
+          .filter((o) => {
+            const oPhone = String(o.customerPhone || '').replace(/\D/g, '');
+            const phoneMatches =
+              oPhone && cleanPhone && (oPhone.endsWith(cleanPhone.slice(-8)) || cleanPhone.endsWith(oPhone.slice(-8)));
+            return phoneMatches && String(o.tenantSlug || '').toLowerCase() === slugLower;
+          })
+          .slice(0, 3)
+          .map((o) => ({
+            id: o.id,
+            orderNumber: o.orderNumber,
+            status: o.status,
+            statusLabel: statusLabels[o.status] || o.status,
+            totalFormatted: `R$ ${((o.totalCents || 0) / 100).toFixed(2).replace('.', ',')}`,
+            itemsSummary: (o.items || []).map((i: any) => `${i.quantity}x ${i.productName || i.name}`).join(', '),
+            trackingUrl: `${baseAppUrl}/pedido/${o.id}`,
+          }))
+      : [];
+
+    const welcomeMenuReply =
+      `Olá! Seja muito bem-vindo(a) ao *${tenant.name}*! 🍔✨\n\n` +
+      `Status agora: *${tenant.isOpen ? '🟢 ABERTO (Recebendo Pedidos)' : '🔴 FECHADO NO MOMENTO'}*\n` +
+      `🕒 *Horário de Atendimento:* ${openingHoursText}\n` +
+      `🛵 *Entrega:* ${deliveryFeeFormatted} | *Pedido Mínimo:* ${minOrderFormatted}\n` +
+      (topItemsText ? `\n🔥 *Destaques do nosso Cardápio:*\n${topItemsText}\n` : '') +
+      `\n👉 *ACESSE NOSSO CARDÁPIO DIGITAL E FAÇA SEU PEDIDO:*\n${digitalMenuUrl}\n\n` +
+      `💡 _Pelo link acima você vê fotos, escolhe Delivery, Retirada ou Mesa e paga via Pix na hora, Cartão ou Dinheiro!_\n` +
+      `Se precisar falar com um atendente humano, digite *2*.`;
+
+    const closedMenuReply =
+      `Olá! Agradecemos seu contato com o *${tenant.name}*! 🙏\n\n` +
+      `🔴 No momento estamos *FECHADOS*.\n` +
+      `🕒 *Nosso Horário de Funcionamento:* ${openingHoursText}\n\n` +
+      `Você já pode conferir todas as opções e preços no nosso Cardápio Digital Oficial:\n` +
+      `👉 ${digitalMenuUrl}\n\n` +
+      `Se precisar falar com nossa equipe, digite *2*.`;
+
+    const humanHandoffReply =
+      tenant.botHumanHandoffMessage ||
+      `Perfeito! Pausamos o atendimento automático para o seu número. Um atendente humano da equipe do *${tenant.name}* vai falar com você em instantes! 👨‍🍳`;
+
+    return {
+      tenantCategories,
+      tenantProducts,
+      catalogByCategory,
+      catalogTextFormatted,
+      topItemsText,
+      digitalMenuUrl,
+      tableQrCodeUrlExample,
+      openingHoursText,
+      deliveryFeeFormatted,
+      minOrderFormatted,
+      customerRecentOrders,
+      readyToSendMessages: {
+        welcomeMenuReply,
+        closedMenuReply,
+        humanHandoffReply,
+      },
+    };
+  };
+
+  // Intelligent Restaurant Customer Reply Generator (for n8n AI Agent & WhatsApp Simulator)
+  const generateRestaurantCustomerReply = (params: {
+    tenant: any;
+    customerName?: string;
+    customerPhone?: string;
+    messageText?: string;
+    baseAppUrl: string;
+  }) => {
+    const { tenant, customerName = 'Cliente', customerPhone = '', messageText = '', baseAppUrl } = params;
+    const firstName = String(customerName || 'Cliente').trim().split(' ')[0] || 'Cliente';
+    const rawText = String(messageText || '').trim();
+    const cleanText = rawText.toLowerCase();
+    const ctx = buildRestaurantCatalogContext(tenant, baseAppUrl, customerPhone);
+
+    // 1. Human Handoff Request ("2", "atendente", "humano", "falar com alguem")
+    if (
+      cleanText === '2' ||
+      cleanText.includes('atendente') ||
+      cleanText.includes('humano') ||
+      cleanText.includes('falar com alguém') ||
+      cleanText.includes('falar com alguem')
+    ) {
+      return {
+        triggeredTool: 'tool_transferencia_atendente',
+        actionType: 'human_handoff' as const,
+        replyMessage:
+          `Perfeito, *${firstName}*! 👨‍🍳\n\n` +
+          `Pausamos as respostas automáticas para o seu número. Um atendente humano da equipe do *${tenant.name}* já foi notificado e vai te responder em instantes!\n\n` +
+          `Enquanto aguarda, se quiser conferir nosso cardápio digital:\n👉 ${ctx.digitalMenuUrl}`,
+      };
+    }
+
+    // 2. Order Status Inquiry ("onde está meu pedido", "status do pedido", "demora", "meu pedido")
+    if (
+      cleanText.includes('meu pedido') ||
+      cleanText.includes('status') ||
+      cleanText.includes('demora') ||
+      cleanText.includes('onde está') ||
+      cleanText.includes('onde esta') ||
+      cleanText.includes('cadê') ||
+      cleanText.includes('cade ') ||
+      cleanText.includes('rastrear')
+    ) {
+      if (ctx.customerRecentOrders.length > 0) {
+        const latest = ctx.customerRecentOrders[0];
+        return {
+          triggeredTool: 'tool_consultar_status_pedido',
+          actionType: 'order_status' as const,
+          replyMessage:
+            `Olá, *${firstName}*! Consultei seu pedido na cozinha do *${tenant.name}* agora mesmo: 🔍\n\n` +
+            `🧾 *Pedido:* #${latest.orderNumber}\n` +
+            `📌 *Status Atual:* *${latest.statusLabel}*\n` +
+            `🍔 *Itens:* ${latest.itemsSummary}\n` +
+            `💰 *Total:* ${latest.totalFormatted}\n\n` +
+            `👉 *Acompanhe em tempo real aqui:*\n${latest.trackingUrl}\n\n` +
+            `Qualquer dúvida, digite *2* para falar com nossa equipe!`,
+        };
+      }
+
+      // Check if there is any order in memory for this tenant to show as example or guide the customer
+      const anyTenantOrder = memoryOrders.find(
+        (o) => String(o.tenantSlug || '').toLowerCase() === String(tenant.slug || '').toLowerCase()
+      );
+      if (anyTenantOrder) {
+        return {
+          triggeredTool: 'tool_consultar_status_pedido',
+          actionType: 'order_status' as const,
+          replyMessage:
+            `Olá, *${firstName}*! Consultei o painel da cozinha do *${tenant.name}* agora mesmo: 🔍\n\n` +
+            `🧾 *Pedido Recente Localizado:* #${anyTenantOrder.orderNumber}\n` +
+            `📌 *Status:* *${anyTenantOrder.status === 'preparing' ? 'Em Preparo na Cozinha 👨‍🍳' : anyTenantOrder.status === 'ready' ? 'Saiu para Entrega / Pronto 🛵' : 'Pedido Confirmado ✅'}*\n` +
+            `💰 *Total:* R$ ${((anyTenantOrder.totalCents || 0) / 100).toFixed(2).replace('.', ',')}\n\n` +
+            `Assim que o status muda na cozinha, nós te avisamos automaticamente aqui no WhatsApp!\n` +
+            `Se quiser fazer um novo pedido, acesse:\n👉 ${ctx.digitalMenuUrl}\n\n` +
+            `Para falar com um atendente humano, digite *2*.`,
+        };
+      }
+
+      return {
+        triggeredTool: 'tool_consultar_status_pedido',
+        actionType: 'order_status' as const,
+        replyMessage:
+          `Olá, *${firstName}*! Consultei nosso sistema do *${tenant.name}* e ainda não encontrei um pedido ativo vinculado a este número hoje. 🔍\n\n` +
+          `👉 *Para fazer seu pedido agora mesmo sem fila, acesse nosso Cardápio Digital:*\n${ctx.digitalMenuUrl}\n\n` +
+          `Assim que você envia o pedido pelo link, você recebe os avisos automáticos aqui no WhatsApp (*Confirmado*, *Em Preparo* e *Saiu para Entrega*)!\n` +
+          `Se já pediu com outro telefone ou quer falar com um atendente, digite *2*.`,
+      };
+    }
+
+    // 3. Specific Product or Category Search in the Restaurant's Live Catalog
+    const searchWords = cleanText
+      .replace(/[?!.,;]/g, ' ')
+      .split(/\s+/)
+      .filter(
+        (w) =>
+          w.length >= 3 &&
+          ![
+            'ola',
+            'olá',
+            'bom',
+            'boa',
+            'dia',
+            'tarde',
+            'noite',
+            'quero',
+            'ver',
+            'cardapio',
+            'cardápio',
+            'menu',
+            'voces',
+            'vocês',
+            'estao',
+            'estão',
+            'aberto',
+            'abertos',
+            'qual',
+            'quais',
+            'tem',
+            'hoje',
+            'para',
+            'por',
+            'favor',
+            'como',
+            'fazer',
+            'pedir',
+          ].includes(w)
+      );
+
+    const matchedProducts = ctx.tenantProducts.filter((p) => {
+      const pName = String(p.name || '').toLowerCase();
+      const pDesc = String(p.description || '').toLowerCase();
+      return searchWords.some((w) => pName.includes(w) || pDesc.includes(w));
+    });
+
+    if (
+      matchedProducts.length > 0 ||
+      cleanText.includes('preço') ||
+      cleanText.includes('preco') ||
+      cleanText.includes('quanto custa') ||
+      cleanText.includes('opções') ||
+      cleanText.includes('opcoes') ||
+      cleanText.includes('cardápio completo') ||
+      cleanText.includes('cardapio completo') ||
+      cleanText.includes('todos os itens')
+    ) {
+      const itemsToDisplay = matchedProducts.length > 0 ? matchedProducts : ctx.tenantProducts;
+      const formattedList =
+        matchedProducts.length > 0
+          ? matchedProducts
+              .map(
+                (p) =>
+                  `• *${p.name}* — *R$ ${(p.priceCents / 100).toFixed(2).replace('.', ',')}*${
+                    p.description ? `\n  _${p.description}_` : ''
+                  }`
+              )
+              .join('\n')
+          : ctx.catalogTextFormatted || ctx.topItemsText;
+
+      return {
+        triggeredTool: 'tool_consultar_cardapio_e_precos',
+        actionType: 'cardapio' as const,
+        replyMessage:
+          `Olá, *${firstName}*! Confira as opções e preços atualizados no cardápio do *${tenant.name}*: 🍽️✨\n\n` +
+          `${formattedList || '• Cardápio atualizado disponível no link abaixo!'}\n\n` +
+          `🕒 *Status:* ${tenant.isOpen ? '🟢 ABERTO AGORA' : '🔴 FECHADO'} (${ctx.openingHoursText})\n` +
+          `🛵 *Entrega:* ${ctx.deliveryFeeFormatted} | *Mínimo:* ${ctx.minOrderFormatted}\n\n` +
+          `👉 *Clique no link abaixo para escolher seus itens e finalizar o pedido:*\n${ctx.digitalMenuUrl}\n\n` +
+          `Se precisar de ajuda de um atendente humano, responda *2*.`,
+      };
+    }
+
+    // 4. Delivery Fee, Address, Neighborhoods, Pickup, or Table QR Code Inquiry
+    if (
+      cleanText.includes('entrega') ||
+      cleanText.includes('taxa') ||
+      cleanText.includes('frete') ||
+      cleanText.includes('bairro') ||
+      cleanText.includes('endereço') ||
+      cleanText.includes('endereco') ||
+      cleanText.includes('onde fica') ||
+      cleanText.includes('retirada') ||
+      cleanText.includes('balcão') ||
+      cleanText.includes('balcao') ||
+      cleanText.includes('mesa')
+    ) {
+      const zonesList =
+        Array.isArray(tenant.deliveryZones) && tenant.deliveryZones.length > 0
+          ? tenant.deliveryZones
+              .filter((z: any) => z.active !== false)
+              .map((z: any) => `• ${z.name}: R$ ${((z.feeCents || 0) / 100).toFixed(2).replace('.', ',')}`)
+              .join('\n')
+          : '';
+
+      return {
+        triggeredTool: 'tool_taxa_entrega_e_modalidades',
+        actionType: 'cardapio' as const,
+        replyMessage:
+          `Olá, *${firstName}*! Aqui estão as informações de entrega e atendimento do *${tenant.name}*: 📍🛵\n\n` +
+          (tenant.address ? `🏠 *Endereço:* ${tenant.address}\n` : '') +
+          `🕒 *Horário:* ${ctx.openingHoursText} (${tenant.isOpen ? '🟢 Aberto Agora' : '🔴 Fechado no momento'})\n` +
+          `🛵 *Taxa de Entrega Padrão:* ${ctx.deliveryFeeFormatted}\n` +
+          `🛍️ *Pedido Mínimo:* ${ctx.minOrderFormatted}\n` +
+          (zonesList ? `\n🗺️ *Taxas por Região/Bairro:*\n${zonesList}\n` : '') +
+          `\nVocê pode pedir em 3 modalidades pelo nosso link:\n` +
+          `1️⃣ *Delivery (Entrega em casa)*\n` +
+          `2️⃣ *Retirada no Balcão (Sem taxa)*\n` +
+          `3️⃣ *Pedido na Mesa do Salão* (${ctx.tableQrCodeUrlExample})\n\n` +
+          `👉 *Peça agora pelo nosso Cardápio Digital:*\n${ctx.digitalMenuUrl}`,
+      };
+    }
+
+    // 5. Payment Methods / Pix Inquiry
+    if (
+      cleanText.includes('pix') ||
+      cleanText.includes('pagamento') ||
+      cleanText.includes('cartão') ||
+      cleanText.includes('cartao') ||
+      cleanText.includes('dinheiro') ||
+      cleanText.includes('troco') ||
+      cleanText.includes('aceita')
+    ) {
+      return {
+        triggeredTool: 'tool_formas_pagamento_loja',
+        actionType: 'cardapio' as const,
+        replyMessage:
+          `Olá, *${firstName}*! No Cardápio Digital do *${tenant.name}* você escolhe a forma de pagamento que preferir: 💳💠\n\n` +
+          `✅ *Pix Automático na Hora* (gera o QR Code e código Pix Copia e Cola direto na tela)\n` +
+          `✅ *Cartão de Crédito ou Débito* (levamos a maquininha na entrega ou no balcão)\n` +
+          `✅ *Dinheiro* (você informa no cardápio se precisa de troco)\n\n` +
+          `👉 *Monte seu pedido agora no nosso Cardápio Digital:*\n${ctx.digitalMenuUrl}`,
+      };
+    }
+
+    // 6. Opening Hours / Open Status Inquiry
+    if (
+      cleanText.includes('horário') ||
+      cleanText.includes('horario') ||
+      cleanText.includes('aberto') ||
+      cleanText.includes('fechado') ||
+      cleanText.includes('abre') ||
+      cleanText.includes('fecha') ||
+      cleanText.includes('funcionando')
+    ) {
+      return {
+        triggeredTool: 'tool_horario_funcionamento_loja',
+        actionType: tenant.isOpen ? ('cardapio' as const) : ('closed_hours' as const),
+        replyMessage:
+          `Olá, *${firstName}*! Confira o horário de atendimento do *${tenant.name}*: 🕒\n\n` +
+          `Status agora: *${tenant.isOpen ? '🟢 ABERTO AGORA (Recebendo Pedidos!)' : '🔴 FECHADO NO MOMENTO'}*\n` +
+          `🗓️ *Horário Oficial:* *${ctx.openingHoursText}*\n` +
+          `🛵 *Entrega:* ${ctx.deliveryFeeFormatted} | *Mínimo:* ${ctx.minOrderFormatted}\n` +
+          (ctx.topItemsText ? `\n🔥 *Destaques do Cardápio:*\n${ctx.topItemsText}\n` : '') +
+          `\n👉 *Acesse nosso Cardápio Digital Oficial:*\n${ctx.digitalMenuUrl}\n\n` +
+          `Se precisar falar com um atendente humano, digite *2*.`,
+      };
+    }
+
+    // 7. Default Greeting / Digital Menu Request
+    if (!tenant.isOpen) {
+      return {
+        triggeredTool: 'tool_enviar_cardapio_loja_fechada',
+        actionType: 'closed_hours' as const,
+        replyMessage:
+          `Olá, *${firstName}*! Agradecemos sua mensagem para o *${tenant.name}*! 🙏\n\n` +
+          `🔴 No momento estamos *FECHADOS*.\n` +
+          `🕒 *Horário de Funcionamento:* *${ctx.openingHoursText}*\n` +
+          (ctx.topItemsText ? `\n🍽️ *Confira algumas delícias do nosso cardápio:*\n${ctx.topItemsText}\n` : '') +
+          `\n👉 *Você já pode abrir nosso Cardápio Digital Oficial e conferir todos os itens:*\n${ctx.digitalMenuUrl}\n\n` +
+          `Se precisar falar com um atendente, responda *2*.`,
+      };
+    }
+
+    return {
+      triggeredTool: 'tool_enviar_cardapio_digital',
+      actionType: 'cardapio' as const,
+      replyMessage:
+        `Olá, *${firstName}*! Seja muito bem-vindo(a) ao *${tenant.name}*! 🍔✨\n\n` +
+        `Status da loja agora: *🟢 ABERTA (Recebendo Pedidos)*\n` +
+        `🕒 *Horário:* ${ctx.openingHoursText}\n` +
+        `🛵 *Entrega:* ${ctx.deliveryFeeFormatted} | *Mínimo:* ${ctx.minOrderFormatted}\n` +
+        (ctx.topItemsText ? `\n🔥 *Destaques de hoje no cardápio:*\n${ctx.topItemsText}\n` : '') +
+        `\n👉 *FAÇA SEU PEDIDO DIRETO PELO CARDÁPIO DIGITAL (Sem fila e com Pix na hora):*\n${ctx.digitalMenuUrl}\n\n` +
+        `💡 _Você pode pedir para Entrega (Delivery), Retirada no Balcão ou direto na Mesa!_\n` +
+        `Se preferir falar com um atendente humano, responda com *2*.`,
+    };
+  };
+
   // Bot Simulation & n8n Inbound Process Endpoint
   app.post('/api/v1/bot/simulate-message', (req: Request, res: Response) => {
-    const { tenantSlug, customerPhone, messageText } = req.body;
-    const tenant = memoryTenants.find((t) => t.slug === tenantSlug);
+    const { tenantSlug, customerPhone, customerName, messageText } = req.body;
+    const tenant = resolveTenantForAgent(tenantSlug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
 
-    const cleanText = String(messageText || '').trim().toLowerCase();
-    const isHumanRequest = cleanText === '2' || cleanText.includes('atendente') || cleanText.includes('humano');
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-    let replyMessage = '';
-    let actionType: 'cardapio' | 'human_handoff' | 'closed_hours' = 'cardapio';
-
     const baseAppUrl = (process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '');
-    if (isHumanRequest) {
-      actionType = 'human_handoff';
-      replyMessage = `Perfeito! Pausamos o robô de auto-resposta para o seu número. Um dos nossos atendentes humanos do ${tenant.name} vai falar com você em instantes! 👨‍🍳`;
-    } else if (!tenant.isOpen) {
-      actionType = 'closed_hours';
-      replyMessage = `Olá! Agradecemos sua mensagem para o ${tenant.name}.\n\nNo momento nosso restaurante está *FECHADO*.\n🕒 Horário de funcionamento: Seg a Dom das 18h às 23h30.\n\nVocê já pode conferir nosso cardápio e adiantar seu pedido para quando abrirmos:\n👉 ${baseAppUrl}/?loja=${tenant.slug}`;
-    } else {
-      actionType = 'cardapio';
-      replyMessage = `Olá! Seja muito bem-vindo ao *${tenant.name}*! 🍔\n\nNosso cardápio digital oficial está disponível no link abaixo com fotos, preços e promoções atualizadas:\n\n👉 ${baseAppUrl}/?loja=${tenant.slug}\n\nFaça seu pedido diretamente pelo link! Se preferir falar com um atendente da nossa equipe, responda com *2*.`;
-    }
+
+    const generated = generateRestaurantCustomerReply({
+      tenant,
+      customerName: customerName || 'Cliente',
+      customerPhone: customerPhone || '5511999998888',
+      messageText,
+      baseAppUrl,
+    });
+
+    const replyMessage = generated.replyMessage;
+    const actionType = generated.actionType;
 
     // Record Inbound log
     const inboundLog = {
@@ -2556,7 +3003,7 @@ async function startServer() {
       direction: 'inbound',
       status: 'success',
       payloadSummary: `Inbound processado via n8n para ${tenant.name}`,
-      fullPayload: { tenantSlug, customerPhone, messageText },
+      fullPayload: { tenantSlug: tenant.slug, customerPhone, messageText },
     };
     memoryWebhookLogs.unshift(inboundLog);
 
@@ -2571,8 +3018,8 @@ async function startServer() {
       messageText: replyMessage,
       direction: 'outbound',
       status: 'success',
-      payloadSummary: `Auto-resposta despachada via Evolution API (${actionType})`,
-      fullPayload: { actionType, replyMessage },
+      payloadSummary: `Auto-resposta despachada via Evolution API (${generated.triggeredTool})`,
+      fullPayload: { actionType, triggeredTool: generated.triggeredTool, replyMessage },
     };
     memoryWebhookLogs.unshift(outboundLog);
     if (memoryWebhookLogs.length > 50) memoryWebhookLogs.splice(50);
@@ -2583,7 +3030,8 @@ async function startServer() {
       receivedText: messageText,
       replyMessage,
       actionType,
-      processedBy: 'n8n-workflow-v1',
+      triggeredTool: generated.triggeredTool,
+      processedBy: 'n8n-workflow-v4',
       evolutionInstance: tenant.evolutionInstanceId,
       timestamp: currentTime,
     });
@@ -2700,61 +3148,52 @@ async function startServer() {
         'Configurador Rápido de Horário na Barra Superior e Link Direto Exclusivo do Restaurante (/?loja=slug)',
         'Importador inteligente de cardápio via planilha Excel/CSV em segundos',
       ],
+      knowledgeBase: rawKnowledgeBase,
       knowledgeBaseText: rawKnowledgeBase,
       updatedAt: new Date().toISOString(),
     });
   });
 
   app.put('/api/v1/n8n/knowledge-base', (req: Request, res: Response) => {
-    const { knowledgeBaseText } = req.body || {};
-    if (typeof knowledgeBaseText !== 'string' || !knowledgeBaseText.trim()) {
+    const incomingText = req.body?.content ?? req.body?.knowledgeBaseText;
+    if (typeof incomingText !== 'string' || !incomingText.trim()) {
       return res.status(400).json({
+        ok: false,
         success: false,
         error: 'O conteúdo da Base de Conhecimento não pode estar vazio.',
       });
     }
     const kbPath = path.join(process.cwd(), 'public', 'base-conhecimento-agente-ia-aladay.txt');
     try {
-      fs.writeFileSync(kbPath, knowledgeBaseText, 'utf-8');
+      fs.writeFileSync(kbPath, incomingText, 'utf-8');
       res.json({
+        ok: true,
         success: true,
-        message: 'Base de Conhecimento Oficial atualizada com sucesso!',
+        message: 'Base de Conhecimento Oficial v4.0 atualizada com sucesso!',
         updatedAt: new Date().toISOString(),
       });
     } catch (err: any) {
       res.status(500).json({
+        ok: false,
         success: false,
         error: err?.message || 'Erro ao salvar o arquivo da Base de Conhecimento.',
       });
     }
   });
 
-  // 2. GET /api/v1/n8n/agent-context/:slug (HTTP Tool for the n8n Restaurant Atendimento AI Agent)
-  app.get('/api/v1/n8n/agent-context/:slug', (req: Request, res: Response) => {
-    const slug = String(req.params.slug || 'aladay').trim();
-    const tenant = memoryTenants.find((t) => t.slug === slug) || memoryTenants[0];
+  // 2. GET /api/v1/n8n/agent-context/:slug & GET /api/v1/n8n/agent-context (HTTP Tool for the n8n Restaurant Atendimento AI Agent)
+  const handleGetN8nAgentContext = (req: Request, res: Response) => {
+    const slugOrInstance = String(req.params.slug || req.query.slug || req.query.loja || req.query.tenantSlug || '').trim();
+    const queryInstance = String(req.query.instance || '').trim();
+    const customerPhone = String(req.query.phone || req.query.customerPhone || '').trim();
+
+    const tenant = resolveTenantForAgent(slugOrInstance, queryInstance);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
     }
 
     const baseAppUrl = (process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '');
-    const tenantCategories = memoryCategories
-      .filter((c) => c.tenantSlug === tenant.slug)
-      .sort((a, b) => (a.order || 0) - (b.order || 0));
-    const tenantProducts = memoryProducts.filter((p) => p.tenantSlug === tenant.slug && p.isAvailable !== false);
-
-    const catalogByCategory = tenantCategories.map((cat) => ({
-      category: cat.name,
-      items: tenantProducts
-        .filter((p) => p.categoryId === cat.id)
-        .map((p) => ({
-          id: p.id,
-          name: p.name,
-          description: p.description,
-          priceFormatted: `R$ ${(p.priceCents / 100).toFixed(2).replace('.', ',')}`,
-          priceCents: p.priceCents,
-        })),
-    }));
+    const ctx = buildRestaurantCatalogContext(tenant, baseAppUrl, customerPhone);
 
     res.json({
       success: true,
@@ -2764,18 +3203,62 @@ async function startServer() {
         phone: tenant.phone,
         address: tenant.address,
         isOpen: tenant.isOpen,
-        openingHoursText: tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45',
-        digitalMenuUrl: `${baseAppUrl}/?loja=${tenant.slug}`,
-        tableQrCodeUrlExample: `${baseAppUrl}/?loja=${tenant.slug}&mesa=01`,
-        deliveryFeeFormatted: `R$ ${((tenant.deliveryFeeCents || 0) / 100).toFixed(2).replace('.', ',')}`,
-        minOrderFormatted: `R$ ${((tenant.minOrderCents || 0) / 100).toFixed(2).replace('.', ',')}`,
+        statusLabel: tenant.isOpen ? '🟢 ABERTO AGORA (Recebendo Pedidos)' : '🔴 FECHADO NO MOMENTO',
+        openingHoursText: ctx.openingHoursText,
+        digitalMenuUrl: ctx.digitalMenuUrl,
+        tableQrCodeUrlExample: ctx.tableQrCodeUrlExample,
+        deliveryFeeFormatted: ctx.deliveryFeeFormatted,
+        deliveryFeeCents: tenant.deliveryFeeCents || 0,
+        minOrderFormatted: ctx.minOrderFormatted,
+        minOrderCents: tenant.minOrderCents || 0,
         deliveryZones: tenant.deliveryZones || [],
         pixKey: tenant.pixKey || tenant.pixConfig?.pixKey || '',
+        paymentMethods: [
+          'Pix Automático na Hora (QR Code e Pix Copia e Cola)',
+          'Cartão de Crédito e Débito na Entrega/Balcão',
+          'Dinheiro (com cálculo de troco)',
+        ],
         tablesModuleEnabled: true,
         ifoodIntegrated: Boolean(tenant.ifoodConfig?.status === 'connected'),
       },
-      catalogSummary: catalogByCategory,
-      totalAvailableProducts: tenantProducts.length,
+      catalogSummary: ctx.catalogByCategory,
+      catalogTextFormatted: ctx.catalogTextFormatted,
+      topItemsText: ctx.topItemsText,
+      totalAvailableProducts: ctx.tenantProducts.length,
+      customerRecentOrders: ctx.customerRecentOrders,
+      readyToSendMessages: ctx.readyToSendMessages,
+      timestamp: new Date().toISOString(),
+    });
+  };
+
+  app.get('/api/v1/n8n/agent-context/:slug', handleGetN8nAgentContext);
+  app.get('/api/v1/n8n/agent-context', handleGetN8nAgentContext);
+
+  // 2B. POST /api/v1/n8n/restaurant-auto-reply (Direct intelligent reply generator for n8n workflows)
+  app.post('/api/v1/n8n/restaurant-auto-reply', (req: Request, res: Response) => {
+    const { tenantSlug, instance, customerName, customerPhone, messageText } = req.body || {};
+    const tenant = resolveTenantForAgent(tenantSlug, instance);
+    if (!tenant) {
+      return res.status(404).json({ error: 'Restaurante não encontrado.' });
+    }
+    const baseAppUrl = (process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '');
+    const generated = generateRestaurantCustomerReply({
+      tenant,
+      customerName,
+      customerPhone,
+      messageText,
+      baseAppUrl,
+    });
+    res.json({
+      success: true,
+      tenantSlug: tenant.slug,
+      restaurantName: tenant.name,
+      isOpen: tenant.isOpen,
+      openingHoursText: tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45',
+      digitalMenuUrl: `${baseAppUrl}/?loja=${tenant.slug}`,
+      triggeredTool: generated.triggeredTool,
+      actionType: generated.actionType,
+      replyMessage: generated.replyMessage,
       timestamp: new Date().toISOString(),
     });
   });
@@ -3050,29 +3533,17 @@ async function startServer() {
           `Qual é o segmento do seu negócio hoje (hamburgueria, pizzaria, churrascaria, restaurante, açaí...)?`;
       }
     } else {
-      // Restaurant Customer Support Agent Profile
-      const tenantProducts = memoryProducts.filter((p) => p.tenantSlug === tenant.slug && p.isAvailable !== false);
-      const topItems = tenantProducts
-        .slice(0, 4)
-        .map((p) => `• *${p.name}* — R$ ${(p.priceCents / 100).toFixed(2).replace('.', ',')}`)
-        .join('\n');
-
-      if (cleanText.includes('pedido') || cleanText.includes('demora') || cleanText.includes('status') || cleanText.includes('onde')) {
-        triggeredTool = 'tool_consultar_status_pedido';
-        agentReply =
-          `Olá, *${customerName.split(' ')[0]}*! Consultei nosso sistema da cozinha do *${tenant.name}* agora mesmo. 🔍\n\n` +
-          `Se você já realizou seu pedido pelo nosso cardápio digital, você recebe as atualizações automáticas aqui no WhatsApp a cada etapa (Confirmado → Em Preparo → Saiu para Entrega)!\n\n` +
-          `Se precisar falar com um atendente humano da loja sobre seu pedido, digite *2*.`;
-      } else {
-        triggeredTool = 'tool_consultar_cardapio_loja';
-        agentReply =
-          `Olá, *${customerName.split(' ')[0]}*! Seja bem-vindo(a) ao *${tenant.name}*! 🍔\n\n` +
-          `Status da loja agora: *${tenant.isOpen ? '🟢 ABERTA (Recebendo Pedidos)' : '🔴 FECHADA'}*\n` +
-          `🕒 Horário: *${tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45'}*\n` +
-          (topItems ? `\n🔥 *Destaques de hoje no cardápio:*\n${topItems}\n` : '') +
-          `\n👉 *Faça seu pedido direto pelo nosso Cardápio Digital (sem fila e com Pix na hora):*\n${baseAppUrl}/?loja=${tenant.slug}\n\n` +
-          `Se quiser falar com um atendente humano, responda *2*.`;
-      }
+      // Restaurant Customer Support Agent Profile (Cardápio Digital, Horário, Preços, Entrega e Status de Pedidos)
+      const resolvedTenant = resolveTenantForAgent(tenantSlug, tenant?.evolutionInstanceId);
+      const generated = generateRestaurantCustomerReply({
+        tenant: resolvedTenant,
+        customerName,
+        customerPhone,
+        messageText,
+        baseAppUrl,
+      });
+      triggeredTool = generated.triggeredTool;
+      agentReply = generated.replyMessage;
     }
 
     const latencyMs = Math.max(18, Date.now() - startTime);

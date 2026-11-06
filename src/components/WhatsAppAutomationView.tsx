@@ -347,8 +347,8 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [copiedCurl, setCopiedCurl] = useState(false);
 
-  // n8n AI Agent Configurator State
-  const [n8nAgentMode, setN8nAgentMode] = useState<'sdr_aladay' | 'restaurante_ia' | 'deterministico'>('sdr_aladay');
+  // n8n AI Agent Configurator State (Default focused on Restaurant Digital Menu Customer Support)
+  const [n8nAgentMode, setN8nAgentMode] = useState<'sdr_aladay' | 'restaurante_ia' | 'deterministico'>('restaurante_ia');
   const [n8nLlmProvider, setN8nLlmProvider] = useState<'openai' | 'gemini'>('openai');
   const [n8nLlmModel, setN8nLlmModel] = useState<string>('gpt-4o-mini');
   const [n8nMemoryWindow, setN8nMemoryWindow] = useState<number>(12);
@@ -357,9 +357,9 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const [webhookBindFeedback, setWebhookBindFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Live n8n Agent Tester State
-  const [agentTestCustomerName, setAgentTestCustomerName] = useState('Carlos Mendes (Dono de Hamburgueria)');
+  const [agentTestCustomerName, setAgentTestCustomerName] = useState('Adriano Saraiva (Cliente do Restaurante)');
   const [agentTestPhone, setAgentTestPhone] = useState('5591988887777');
-  const [agentTestMessage, setAgentTestMessage] = useState('Olá! Gostaria de saber quanto custa o sistema da Aladay e se vocês cobram comissão por pedido.');
+  const [agentTestMessage, setAgentTestMessage] = useState('Boa noite! Vocês estão abertos? Quero ver o cardápio digital e os preços de hoje.');
   const [dispatchToRemoteN8n, setDispatchToRemoteN8n] = useState(false);
   const [isTestingN8nAgent, setIsTestingN8nAgent] = useState(false);
   const [agentTestResult, setAgentTestResult] = useState<any | null>(null);
@@ -476,16 +476,35 @@ REGRAS DE ATENDIMENTO NO WHATSAPP:
 - Se o cliente pedir para falar com um atendente humano ou digitar "2", encaminhe imediatamente para o WhatsApp oficial: https://wa.me/559131976334 (+55 91 3197-6334).
 - Sempre finalize com uma pergunta engajadora convidando para criar a conta em: ${appOriginUrl}`;
 
-  const defaultRestaurantSystemPrompt = `Você é o Assistente Virtual de Atendimento do restaurante *${tenant.name}*.
-Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisão:
-1. Sempre envie o link direto do Cardápio Digital oficial para o cliente fazer o pedido sem fila: ${appOriginUrl}/?loja=${tenant.slug}
-2. Use a ferramenta HTTP "consultar_cardapio_e_loja" para verificar em tempo real se o restaurante está aberto, o horário de funcionamento configurado na barra superior, os produtos disponíveis, preços atualizados e taxa de entrega.
-3. Informe que o cliente pode pedir tanto para *Delivery*, *Retirada no Balcão* quanto direto na *Mesa do Salão via QR Code* (${appOriginUrl}/?loja=${tenant.slug}&mesa=01).
-4. Se o cliente perguntar sobre o andamento do pedido ("Onde está meu pedido?"), use a ferramenta HTTP "consultar_status_pedido" passando o telefone do cliente.
-5. Nunca invente produtos ou preços fora do cardápio retornado pela ferramenta.
-6. Se o cliente digitar "2" ou pedir um atendente humano, informe que um atendente da equipe do ${tenant.name} já vai atendê-lo.`;
+  const defaultRestaurantSystemPrompt = `Você é o Assistente Virtual Oficial de Atendimento e Cardápio Digital do restaurante *${tenant.name}*.
+Seu objetivo é atender os clientes do restaurante no WhatsApp com simpatia, rapidez e precisão, respondendo dúvidas sobre o cardápio e direcionando o cliente para fechar o pedido no link oficial.
 
-  const [agentSystemPrompt, setAgentSystemPrompt] = useState<string>(defaultSdrSystemPrompt);
+DADOS OFICIAIS DO RESTAURANTE:
+- Nome do Restaurante: *${tenant.name}*
+- Status Atual na Barra Superior: *${tenant.isOpen ? '🟢 ABERTO AGORA (Recebendo Pedidos)' : '🔴 FECHADO NO MOMENTO'}*
+- Horário de Funcionamento: *${tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45'}*
+- Taxa de Entrega Padrão: *${(tenant.deliveryFeeCents || 0) === 0 ? 'Grátis (R$ 0,00)' : `R$ ${((tenant.deliveryFeeCents || 0) / 100).toFixed(2).replace('.', ',')}`}*
+- Pedido Mínimo: *R$ ${((tenant.minOrderCents || 0) / 100).toFixed(2).replace('.', ',')}*
+- Link Direto Oficial do Cardápio Digital (Delivery e Retirada): ${appOriginUrl}/?loja=${tenant.slug}
+- Link Direto para Pedido na Mesa (QR Code Salão): ${appOriginUrl}/?loja=${tenant.slug}&mesa=01
+
+REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
+1. ENVIO DO LINK DO CARDÁPIO DIGITAL: Em toda saudação ("Oi", "Boa noite", "Quero pedir", "Manda o cardápio") ou dúvida sobre produtos, SEMPRE envie em destaque o link direto do Cardápio Digital oficial do restaurante:
+👉 ${appOriginUrl}/?loja=${tenant.slug}
+2. CONSULTA EM TEMPO REAL AO CATÁLOGO E HORÁRIO: Utilize os dados vivos do restaurante (ou acione a ferramenta HTTP "consultar_cardapio_e_loja" em ${appOriginUrl}/api/v1/n8n/agent-context/${tenant.slug}) para informar se a loja está ABERTA ou FECHADA agora, o horário configurado na barra superior, os itens disponíveis por categoria e seus preços exatos.
+3. PROIBIDO INVENTAR PRODUTOS OU PREÇOS: Responda apenas com os produtos e valores reais cadastrados no cardápio de *${tenant.name}*.
+4. MODALIDADES E PAGAMENTO: Explique que pelo link do Cardápio Digital o cliente pode escolher *Delivery (Entrega)*, *Retirada no Balcão* ou *Pedido na Mesa*, pagando via *Pix Automático na Hora (QR Code / Copia e Cola)*, *Cartão* ou *Dinheiro (com troco)*.
+5. STATUS DE PEDIDOS NA COZINHA: Se o cliente perguntar sobre um pedido em andamento ("Onde está meu pedido?", "Já saiu?"), acione a ferramenta HTTP "consultar_status_pedido" passando o WhatsApp do cliente.
+6. ATENDENTE HUMANO (OPÇÃO 2): Se o cliente digitar "2" ou pedir para falar com um atendente humano, informe que o atendimento automático foi pausado e que um atendente da equipe do *${tenant.name}* vai atendê-lo em instantes.`;
+
+  const [agentSystemPrompt, setAgentSystemPrompt] = useState<string>(defaultRestaurantSystemPrompt);
+
+  // Sync restaurant prompt automatically when switching the active restaurant
+  useEffect(() => {
+    if (n8nAgentMode === 'restaurante_ia') {
+      setAgentSystemPrompt(defaultRestaurantSystemPrompt);
+    }
+  }, [tenant.slug, tenant.name, tenant.isOpen, tenant.openingHoursText, n8nAgentMode, defaultRestaurantSystemPrompt]);
 
   // Switch default system prompt when user switches agent mode
   const handleSelectAgentMode = (mode: 'sdr_aladay' | 'restaurante_ia' | 'deterministico') => {
@@ -494,10 +513,10 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
       setAgentSystemPrompt(defaultSdrSystemPrompt);
       setAgentTestCustomerName('Carlos Mendes (Dono de Hamburgueria)');
       setAgentTestMessage('Olá! Gostaria de saber quanto custa o sistema da Aladay e se vocês cobram comissão por pedido.');
-    } else if (mode === 'restaurante_ia') {
+    } else {
       setAgentSystemPrompt(defaultRestaurantSystemPrompt);
-      setAgentTestCustomerName('Adriano Saraiva');
-      setAgentTestMessage('Boa noite! Vocês estão abertos? Qual o horário de funcionamento e o cardápio?');
+      setAgentTestCustomerName('Adriano Saraiva (Cliente do Restaurante)');
+      setAgentTestMessage('Boa noite! Vocês estão abertos? Quero ver o cardápio digital e os preços de hoje.');
     }
   };
 
@@ -509,7 +528,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
   const [isSendingTestWebhook, setIsSendingTestWebhook] = useState(false);
   const [testWebhookResult, setTestWebhookResult] = useState<any>(null);
 
-  // Build the dynamic n8n Workflow JSON according to the selected mode (AI Agent SDR, AI Agent Restaurant, or Deterministic)
+  // Build the dynamic n8n Workflow JSON according to the selected mode (AI Agent Restaurant, Deterministic Restaurant, or AI Agent SDR)
   const n8nWorkflowJSON = React.useMemo(() => {
     const cleanEvoUrl = (evolutionUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host').replace(/\/$/, '');
     const cleanInstance = tenant.evolutionInstanceId || 'aladay';
@@ -518,7 +537,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
     if (n8nAgentMode === 'deterministico') {
       return JSON.stringify(
         {
-          name: `Evolution API v2 - Auto Resposta Rapida [${cleanInstance}]`,
+          name: `${tenant.name} - Auto-Resposta Inteligente Cardapio Digital [${cleanInstance}]`,
           nodes: [
             {
               parameters: {
@@ -532,40 +551,61 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
               name: 'Webhook Evolution API',
               type: 'n8n-nodes-base.webhook',
               typeVersion: 2,
-              position: [140, 300],
+              position: [120, 300],
               webhookId: 'evolution-saas-webhook',
             },
             {
               parameters: {
-                jsCode: `// =========================================================================\n// Processador de Webhook Evolution API v2 (Easypanel Hostinger)\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/') ||\n                      String(body.destination || '').includes('/webhook-test/');\n\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    ''\n  ).trim();\n\n  if (!messageText) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  const instance = body.instance || '${cleanInstance}';\n  const isHumanHandoff = /^(2|atendente|humano|ajuda|falar com atendente|falar com alguem|suporte)$/i.test(messageText);\n\n  const menuReply = \`Olá, *\${customerName}*! Seja muito bem-vindo ao *${tenant.name}*! 🍔\\n\\nNosso cardápio digital completo está disponível com fotos e preços em tempo real:\\n\\n👉 ${appOriginUrl}/?loja=${tenant.slug}\\n\\nFaça seu pedido diretamente pelo link acima!\\nSe preferir falar com um atendente da nossa equipe, responda com *2*.\`;\n  const humanReply = \`Perfeito, *\${customerName}*! Pausamos o bot automático. Um dos nossos atendentes humanos vai te responder em instantes! 👨‍🍳\`;\n  const replyText = isHumanHandoff ? humanReply : menuReply;\n\n  results.push({\n    json: {\n      customerPhone,\n      customerName,\n      messageText,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      isHumanHandoff,\n      replyText,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n      payloadToSend: {\n        number: customerPhone,\n        text: replyText,\n        options: {\n          delay: 1200,\n          presence: 'composing',\n          linkPreview: true,\n        },\n      },\n    },\n  });\n}\n\nreturn results;`,
+                jsCode: `// =========================================================================\n// 1. Sanitizador & Filtro Anti-Loop Evolution API v2 (${tenant.name})\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // Ignorar mensagens de grupos e status/canais\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/') ||\n                      String(body.destination || '').includes('/webhook-test/');\n\n  // Ignorar mensagens enviadas pelo proprio restaurante (fromMe)\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    ''\n  ).trim();\n\n  if (!messageText) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  const instance = body.instance || '${cleanInstance}';\n\n  results.push({\n    json: {\n      tenantSlug: '${tenant.slug}',\n      customerPhone,\n      customerName,\n      messageText,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n    },\n  });\n}\n\nreturn results;`,
               },
               id: 'node-code-process',
               name: 'Tratar Payload Evolution API',
               type: 'n8n-nodes-base.code',
               typeVersion: 2,
-              position: [380, 300],
+              position: [360, 300],
             },
             {
               parameters: {
                 method: 'POST',
-                url: '={{ $json.endpointUrl }}',
+                url: `${appOriginUrl}/api/v1/n8n/restaurant-auto-reply`,
+                sendHeaders: true,
+                headerParameters: {
+                  parameters: [{ name: 'Content-Type', value: 'application/json' }],
+                },
+                sendBody: true,
+                specifyBody: 'json',
+                jsonBody:
+                  '={{ JSON.stringify({ tenantSlug: $json.tenantSlug, instance: $json.instance, customerName: $json.customerName, customerPhone: $json.customerPhone, messageText: $json.messageText }) }}',
+                options: {},
+              },
+              id: 'node-fetch-menu-reply',
+              name: 'Consultar Cardápio, Horário e Resposta (API Aladay)',
+              type: 'n8n-nodes-base.httpRequest',
+              typeVersion: 4.2,
+              position: [640, 300],
+            },
+            {
+              parameters: {
+                method: 'POST',
+                url: '={{ $("Tratar Payload Evolution API").item.json.endpointUrl }}',
                 sendHeaders: true,
                 headerParameters: {
                   parameters: [
-                    { name: 'apikey', value: '={{ $json.apiKey }}' },
+                    { name: 'apikey', value: '={{ $("Tratar Payload Evolution API").item.json.apiKey }}' },
                     { name: 'Content-Type', value: 'application/json' },
                   ],
                 },
                 sendBody: true,
                 specifyBody: 'json',
-                jsonBody: '={{ JSON.stringify($json.payloadToSend) }}',
+                jsonBody:
+                  '={{ JSON.stringify({ number: $("Tratar Payload Evolution API").item.json.customerPhone, text: $json.replyMessage, options: { delay: 1200, presence: "composing", linkPreview: true } }) }}',
                 options: {},
               },
               id: 'node-send-whatsapp',
-              name: 'Enviar Resposta (Evolution API)',
+              name: 'Enviar Cardápio no WhatsApp (Evolution API)',
               type: 'n8n-nodes-base.httpRequest',
               typeVersion: 4.2,
-              position: [660, 300],
+              position: [940, 300],
             },
           ],
           connections: {
@@ -573,7 +613,10 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
               main: [[{ node: 'Tratar Payload Evolution API', type: 'main', index: 0 }]],
             },
             'Tratar Payload Evolution API': {
-              main: [[{ node: 'Enviar Resposta (Evolution API)', type: 'main', index: 0 }]],
+              main: [[{ node: 'Consultar Cardápio, Horário e Resposta (API Aladay)', type: 'main', index: 0 }]],
+            },
+            'Consultar Cardápio, Horário e Resposta (API Aladay)': {
+              main: [[{ node: 'Enviar Cardápio no WhatsApp (Evolution API)', type: 'main', index: 0 }]],
             },
           },
           active: true,
@@ -584,19 +627,19 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
       );
     }
 
-    // AI Agent Workflow (LangChain n8n Agent + Chat Model + Window Buffer Memory + HTTP Tools + Evolution API v2)
+    // AI Agent Workflow (LangChain n8n Agent + Chat Model + Window Buffer Memory + Live Catalog Context + HTTP Tools + Evolution API v2)
     const llmNode =
       n8nLlmProvider === 'gemini'
         ? {
             parameters: {
               modelName: 'models/gemini-2.5-flash',
-              options: { temperature: 0.3 },
+              options: { temperature: 0.25 },
             },
             id: 'node-llm-model',
             name: 'Google Gemini Chat Model',
             type: '@n8n/n8n-nodes-langchain.lmChatGoogleGemini',
             typeVersion: 1,
-            position: [540, 540],
+            position: [640, 560],
           }
         : {
             parameters: {
@@ -605,13 +648,13 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                 value: n8nLlmModel || 'gpt-4o-mini',
                 mode: 'list',
               },
-              options: { temperature: 0.3 },
+              options: { temperature: 0.25 },
             },
             id: 'node-llm-model',
             name: 'OpenAI Chat Model',
             type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
             typeVersion: 1.2,
-            position: [540, 540],
+            position: [640, 560],
           };
 
     const toolNode =
@@ -628,21 +671,21 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
             name: 'Tool: Base de Conhecimento Aladay v4.0',
             type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
             typeVersion: 1.1,
-            position: [880, 540],
+            position: [960, 560],
           }
         : {
             parameters: {
               name: 'consultar_cardapio_e_loja',
               description:
-                'Consulta em tempo real se o restaurante está aberto, horário de funcionamento, produtos disponíveis no cardápio com preços, suporte a QR Code de Mesa, taxa de entrega e link direto do cardápio digital.',
+                'Consulta em tempo real se o restaurante está aberto, horário de funcionamento na barra superior, lista completa de produtos disponíveis no cardápio com preços, suporte a QR Code de Mesa, taxa de entrega e link direto do cardápio digital.',
               method: 'GET',
-              url: `${appOriginUrl}/api/v1/n8n/agent-context/${tenant.slug}`,
+              url: `=${appOriginUrl}/api/v1/n8n/agent-context/${tenant.slug}?instance={{ $("Tratar Payload & Anti-Loop").item.json.instance }}&phone={{ $("Tratar Payload & Anti-Loop").item.json.customerPhone }}`,
             },
             id: 'node-http-tool-catalog',
             name: 'Tool: Consultar Cardápio ao Vivo',
             type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
             typeVersion: 1.1,
-            position: [880, 540],
+            position: [960, 560],
           };
 
     const orderToolNode =
@@ -652,15 +695,41 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
               name: 'consultar_status_pedido',
               description: 'Consulta o status em tempo real dos pedidos recentes do cliente na cozinha pelo número de WhatsApp.',
               method: 'GET',
-              url: `=${appOriginUrl}/api/v1/n8n/order-status?phone={{ $fromAI("phone", "Telefone do cliente apenas numeros") }}&tenantSlug=${tenant.slug}`,
+              url: `=${appOriginUrl}/api/v1/n8n/order-status?phone={{ $("Tratar Payload & Anti-Loop").item.json.customerPhone }}&tenantSlug=${tenant.slug}`,
             },
             id: 'node-http-tool-orders',
             name: 'Tool: Consultar Status do Pedido',
             type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
             typeVersion: 1.1,
-            position: [1060, 540],
+            position: [1140, 560],
           }
         : null;
+
+    const preloadContextNode =
+      n8nAgentMode === 'restaurante_ia'
+        ? {
+            parameters: {
+              method: 'GET',
+              url: `=${appOriginUrl}/api/v1/n8n/agent-context/${tenant.slug}?instance={{ $json.instance }}&phone={{ $json.customerPhone }}`,
+              options: {},
+            },
+            id: 'node-preload-catalog-context',
+            name: 'Carregar Cardápio e Horário ao Vivo',
+            type: 'n8n-nodes-base.httpRequest',
+            typeVersion: 4.2,
+            position: [560, 300],
+          }
+        : null;
+
+    const agentPromptText =
+      n8nAgentMode === 'restaurante_ia'
+        ? `={{ "MENSAGEM DO CLIENTE (" + $("Tratar Payload & Anti-Loop").item.json.customerName + " - WhatsApp " + $("Tratar Payload & Anti-Loop").item.json.customerPhone + "): " + $("Tratar Payload & Anti-Loop").item.json.messageText + "\\n\\n=== CONTEXTO EM TEMPO REAL DA LOJA (" + $json.restaurant.name + ") ===\\nStatus Atual: " + $json.restaurant.statusLabel + "\\nHorário Configurado na Barra Superior: " + $json.restaurant.openingHoursText + "\\nLink Direto do Cardápio Digital: " + $json.restaurant.digitalMenuUrl + "\\nLink QR Code de Mesa: " + $json.restaurant.tableQrCodeUrlExample + "\\nTaxa de Entrega: " + $json.restaurant.deliveryFeeFormatted + " | Pedido Mínimo: " + $json.restaurant.minOrderFormatted + "\\n\\n=== PRODUTOS E PREÇOS DISPONÍVEIS NO CARDÁPIO ===\\n" + ($json.catalogTextFormatted || $json.topItemsText || "Cardápio disponível no link oficial.") + ($json.customerRecentOrders && $json.customerRecentOrders.length > 0 ? "\\n\\n=== PEDIDOS RECENTES DESTE CLIENTE ===\\nPedido #" + $json.customerRecentOrders[0].orderNumber + " - Status: " + $json.customerRecentOrders[0].statusLabel + " - Itens: " + $json.customerRecentOrders[0].itemsSummary + " - Total: " + $json.customerRecentOrders[0].totalFormatted : "") }}`
+        : '={{ $json.chatInput }}';
+
+    const agentNodeName =
+      n8nAgentMode === 'sdr_aladay'
+        ? 'Agente IA Comercial Aladay (SDR)'
+        : `Agente IA Cardápio Digital (${tenant.name})`;
 
     const nodesList: any[] = [
       {
@@ -675,32 +744,33 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
         name: 'Webhook Evolution API',
         type: 'n8n-nodes-base.webhook',
         typeVersion: 2,
-        position: [120, 300],
+        position: [100, 300],
         webhookId: 'evolution-saas-ai-agent-webhook',
       },
       {
         parameters: {
-          jsCode: `// =========================================================================\n// Sanitizador & Filtro Anti-Loop Evolution API v2 -> Agente de IA n8n\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // 1. Ignorar grupos e canais\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  // 2. Ignorar mensagens enviadas pelo proprio bot (fromMe), exceto em Teste no n8n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/');\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    ''\n  ).trim();\n\n  if (!messageText) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  const instance = body.instance || '${cleanInstance}';\n\n  results.push({\n    json: {\n      customerPhone,\n      customerName,\n      messageText,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n      chatInput: \`Cliente (\${customerName} - WhatsApp \${customerPhone}): \${messageText}\`,\n    },\n  });\n}\n\nreturn results;`,
+          jsCode: `// =========================================================================\n// Sanitizador & Filtro Anti-Loop Evolution API v2 -> Agente de IA n8n\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // 1. Ignorar grupos e canais\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  // 2. Ignorar mensagens enviadas pelo proprio bot (fromMe), exceto em Teste no n8n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/');\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    ''\n  ).trim();\n\n  if (!messageText) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  const instance = body.instance || '${cleanInstance}';\n\n  results.push({\n    json: {\n      tenantSlug: '${tenant.slug}',\n      customerPhone,\n      customerName,\n      messageText,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n      chatInput: \`Cliente (\${customerName} - WhatsApp \${customerPhone}): \${messageText}\`,\n    },\n  });\n}\n\nreturn results;`,
         },
         id: 'node-code-sanitize',
         name: 'Tratar Payload & Anti-Loop',
         type: 'n8n-nodes-base.code',
         typeVersion: 2,
-        position: [380, 300],
+        position: [320, 300],
       },
+      ...(preloadContextNode ? [preloadContextNode] : []),
       {
         parameters: {
           promptType: 'define',
-          text: '={{ $json.chatInput }}',
+          text: agentPromptText,
           options: {
             systemMessage: agentSystemPrompt,
           },
         },
         id: 'node-ai-agent',
-        name: n8nAgentMode === 'sdr_aladay' ? 'Agente IA Comercial Aladay (SDR)' : `Agente IA Atendimento (${tenant.name})`,
+        name: agentNodeName,
         type: '@n8n/n8n-nodes-langchain.agent',
         typeVersion: 1.7,
-        position: [680, 300],
+        position: [820, 300],
       },
       llmNode,
       {
@@ -713,7 +783,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
         name: 'Memória por WhatsApp (Window Buffer)',
         type: '@n8n/n8n-nodes-langchain.memoryBufferWindow',
         typeVersion: 1.3,
-        position: [710, 540],
+        position: [800, 560],
       },
       toolNode,
       {
@@ -743,7 +813,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
         name: 'Responder Cliente no WhatsApp (Evolution API)',
         type: 'n8n-nodes-base.httpRequest',
         typeVersion: 4.2,
-        position: [1060, 300],
+        position: [1180, 300],
       },
     ];
 
@@ -751,15 +821,28 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
       nodesList.push(orderToolNode);
     }
 
-    const agentNodeName = n8nAgentMode === 'sdr_aladay' ? 'Agente IA Comercial Aladay (SDR)' : `Agente IA Atendimento (${tenant.name})`;
-
     const connectionsObj: Record<string, any> = {
       'Webhook Evolution API': {
         main: [[{ node: 'Tratar Payload & Anti-Loop', type: 'main', index: 0 }]],
       },
       'Tratar Payload & Anti-Loop': {
-        main: [[{ node: agentNodeName, type: 'main', index: 0 }]],
+        main: [
+          [
+            {
+              node: preloadContextNode ? preloadContextNode.name : agentNodeName,
+              type: 'main',
+              index: 0,
+            },
+          ],
+        ],
       },
+      ...(preloadContextNode
+        ? {
+            [preloadContextNode.name]: {
+              main: [[{ node: agentNodeName, type: 'main', index: 0 }]],
+            },
+          }
+        : {}),
       [llmNode.name]: {
         ai_languageModel: [[{ node: agentNodeName, type: 'ai_languageModel', index: 0 }]],
       },
@@ -785,7 +868,7 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
         name:
           n8nAgentMode === 'sdr_aladay'
             ? `Aladay SaaS - Agente IA Comercial SDR + Evolution API [${cleanInstance}]`
-            : `${tenant.name} - Agente IA Cardapio & Pedidos + Evolution API [${cleanInstance}]`,
+            : `${tenant.name} - Agente IA Cardapio Digital & Pedidos + Evolution API [${cleanInstance}]`,
         nodes: nodesList,
         connections: connectionsObj,
         active: true,
@@ -985,15 +1068,16 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
   };
 
 
-  // Simulate customer sending a message in the WhatsApp simulator
-  const handleSimulateCustomerSend = (message: string) => {
+  // Simulate customer sending a message in the WhatsApp simulator (powered by the n8n Restaurant Agent engine)
+  const handleSimulateCustomerSend = async (message: string) => {
     if (!message.trim() || isSimulatingResponse) return;
 
+    const trimmedMsg = message.trim();
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     const userMsg: ChatMessage = {
       id: `msg_${Date.now()}`,
       sender: 'customer',
-      text: message.trim(),
+      text: trimmedMsg,
       time: currentTime,
       status: 'delivered',
     };
@@ -1005,16 +1089,38 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
     // Step 1: Webhook received by Evolution API
     setActivePipelineStep(1);
 
+    const lower = trimmedMsg.toLowerCase();
+    const isHumanOption = lower === '2' || lower.includes('humano') || lower.includes('atendente');
+
+    let serverReplyText = '';
+    try {
+      const res = await fetch('/api/v1/bot/simulate-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantSlug: tenant.slug,
+          customerName: 'Cliente WhatsApp',
+          customerPhone: '5511999998888',
+          messageText: trimmedMsg,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.replyMessage) {
+          serverReplyText = data.replyMessage;
+        }
+      }
+    } catch {
+      // Fallback to local template if offline
+    }
+
     setTimeout(() => {
       // Step 2: Webhook dispatched to n8n
       setActivePipelineStep(2);
 
       setTimeout(() => {
-        // Step 3: n8n evaluates business rules
+        // Step 3: n8n evaluates business rules & live catalog
         setActivePipelineStep(3);
-
-        const lower = message.toLowerCase().trim();
-        const isHumanOption = lower === '2' || lower.includes('humano') || lower.includes('atendente');
 
         setTimeout(() => {
           // Step 4: Evolution API responds back
@@ -1024,12 +1130,13 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
           let senderType: 'bot' | 'human' = 'bot';
 
           if (botPausedForCustomer && !lower.includes('cardapio') && !lower.includes('cardápio')) {
-            // Bot is paused, simulated human answers
             senderType = 'human';
-            replyText = `Olá! Sou o atendente humano da cozinha do ${tenant.name}. Já recebi sua mensagem aqui no painel e posso te ajudar! Como posso te atender?`;
+            replyText = `Olá! Sou o atendente humano da equipe do ${tenant.name}. Já recebi sua mensagem aqui no painel e posso te ajudar! Como posso te atender?`;
           } else if (isHumanOption) {
             setBotPausedForCustomer(true);
-            replyText = humanHandoffTemplate;
+            replyText = serverReplyText || humanHandoffTemplate;
+          } else if (serverReplyText) {
+            replyText = serverReplyText;
           } else if (!tenant.isOpen) {
             replyText = closedHoursTemplate;
           } else {
@@ -1047,9 +1154,10 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
           setChatMessages((prev) => [...prev, botMsg]);
           setIsSimulatingResponse(false);
           setActivePipelineStep(null);
-        }, 800);
-      }, 700);
-    }, 600);
+          handleRefreshLogs();
+        }, 550);
+      }, 450);
+    }, 400);
   };
 
   return (
@@ -1690,23 +1798,23 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
               {/* Quick Simulation Buttons */}
               <div className="pt-2 border-t border-neutral-100">
                 <span className="text-[11px] font-semibold text-neutral-700 block mb-2">
-                  Testes Rápidos de Interação:
+                  Testes Rápidos de Atendimento ao Cliente ({tenant.name}):
                 </span>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                   <button
                     type="button"
                     disabled={isSimulatingResponse}
-                    onClick={() => handleSimulateCustomerSend('Olá, boa noite! Quero ver o cardápio.')}
-                    className="p-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-left font-medium transition-colors disabled:opacity-50"
+                    onClick={() => handleSimulateCustomerSend('Olá, boa noite! Quero ver o cardápio digital.')}
+                    className="p-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-left font-medium transition-colors disabled:opacity-50 cursor-pointer"
                   >
-                    💬 &quot;Quero o cardápio&quot;
+                    🍔 &quot;Quero ver o cardápio digital&quot;
                   </button>
 
                   <button
                     type="button"
                     disabled={isSimulatingResponse}
                     onClick={() => handleSimulateCustomerSend('Qual o horário de funcionamento hoje?')}
-                    className="p-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-left font-medium transition-colors disabled:opacity-50"
+                    className="p-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-left font-medium transition-colors disabled:opacity-50 cursor-pointer"
                   >
                     🕒 &quot;Qual o horário de atendimento?&quot;
                   </button>
@@ -1714,24 +1822,52 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                   <button
                     type="button"
                     disabled={isSimulatingResponse}
-                    onClick={() => handleSimulateCustomerSend('2')}
-                    className="p-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg text-left font-medium transition-colors disabled:opacity-50"
+                    onClick={() => handleSimulateCustomerSend('Quais as opções e preços do cardápio completo?')}
+                    className="p-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-left font-medium transition-colors disabled:opacity-50 cursor-pointer"
                   >
-                    👨‍🍳 &quot;2 (Falar com Atendente)&quot;
+                    🍽️ &quot;Quais as opções e preços?&quot;
                   </button>
 
                   <button
                     type="button"
                     disabled={isSimulatingResponse}
-                    onClick={() => {
-                      setBotPausedForCustomer(false);
-                      handleSimulateCustomerSend('Oi, voltei a pedir pelo cardápio');
-                    }}
-                    className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-lg text-left font-medium transition-colors disabled:opacity-50"
+                    onClick={() => handleSimulateCustomerSend('Qual o valor da taxa de entrega e aceita Pix?')}
+                    className="p-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-left font-medium transition-colors disabled:opacity-50 cursor-pointer"
                   >
-                    🔄 Reativar Bot Automático
+                    🛵 &quot;Taxa de entrega e Pix&quot;
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isSimulatingResponse}
+                    onClick={() => handleSimulateCustomerSend('Onde está meu pedido?')}
+                    className="p-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-left font-medium transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    📦 &quot;Onde está meu pedido?&quot;
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isSimulatingResponse}
+                    onClick={() => handleSimulateCustomerSend('2')}
+                    className="p-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg text-left font-medium transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    👨‍🍳 &quot;2 (Falar com Atendente)&quot;
                   </button>
                 </div>
+                {botPausedForCustomer && (
+                  <button
+                    type="button"
+                    disabled={isSimulatingResponse}
+                    onClick={() => {
+                      setBotPausedForCustomer(false);
+                      handleSimulateCustomerSend('Oi, quero ver o cardápio digital novamente');
+                    }}
+                    className="mt-2 w-full p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-lg text-center text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    🔄 Reativar Resposta Automática do Cardápio
+                  </button>
+                )}
               </div>
             </div>
 
@@ -2032,33 +2168,10 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <button
                   type="button"
-                  onClick={() => handleSelectAgentMode('sdr_aladay')}
-                  className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
-                    n8nAgentMode === 'sdr_aladay'
-                      ? 'border-blue-600 bg-blue-50/70 ring-2 ring-blue-600/20'
-                      : 'border-neutral-200 bg-white hover:border-neutral-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
-                      <Sparkles className="w-4 h-4 text-blue-600" />
-                      <span>Agente IA Comercial SDR Aladay</span>
-                    </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-600 text-white">
-                      Recomendado
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-neutral-600 leading-relaxed">
-                    Treinado com toda a Base de Conhecimento da plataforma para responder dúvidas de <strong>Leads (donos de restaurantes)</strong> no WhatsApp (+55 91 3197-6334), quebrar objeções e converter nos planos de <strong>R$ 99/mês (Anual)</strong> ou <strong>15 Dias Grátis (Mensal)</strong>.
-                  </p>
-                </button>
-
-                <button
-                  type="button"
                   onClick={() => handleSelectAgentMode('restaurante_ia')}
                   className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
                     n8nAgentMode === 'restaurante_ia'
-                      ? 'border-blue-600 bg-blue-50/70 ring-2 ring-blue-600/20'
+                      ? 'border-emerald-600 bg-emerald-50/70 ring-2 ring-emerald-600/20'
                       : 'border-neutral-200 bg-white hover:border-neutral-300'
                   }`}
                 >
@@ -2067,12 +2180,12 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                       <Bot className="w-4 h-4 text-emerald-600" />
                       <span>Agente IA de Cardápio &amp; Pedidos</span>
                     </span>
-                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-600 text-white">
                       Loja: {tenant.slug}
                     </span>
                   </div>
                   <p className="text-[11px] text-neutral-600 leading-relaxed">
-                    Atende os consumidores finais de <strong>{tenant.name}</strong>, consulta o cardápio e preços ao vivo via HTTP Tool, envia o link do pedido e responde sobre o status na cozinha.
+                    Atende os clientes de <strong>{tenant.name}</strong> no WhatsApp: informa se está <strong>Aberto/Fechado</strong> e o horário da barra superior, responde preços reais do cardápio, envia o link direto <code className="font-mono">/?loja={tenant.slug}</code> e consulta status de pedidos.
                   </p>
                 </button>
 
@@ -2088,14 +2201,37 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
                       <Zap className="w-4 h-4 text-amber-600" />
-                      <span>Fluxo Rápido Determinístico</span>
+                      <span>Auto-Resposta Cardápio (Sem LLM)</span>
                     </span>
-                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-neutral-100 text-neutral-700">
-                      Sem Tokens LLM
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-amber-100 text-amber-900">
+                      Zero Custo IA
                     </span>
                   </div>
                   <p className="text-[11px] text-neutral-600 leading-relaxed">
-                    Auto-resposta instantânea sem custo de API de IA: envia imediatamente o link do cardápio digital ou transfere para atendente humano quando o cliente digita <strong>2</strong>.
+                    Consulta a API do <strong>{tenant.name}</strong> em tempo real sem gastar tokens OpenAI/Gemini: responde com horário atualizado, destaques com preços, link direto <code className="font-mono">/?loja={tenant.slug}</code> ou transfere no <strong>2</strong>.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectAgentMode('sdr_aladay')}
+                  className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+                    n8nAgentMode === 'sdr_aladay'
+                      ? 'border-blue-600 bg-blue-50/70 ring-2 ring-blue-600/20'
+                      : 'border-neutral-200 bg-white hover:border-neutral-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-blue-600" />
+                      <span>Agente IA Comercial SDR Aladay</span>
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
+                      Vendas SaaS
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-600 leading-relaxed">
+                    Treinado com a Base de Conhecimento v4.0 para atender <strong>donos de restaurantes (Leads)</strong>, apresentar Mesas/Garçom e Integração iFood, e converter nos planos da plataforma.
                   </p>
                 </button>
               </div>
@@ -2424,7 +2560,11 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
 
               {/* Quick Preset Questions */}
               <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                <span className="font-semibold text-slate-600">Perguntas de Teste (Base v4.0):</span>
+                <span className="font-semibold text-slate-600">
+                  {n8nAgentMode === 'sdr_aladay'
+                    ? 'Perguntas de Teste (SDR Comercial Aladay v4.0):'
+                    : `Perguntas de Teste de Clientes (${tenant.name}):`}
+                </span>
                 {n8nAgentMode === 'sdr_aladay' ? (
                   <>
                     <button
@@ -2494,17 +2634,52 @@ Seu objetivo é atender os clientes no WhatsApp com simpatia, rapidez e precisã
                   <>
                     <button
                       type="button"
-                      onClick={() => handleRunAgentLiveTest('Boa noite! Vocês estão abertos? Qual o horário e o cardápio?')}
-                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                      onClick={() => handleRunAgentLiveTest('Boa noite! Quero ver o cardápio digital para fazer um pedido.')}
+                      className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
                     >
-                      🍔 &ldquo;Horário e Cardápio de Hoje&rdquo;
+                      🍔 &ldquo;Quero o link do cardápio digital&rdquo;
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleRunAgentLiveTest('Qual o status do meu pedido?')}
-                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                      onClick={() => handleRunAgentLiveTest('Quais são as opções e preços do cardápio completo de hoje?')}
+                      className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
                     >
-                      🛵 &ldquo;Onde está meu pedido?&rdquo;
+                      🍽️ &ldquo;Ver produtos e preços&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunAgentLiveTest('Vocês estão abertos agora? Qual o horário de funcionamento?')}
+                      className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      🕒 &ldquo;Horário de atendimento&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunAgentLiveTest('Qual o valor da taxa de entrega e tem opção de retirada ou mesa?')}
+                      className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      🛵 &ldquo;Taxa de entrega e modalidades&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunAgentLiveTest('Quais formas de pagamento vocês aceitam? Tem Pix?')}
+                      className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      💠 &ldquo;Formas de pagamento / Pix&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunAgentLiveTest('Onde está meu pedido? Qual o status na cozinha?')}
+                      className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      📦 &ldquo;Onde está meu pedido?&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunAgentLiveTest('2')}
+                      className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      👨‍🍳 &ldquo;2 (Falar com atendente)&rdquo;
                     </button>
                   </>
                 )}
