@@ -29,6 +29,9 @@ import {
   Utensils,
   Bike,
   Users,
+  Plus,
+  Minus,
+  ArrowLeft,
 } from 'lucide-react';
 import { AuthSession, RestaurantTenant } from '../types';
 import {
@@ -147,6 +150,11 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
     { product: DEMO_PRODUCTS[0], count: 1 },
   ]);
   const [isDemoCartSheetOpen, setIsDemoCartSheetOpen] = useState<boolean>(false);
+  const [demoCheckoutStep, setDemoCheckoutStep] = useState<'bag' | 'customer'>('bag');
+  const [demoDeliveryType, setDemoDeliveryType] = useState<'delivery' | 'pickup'>('delivery');
+  const [demoCustomerName, setDemoCustomerName] = useState<string>('');
+  const [demoCustomerPhone, setDemoCustomerPhone] = useState<string>('');
+  const [demoCustomerAddress, setDemoCustomerAddress] = useState<string>('');
   const [demoOrderSimulatedPix, setDemoOrderSimulatedPix] = useState<boolean>(false);
 
   const demoCategories = ['Todos', 'Burgers', 'Pizzas', 'Acompanhamentos', 'Bebidas'];
@@ -158,6 +166,10 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
 
   const demoTotalCents = useMemo(() => {
     return demoCart.reduce((acc, item) => acc + item.product.priceCents * item.count, 0);
+  }, [demoCart]);
+
+  const demoTotalCount = useMemo(() => {
+    return demoCart.reduce((acc, item) => acc + item.count, 0);
   }, [demoCart]);
 
   const handleAddDemoProduct = (product: DemoProduct) => {
@@ -178,9 +190,28 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
     });
   };
 
+  const handleDecrementDemoProduct = (productId: string) => {
+    setDemoCart((prev) => {
+      const existing = prev.find((i) => i.product.id === productId);
+      if (!existing) return prev;
+      if (existing.count <= 1) {
+        const filtered = prev.filter((i) => i.product.id !== productId);
+        if (filtered.length === 0) {
+          setIsDemoCartSheetOpen(false);
+          setDemoCheckoutStep('bag');
+        }
+        return filtered;
+      }
+      return prev.map((i) =>
+        i.product.id === productId ? { ...i, count: i.count - 1 } : i
+      );
+    });
+  };
+
   const handleClearDemoCart = () => {
     setDemoCart([]);
     setIsDemoCartSheetOpen(false);
+    setDemoCheckoutStep('bag');
     setDemoOrderSimulatedPix(false);
   };
 
@@ -473,19 +504,11 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-xs shadow-blue-600/30 overflow-hidden">
-                        {tenant.logoUrl ? (
-                          <img
-                            src={tenant.logoUrl}
-                            alt={tenant.name}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          tenant.name.slice(0, 2).toUpperCase() || 'AL'
-                        )}
+                        AL
                       </div>
                       <div className="min-w-0">
                         <h2 className="text-xs font-bold text-white truncate">
-                          {tenant.name || 'Aladay Smash & Burger'}
+                          Aladay Cardápio Digital
                         </h2>
                         <p className="text-[10px] text-slate-400 truncate flex items-center gap-1">
                           <MapPin className="w-2.5 h-2.5" />
@@ -521,47 +544,85 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
 
                   {/* Scrollable Products List */}
                   <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
-                    {filteredDemoProducts.map((prod) => (
-                      <div
-                        key={prod.id}
-                        className="bg-white rounded-xl p-2 border border-slate-200 shadow-2xs flex gap-2.5 items-center hover:border-blue-500 transition-colors"
-                      >
-                        <img
-                          src={prod.imageUrl}
-                          alt={prod.name}
-                          className="w-16 h-16 rounded-lg object-cover shrink-0 bg-slate-100"
-                          loading="lazy"
-                        />
-                        <div className="flex-1 min-w-0">
-                          {prod.badge && (
-                            <span className="text-[9px] font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded">
-                              {prod.badge}
-                            </span>
-                          )}
-                          <h3 className="text-xs font-bold text-slate-900 truncate">
-                            {prod.name}
-                          </h3>
-                          <p className="text-[10px] text-slate-500 line-clamp-1 leading-tight">
-                            {prod.description}
-                          </p>
-                          <div className="mt-1 flex items-center justify-between">
-                            <span className="text-xs font-bold text-slate-950 font-mono">
-                              R$ {(prod.priceCents / 100).toFixed(2).replace('.', ',')}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleAddDemoProduct(prod)}
-                              className="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-semibold rounded-md transition-colors cursor-pointer"
-                            >
-                              + Adicionar
-                            </button>
+                    {filteredDemoProducts.map((prod) => {
+                      const inBagItem = demoCart.find((i) => i.product.id === prod.id);
+                      const countInBag = inBagItem ? inBagItem.count : 0;
+
+                      return (
+                        <div
+                          key={prod.id}
+                          className={`bg-white rounded-xl p-2 border shadow-2xs flex gap-2.5 items-center transition-colors ${
+                            countInBag > 0
+                              ? 'border-blue-500/80 bg-blue-50/15'
+                              : 'border-slate-200 hover:border-blue-500'
+                          }`}
+                        >
+                          <div className="relative shrink-0">
+                            <img
+                              src={prod.imageUrl}
+                              alt={prod.name}
+                              className="w-16 h-16 rounded-lg object-cover bg-slate-100"
+                              loading="lazy"
+                            />
+                            {countInBag > 0 && (
+                              <span className="absolute -top-1 -left-1 bg-blue-600 text-white text-[9px] font-mono font-extrabold px-1.5 py-0.5 rounded-full shadow-xs">
+                                {countInBag}x
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            {prod.badge && (
+                              <span className="text-[9px] font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded">
+                                {prod.badge}
+                              </span>
+                            )}
+                            <h3 className="text-xs font-bold text-slate-900 truncate">
+                              {prod.name}
+                            </h3>
+                            <p className="text-[10px] text-slate-500 line-clamp-1 leading-tight">
+                              {prod.description}
+                            </p>
+                            <div className="mt-1 flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-950 font-mono">
+                                R$ {(prod.priceCents / 100).toFixed(2).replace('.', ',')}
+                              </span>
+                              {countInBag > 0 ? (
+                                <div className="flex items-center gap-1 bg-slate-900 text-white rounded-md p-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDecrementDemoProduct(prod.id)}
+                                    className="w-5 h-5 rounded hover:bg-white/15 flex items-center justify-center cursor-pointer"
+                                  >
+                                    <Minus className="w-2.5 h-2.5" />
+                                  </button>
+                                  <span className="px-1 text-[10px] font-mono font-bold">
+                                    {countInBag}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAddDemoProduct(prod)}
+                                    className="w-5 h-5 rounded hover:bg-white/15 flex items-center justify-center cursor-pointer"
+                                  >
+                                    <Plus className="w-2.5 h-2.5" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddDemoProduct(prod)}
+                                  className="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-semibold rounded-md transition-colors cursor-pointer"
+                                >
+                                  + Adicionar
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     <div className="p-2 text-center text-[10px] text-slate-400">
-                      Toque em <strong>+ Adicionar</strong> para simular o pedido
+                      Escolha os produtos acima e depois toque em <strong>Ver Sacola</strong> para finalizar
                     </div>
                   </div>
 
@@ -571,13 +632,16 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                       <div className="space-y-1.5">
                         <button
                           type="button"
-                          onClick={() => setIsDemoCartSheetOpen(!isDemoCartSheetOpen)}
+                          onClick={() => {
+                            setDemoCheckoutStep('bag');
+                            setIsDemoCartSheetOpen(true);
+                          }}
                           className="w-full py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold flex items-center justify-between transition-colors cursor-pointer shadow-xs shadow-blue-600/20"
                         >
                           <div className="flex items-center gap-1.5">
                             <ShoppingBag className="w-3.5 h-3.5" />
                             <span>
-                              {demoCart.reduce((sum, i) => sum + i.count, 0)} {demoCart.length === 1 ? 'item' : 'itens'}
+                              {demoTotalCount} {demoTotalCount === 1 ? 'item' : 'itens'}
                             </span>
                           </div>
                           <span>R$ {(demoTotalCents / 100).toFixed(2).replace('.', ',')} &middot; Ver Sacola</span>
@@ -589,76 +653,201 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                         onClick={() => handleAddDemoProduct(DEMO_PRODUCTS[0])}
                         className="w-full py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer"
                       >
-                        <span>Sacola vazia &middot; Adicione um item</span>
+                        <span>Sacola vazia &middot; Toque em + Adicionar nos itens</span>
                       </button>
                     )}
                   </div>
 
-                  {/* Simulated Drawer / Pix Sheet inside Phone */}
+                  {/* Simulated 2-Step Drawer (1. Sacola -> 2. Seus Dados e Pix) inside Phone */}
                   {isDemoCartSheetOpen && (
                     <div className="absolute inset-0 bg-slate-950/60 z-40 flex flex-col justify-end">
-                      <div className="bg-white rounded-t-2xl p-3 space-y-2 border-t border-slate-200 max-h-[75%] overflow-y-auto">
+                      <div className="bg-white rounded-t-2xl p-3 space-y-2.5 border-t border-slate-200 max-h-[82%] overflow-y-auto">
                         <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                          <span className="text-xs font-bold text-slate-900">
-                            Sacola do Cliente (Simulação)
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            {demoCheckoutStep === 'customer' && !demoOrderSimulatedPix && (
+                              <button
+                                type="button"
+                                onClick={() => setDemoCheckoutStep('bag')}
+                                className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+                              >
+                                <ArrowLeft className="w-3 h-3" />
+                              </button>
+                            )}
+                            <span className="text-xs font-bold text-slate-900">
+                              {demoCheckoutStep === 'bag'
+                                ? '1. Sua Sacola'
+                                : '2. Seus Dados & Pagamento'}
+                            </span>
+                          </div>
                           <button
                             type="button"
                             onClick={() => setIsDemoCartSheetOpen(false)}
-                            className="text-slate-400 hover:text-slate-700 text-xs p-1"
+                            className="text-slate-400 hover:text-slate-700 text-xs p-1 cursor-pointer"
                           >
                             <X className="w-3.5 h-3.5" />
                           </button>
                         </div>
 
-                        <div className="space-y-1.5 text-xs">
-                          {demoCart.map((item) => (
-                            <div key={item.product.id} className="flex justify-between items-center text-[11px]">
-                              <span className="truncate pr-2">
-                                {item.count}x {item.product.name}
-                              </span>
-                              <span className="font-mono font-semibold shrink-0">
-                                R$ {((item.product.priceCents * item.count) / 100).toFixed(2).replace('.', ',')}
-                              </span>
+                        {demoCheckoutStep === 'bag' ? (
+                          /* Etapa 1 da Demonstração: Revisar Itens na Sacola */
+                          <div className="space-y-2">
+                            <div className="space-y-1.5 text-xs max-h-36 overflow-y-auto pr-0.5">
+                              {demoCart.map((item) => (
+                                <div
+                                  key={item.product.id}
+                                  className="flex justify-between items-center text-[11px] bg-slate-50 border border-slate-200/80 rounded-lg p-1.5"
+                                >
+                                  <div className="min-w-0 flex-1 pr-2">
+                                    <p className="font-semibold text-slate-900 truncate">
+                                      {item.product.name}
+                                    </p>
+                                    <p className="text-[10px] font-mono text-blue-600 font-bold">
+                                      R$ {((item.product.priceCents * item.count) / 100).toFixed(2).replace('.', ',')}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-md p-0.5 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDecrementDemoProduct(item.product.id)}
+                                      className="w-4 h-4 rounded hover:bg-slate-100 flex items-center justify-center text-slate-700 cursor-pointer"
+                                    >
+                                      <Minus className="w-2.5 h-2.5" />
+                                    </button>
+                                    <span className="px-1 text-[10px] font-mono font-bold text-slate-900">
+                                      {item.count}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAddDemoProduct(item.product)}
+                                      className="w-4 h-4 rounded hover:bg-slate-100 flex items-center justify-center text-slate-700 cursor-pointer"
+                                    >
+                                      <Plus className="w-2.5 h-2.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
 
-                        <div className="pt-2 border-t border-slate-200 flex justify-between font-bold text-xs">
-                          <span>Total do Pedido:</span>
-                          <span className="font-mono text-blue-600">
-                            R$ {(demoTotalCents / 100).toFixed(2).replace('.', ',')}
-                          </span>
-                        </div>
-
-                        {!demoOrderSimulatedPix ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setDemoOrderSimulatedPix(true);
-                              trackConversionEvent('interact_phone_demo', { action: 'simulate_pix_checkout' });
-                            }}
-                            className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center justify-center gap-1"
-                          >
-                            <QrCode className="w-3.5 h-3.5" />
-                            <span>Pagar com Pix Direto (0% taxa)</span>
-                          </button>
-                        ) : (
-                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 text-[10px] space-y-1 text-blue-950">
-                            <div className="flex items-center gap-1 font-bold text-blue-800">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
-                              <span>QR Code Pix Gerado na Hora</span>
-                            </div>
-                            <p className="text-slate-600">
-                              O dinheiro entra 100% no banco da loja. A cozinha recebe a comanda e o cliente é avisado no WhatsApp.
-                            </p>
                             <button
                               type="button"
-                              onClick={handleClearDemoCart}
-                              className="mt-1 w-full text-center text-blue-600 font-semibold underline"
+                              onClick={() => setIsDemoCartSheetOpen(false)}
+                              className="w-full py-1.5 border border-dashed border-slate-300 rounded-lg text-[10px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
                             >
-                              Reiniciar Demonstração
+                              + Adicionar mais produtos
                             </button>
+
+                            <div className="pt-1.5 border-t border-slate-200 flex justify-between font-bold text-xs">
+                              <span>Subtotal ({demoTotalCount} {demoTotalCount === 1 ? 'item' : 'itens'}):</span>
+                              <span className="font-mono text-blue-600">
+                                R$ {(demoTotalCents / 100).toFixed(2).replace('.', ',')}
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDemoCheckoutStep('customer');
+                                trackConversionEvent('interact_phone_demo', { action: 'proceed_to_customer_data' });
+                              }}
+                              className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
+                            >
+                              <span>Finalizar e Preencher Dados</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          /* Etapa 2 da Demonstração: Preencher Dados do Cliente e Pagar */
+                          <div className="space-y-2 text-[11px]">
+                            {!demoOrderSimulatedPix ? (
+                              <>
+                                <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-100 rounded-lg text-[10px] font-bold">
+                                  <button
+                                    type="button"
+                                    onClick={() => setDemoDeliveryType('delivery')}
+                                    className={`py-1 rounded-md cursor-pointer ${
+                                      demoDeliveryType === 'delivery'
+                                        ? 'bg-white text-slate-900 shadow-2xs'
+                                        : 'text-slate-500'
+                                    }`}
+                                  >
+                                    🛵 Delivery
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setDemoDeliveryType('pickup')}
+                                    className={`py-1 rounded-md cursor-pointer ${
+                                      demoDeliveryType === 'pickup'
+                                        ? 'bg-white text-slate-900 shadow-2xs'
+                                        : 'text-slate-500'
+                                    }`}
+                                  >
+                                    🛍️ Retirada
+                                  </button>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                  <input
+                                    type="text"
+                                    value={demoCustomerName}
+                                    onChange={(e) => setDemoCustomerName(e.target.value)}
+                                    placeholder="Seu Nome Completo"
+                                    className="w-full px-2 py-1.5 text-[11px] border border-slate-300 rounded-md text-slate-900"
+                                  />
+                                  <input
+                                    type="tel"
+                                    value={demoCustomerPhone}
+                                    onChange={(e) => setDemoCustomerPhone(e.target.value)}
+                                    placeholder="Seu WhatsApp (DDD + Número)"
+                                    className="w-full px-2 py-1.5 text-[11px] border border-slate-300 rounded-md text-slate-900 font-mono"
+                                  />
+                                  {demoDeliveryType === 'delivery' && (
+                                    <input
+                                      type="text"
+                                      value={demoCustomerAddress}
+                                      onChange={(e) => setDemoCustomerAddress(e.target.value)}
+                                      placeholder="Endereço de Entrega (Rua e Número)"
+                                      className="w-full px-2 py-1.5 text-[11px] border border-slate-300 rounded-md text-slate-900"
+                                    />
+                                  )}
+                                </div>
+
+                                <div className="pt-1.5 border-t border-slate-200 flex justify-between font-bold text-xs">
+                                  <span>Total a Pagar:</span>
+                                  <span className="font-mono text-blue-600">
+                                    R$ {(demoTotalCents / 100).toFixed(2).replace('.', ',')}
+                                  </span>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDemoOrderSimulatedPix(true);
+                                    trackConversionEvent('interact_phone_demo', { action: 'simulate_pix_checkout' });
+                                  }}
+                                  className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1"
+                                >
+                                  <QrCode className="w-3.5 h-3.5" />
+                                  <span>Concluir Pedido &amp; Gerar Pix</span>
+                                </button>
+                              </>
+                            ) : (
+                              <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 text-[10px] space-y-1.5 text-blue-950">
+                                <div className="flex items-center gap-1 font-bold text-blue-800 text-xs">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
+                                  <span>Pedido Confirmado &amp; Pix Gerado!</span>
+                                </div>
+                                <p className="text-slate-600 leading-relaxed">
+                                  {demoCustomerName ? `Obrigado, ${demoCustomerName}! ` : ''}O pagamento Pix entra 100% no banco da loja, a cozinha recebe no KDS e o cliente acompanha no WhatsApp.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={handleClearDemoCart}
+                                  className="mt-1 w-full py-1.5 bg-white border border-blue-200 rounded-md text-center text-blue-600 font-bold hover:bg-blue-100/50 cursor-pointer"
+                                >
+                                  Fazer Novo Teste na Demonstração
+                                </button>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
