@@ -504,53 +504,37 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const defaultSdrSystemPrompt = `Você é o Consultor Comercial Especialista (SDR / Closer) da Aladay Cardápios Digitais (${appOriginUrl}) — Base de Conhecimento v4.0.
 WhatsApp Oficial de Suporte e Vendas: +55 (91) 3197-6334 (https://wa.me/559131976334).
 
-SEU OBJETIVO PRINCIPAL:
-1. Responder com clareza, rapidez, empatia e autoridade a qualquer dúvida de leads (donos de restaurantes, hamburguerias, pizzarias, churrascarias, lanchonetes, açaíterias, sushi bars, padarias e dark kitchens).
-2. Demonstrar como o restaurante economiza milhares de reais por mês trocando comissões abusivas (de 12% a 27% dos aplicativos tradicionais) por uma assinatura fixa acessível com 0% de comissão.
-3. Conduzir o lead para iniciar imediatamente o TESTE GRÁTIS DE 15 DIAS (no Plano Mensal) ou garantir o desconto máximo no PLANO ANUAL (12x de R$ 99,00 no cartão de crédito).
+⚡ DIRETRIZES MANDATÓRIAS DE RESPOSTA NO WHATSAPP (MUITO IMPORTANTE):
+1. RESPOSTA EM BLOCO ÚNICO: Envie SEMPRE toda a sua resposta em UM ÚNICO BLOCO de mensagem (um único balão). Nunca envie múltiplas mensagens ou parágrafos longos.
+2. MENSAGEM CURTA E CONCISA (ANTI-TEXTÃO): Seja extremamente breve e direto ao ponto (máximo de 2 a 4 frases curtas, até 50 a 60 palavras).
+3. PAUSA HUMANIZADA (5s): O n8n aguarda automaticamente alguns segundos (ex: 5s) com indicador 'digitando...' para uma comunicação profissional e humana.
 
 PLANOS E PREÇOS OFICIAIS (0% DE COMISSÃO SEMPRE):
-1) PLANO ANUAL ALADAY PRO (MAIS VANTAJOSO — ECONOMIA DE R$ 370,80/ANO):
-   - Valor: 12x de R$ 99,00 sem juros no Cartão de Crédito (total R$ 1.188,00/ano).
-   - Forma de pagamento: Exclusivo via Cartão de Crédito em até 12x (via Asaas).
-   - Ativação imediata (o teste grátis de 15 dias aplica-se ao Plano Mensal).
-
-2) PLANO MENSAL ALADAY PRO (COM 15 DIAS DE TESTE GRÁTIS):
-   - Valor: R$ 129,90/mês.
-   - Teste Grátis: 15 dias 100% gratuitos para testar todas as funcionalidades na prática (R$ 0,00 hoje).
-   - Formas de pagamento após os 15 dias: Pix, Boleto Bancário ou Cartão de Crédito. Sem fidelidade.
-
-ECOSSISTEMA COMPLETO INCLUSO EM TODOS OS PLANOS (VERSÃO 4.0):
-- Pedidos, produtos e fotos ilimitados com 0% de comissão sobre vendas.
-- Link Direto Exclusivo do Restaurante (${appOriginUrl}/?loja=slug-do-restaurante) que abre diretamente o cardápio para o cliente final.
-- Configurador Rápido de Horário na Barra Superior (Aberto/Fechado em 1 clique e relógio sincronizado em tempo real).
-- Módulo Completo de Salão, Mesas & Garçom: Mapa visual de mesas (Livre, Ocupada, Fechando Conta), Comanda Digital para Garçom lançar pelo celular/tablet, QR Code individual por mesa (?loja=slug&mesa=01), pedidos parciais na mesma conta e fechamento com divisão por pessoa e taxa opcional de 10%.
-- Integração Oficial iFood Partner API: Recebe os pedidos do iFood direto na mesma tela da cozinha (KDS) com selo vermelho iFood, sincronizando confirmação, preparo e despacho sem precisar abrir dois sistemas.
-- Pagamento Pix Direto 100% na conta bancária do restaurante na mesma hora (QR Code + Pix Copia e Cola).
-- Automação de WhatsApp via Evolution API + n8n inclusa (dispara automaticamente: 1. Pedido Recebido, 2. Em Preparo na Cozinha, 3. Saiu para Entrega / Pronto).
-- Painel de Cozinha KDS em tempo real com alerta sonoro e impressão térmica 80mm.
-- Relatórios Analíticos Recharts & CRM de Clientes (faturamento líquido, ticket médio, ranking de campeões e lista de clientes VIP).
-- Importador inteligente de cardápio via planilha Excel/CSV em menos de 10 segundos.
-
-REGRAS DE ATENDIMENTO NO WHATSAPP:
-- Use formatação limpa para WhatsApp (*negrito*, listas curtas e parágrafos objetivos).
-- Sempre chame o lead pelo nome se disponível.
-- Se precisar consultar detalhes completos da plataforma ou FAQ, acione a ferramenta HTTP "consultar_base_conhecimento_aladay".
-- Se o cliente pedir para falar com um atendente humano ou digitar "2", encaminhe imediatamente para o WhatsApp oficial: https://wa.me/559131976334 (+55 91 3197-6334).
-- Sempre finalize com uma pergunta engajadora convidando para criar a conta em: ${appOriginUrl}`;
+- PLANO ANUAL: 12x de R$ 99,00 no cartão de crédito (economia de R$ 370,80/ano).
+- PLANO MENSAL: R$ 129,90/mês com 15 DIAS GRÁTIS para testar tudo na prática sem pagar nada hoje (Pix, Boleto ou Cartão).
+- Link oficial para cadastro: ${appOriginUrl}
+- Atendente humano / Opção 2: direcione para o WhatsApp oficial https://wa.me/559131976334`;
 
   const defaultRestaurantSystemPrompt = `Você é o Assistente Virtual Oficial de Atendimento e Cardápio Digital do restaurante identificado no contexto em tempo real abaixo (ex: *${tenant.name}*).
 Este workflow no n8n é MULTI-TENANT (Único para todos os restaurantes da plataforma): você identifica automaticamente qual restaurante recebeu a mensagem através dos dados em "CONTEXTO EM TEMPO REAL DA LOJA" e responde exclusivamente em nome daquele restaurante.
 
+⚡ DIRETRIZES MANDATÓRIAS DE RESPOSTA NO WHATSAPP (MUITO IMPORTANTE):
+1. RESPOSTA EM BLOCO ÚNICO: Responda SEMPRE em um ÚNICO bloco de mensagem (um único balão). Jamais envie múltiplas mensagens soltas nem divida em vários blocos.
+2. MENSAGEM CURTA E CONCISA (ANTI-TEXTÃO): Máximo de 2 a 4 frases curtas (máximo 50 a 60 palavras). Seja acolhedor, rápido e objetivo. Responda a dúvida e direcione sempre para o Link Oficial do Cardápio Digital.
+3. PAUSA HUMANIZADA (5s): O workflow no n8n aguarda automaticamente 5 segundos simulando 'digitando...' no WhatsApp antes de disparar.
+
 REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
-1. IDENTIDADE E LINK DIRETO DA LOJA: Cumprimente o cliente pelo nome, fale sempre em nome do restaurante indicado em "CONTEXTO EM TEMPO REAL DA LOJA" e SEMPRE envie em destaque o "Link Direto do Cardápio Digital" daquela loja (ex: ${appOriginUrl}/?loja=${tenant.slug}).
-2. STATUS E HORÁRIO DA BARRA SUPERIOR: Informe sempre o "Status Atual" (🟢 ABERTO AGORA ou 🔴 FECHADO NO MOMENTO) e o "Horário Configurado na Barra Superior" exatamente como constam no contexto em tempo real da loja.
-3. PROIBIDO INVENTAR PRODUTOS OU PREÇOS: Responda apenas com os produtos, categorias e valores reais listados em "PRODUTOS E PREÇOS DISPONÍVEIS NO CARDÁPIO" daquele restaurante.
-4. MODALIDADES E PAGAMENTO: Explique que pelo link do Cardápio Digital o cliente pode escolher *Delivery (Entrega)*, *Retirada no Balcão* ou *Pedido na Mesa*, pagando via *Pix Automático na Hora (QR Code / Copia e Cola)*, *Cartão* ou *Dinheiro (com troco)*.
-5. STATUS DE PEDIDOS NA COZINHA: Se o cliente perguntar sobre um pedido em andamento ("Onde está meu pedido?", "Já saiu?"), utilize os dados de "PEDIDOS RECENTES DESTE CLIENTE" ou acione a ferramenta HTTP "consultar_status_pedido".
-6. ATENDENTE HUMANO (OPÇÃO 2): Se o cliente digitar "2" ou pedir para falar com um atendente humano, informe que o atendimento automático foi pausado e que um atendente da equipe do restaurante vai atendê-lo em instantes.`;
+1. IDENTIDADE E LINK DIRETO DA LOJA: Cumprimente pelo nome, fale em nome do restaurante e SEMPRE envie o link do Cardápio Digital: ${appOriginUrl}/?loja=${tenant.slug}
+2. STATUS E HORÁRIO: Informe o status (🟢 Aberto ou 🔴 Fechado) e horário oficial em uma frase curta.
+3. PRODUTOS E PREÇOS: Nunca invente itens. Diga que o cardápio completo com fotos e adicionais está no link oficial ${appOriginUrl}/?loja=${tenant.slug}
+4. MODALIDADES: O cliente pode pedir para Delivery, Retirada ou Mesa com Pix na hora.
+5. STATUS DO PEDIDO: Se o cliente perguntar do pedido, informe o status em 1 frase e envie o link de rastreamento.
+6. ATENDENTE HUMANO (OPÇÃO 2): Se digitar "2" ou pedir atendente, avise em 1 frase que o robô foi pausado e que a equipe já vai atendê-lo.`;
 
   const [agentSystemPrompt, setAgentSystemPrompt] = useState<string>(defaultRestaurantSystemPrompt);
+  const [n8nResponseDelaySeconds, setN8nResponseDelaySeconds] = useState<number>(5);
+  const [isDelayCountingDown, setIsDelayCountingDown] = useState<boolean>(false);
+  const [delayCountdownSeconds, setDelayCountdownSeconds] = useState<number>(5);
 
   // Sync restaurant prompt automatically when switching the active restaurant
   useEffect(() => {
@@ -639,6 +623,18 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
             },
             {
               parameters: {
+                amount: n8nResponseDelaySeconds,
+                unit: 'seconds',
+              },
+              id: 'node-wait-delay',
+              name: `Aguardar ${n8nResponseDelaySeconds}s (Humanização / Digitando)`,
+              type: 'n8n-nodes-base.wait',
+              typeVersion: 1.1,
+              position: [880, 300],
+              webhookId: 'wait-delay-deterministic',
+            },
+            {
+              parameters: {
                 method: 'POST',
                 url: '={{ $("Tratar Payload Evolution API").item.json.endpointUrl }}',
                 sendHeaders: true,
@@ -651,14 +647,14 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                 sendBody: true,
                 specifyBody: 'json',
                 jsonBody:
-                  '={{ JSON.stringify({ number: $("Tratar Payload Evolution API").item.json.customerPhone, text: $json.replyMessage, options: { delay: 1200, presence: "composing", linkPreview: true } }) }}',
+                  `={{ JSON.stringify({ number: $("Tratar Payload Evolution API").item.json.customerPhone, text: $json.replyMessage, options: { delay: ${n8nResponseDelaySeconds * 1000}, presence: "composing", linkPreview: true } }) }}`,
                 options: {},
               },
               id: 'node-send-whatsapp',
               name: 'Enviar Cardápio no WhatsApp (Evolution API)',
               type: 'n8n-nodes-base.httpRequest',
               typeVersion: 4.2,
-              position: [940, 300],
+              position: [1120, 300],
             },
           ],
           connections: {
@@ -669,6 +665,9 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
               main: [[{ node: 'Consultar Cardápio, Horário e Resposta (API Aladay)', type: 'main', index: 0 }]],
             },
             'Consultar Cardápio, Horário e Resposta (API Aladay)': {
+              main: [[{ node: `Aguardar ${n8nResponseDelaySeconds}s (Humanização / Digitando)`, type: 'main', index: 0 }]],
+            },
+            [`Aguardar ${n8nResponseDelaySeconds}s (Humanização / Digitando)`]: {
               main: [[{ node: 'Enviar Cardápio no WhatsApp (Evolution API)', type: 'main', index: 0 }]],
             },
           },
@@ -784,6 +783,20 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
         ? 'Agente IA Comercial Aladay (SDR)'
         : 'Agente IA Cardápio Digital (Multi-Restaurantes)';
 
+    const waitDelayNodeName = `Aguardar ${n8nResponseDelaySeconds}s (Humanização / Digitando)`;
+    const waitDelayNode = {
+      parameters: {
+        amount: n8nResponseDelaySeconds,
+        unit: 'seconds',
+      },
+      id: 'node-wait-delay',
+      name: waitDelayNodeName,
+      type: 'n8n-nodes-base.wait',
+      typeVersion: 1.1,
+      position: [1040, 300],
+      webhookId: 'wait-evolution-delay',
+    };
+
     const nodesList: any[] = [
       {
         parameters: {
@@ -823,7 +836,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
         name: agentNodeName,
         type: '@n8n/n8n-nodes-langchain.agent',
         typeVersion: 1.7,
-        position: [820, 300],
+        position: [800, 300],
       },
       llmNode,
       {
@@ -839,6 +852,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
         position: [800, 560],
       },
       toolNode,
+      waitDelayNode,
       {
         parameters: {
           method: 'POST',
@@ -859,14 +873,14 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
           sendBody: true,
           specifyBody: 'json',
           jsonBody:
-            '={{ JSON.stringify({ number: $("Tratar Payload & Anti-Loop").item.json.customerPhone, text: $json.output, options: { delay: 1200, presence: "composing", linkPreview: true } }) }}',
+            `={{ JSON.stringify({ number: $("Tratar Payload & Anti-Loop").item.json.customerPhone, text: $json.output, options: { delay: ${n8nResponseDelaySeconds * 1000}, presence: "composing", linkPreview: true } }) }}`,
           options: {},
         },
         id: 'node-send-evolution-reply',
         name: 'Responder Cliente no WhatsApp (Evolution API)',
         type: 'n8n-nodes-base.httpRequest',
         typeVersion: 4.2,
-        position: [1180, 300],
+        position: [1280, 300],
       },
     ];
 
@@ -906,6 +920,9 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
         ai_tool: [[{ node: agentNodeName, type: 'ai_tool', index: 0 }]],
       },
       [agentNodeName]: {
+        main: [[{ node: waitDelayNodeName, type: 'main', index: 0 }]],
+      },
+      [waitDelayNodeName]: {
         main: [[{ node: 'Responder Cliente no WhatsApp (Evolution API)', type: 'main', index: 0 }]],
       },
     };
@@ -934,6 +951,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
     );
   }, [
     n8nAgentMode,
+    n8nResponseDelaySeconds,
     n8nLlmProvider,
     n8nLlmModel,
     n8nMemoryWindow,
@@ -1017,9 +1035,16 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
     if (overrideMessage) setAgentTestMessage(overrideMessage);
     setIsTestingN8nAgent(true);
     setAgentTestResult(null);
+    setIsDelayCountingDown(true);
+    setDelayCountdownSeconds(n8nResponseDelaySeconds);
+
+    const delayMs = n8nResponseDelaySeconds * 1000;
+    const timerInterval = setInterval(() => {
+      setDelayCountdownSeconds((prev) => Math.max(0, prev - 1));
+    }, 1000);
 
     try {
-      const res = await fetch('/api/v1/n8n/test-agent', {
+      const fetchPromise = fetch('/api/v1/n8n/test-agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1030,16 +1055,23 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
           messageText: msgToTest,
           n8nWebhookUrl,
           dispatchToRemoteN8n,
+          delaySeconds: n8nResponseDelaySeconds,
         }),
       });
+
+      const delayPromise = new Promise((resolve) => setTimeout(resolve, delayMs));
+      const [res] = await Promise.all([fetchPromise, delayPromise]);
+
+      clearInterval(timerInterval);
       if (res.ok) {
         const data = await res.json();
         setAgentTestResult(data);
         handleRefreshLogs();
       }
     } catch {
-      // Ignore error
+      clearInterval(timerInterval);
     } finally {
+      setIsDelayCountingDown(false);
       setIsTestingN8nAgent(false);
     }
   };
@@ -1167,16 +1199,21 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
       // Fallback to local template if offline
     }
 
+    const totalDelayMs = Math.max(2500, n8nResponseDelaySeconds * 1000);
+    const step1Delay = 400;
+    const step2Delay = 500;
+    const typingDelay = Math.max(1000, totalDelayMs - step1Delay - step2Delay);
+
     setTimeout(() => {
       // Step 2: Webhook dispatched to n8n
       setActivePipelineStep(2);
 
       setTimeout(() => {
-        // Step 3: n8n evaluates business rules & live catalog
+        // Step 3: n8n evaluates business rules & waits configured delay (simulando digitando...)
         setActivePipelineStep(3);
 
         setTimeout(() => {
-          // Step 4: Evolution API responds back
+          // Step 4: Evolution API responds back in single unified block
           setActivePipelineStep(4);
 
           let replyText = '';
@@ -1208,9 +1245,9 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
           setIsSimulatingResponse(false);
           setActivePipelineStep(null);
           handleRefreshLogs();
-        }, 550);
-      }, 450);
-    }, 400);
+        }, typingDelay);
+      }, step2Delay);
+    }, step1Delay);
   };
 
   return (
@@ -2511,6 +2548,41 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                       </div>
                     </>
                   )}
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                      <span>Tempo de Espera antes de Responder</span>
+                      <span className="text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded">
+                        Humanização
+                      </span>
+                    </label>
+                    <select
+                      value={n8nResponseDelaySeconds}
+                      onChange={(e) => setN8nResponseDelaySeconds(Number(e.target.value) || 5)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900"
+                    >
+                      <option value={3}>3 segundos (Rápido)</option>
+                      <option value={5}>5 segundos (Recomendado - Humanizado)</option>
+                      <option value={7}>7 segundos (Pausado)</option>
+                      <option value={10}>10 segundos (Tranquilo)</option>
+                    </select>
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      O n8n aguarda {n8nResponseDelaySeconds}s e a Evolution API aciona &quot;digitando...&quot; no WhatsApp.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Formato das Mensagens
+                    </label>
+                    <div className="flex items-center gap-1.5 p-2 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-900 text-xs font-semibold">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Bloco Único &amp; Mensagem Curta (Anti-Textão)</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Mensagens curtas (2 a 4 frases) no mesmo balão de conversa.
+                    </p>
+                  </div>
                 </div>
 
                 {/* 1-Click Evolution API -> n8n Webhook Binder */}
@@ -2915,6 +2987,20 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                 </div>
               </div>
 
+              {isDelayCountingDown && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-900 flex items-center justify-between shadow-2xs animate-pulse">
+                  <div className="flex items-center gap-2.5">
+                    <Clock className="w-4 h-4 text-amber-600 animate-spin shrink-0" />
+                    <span>
+                      Aguardando <strong>{delayCountdownSeconds}s</strong> (Simulando status &quot;digitando...&quot; no WhatsApp antes de disparar)...
+                    </span>
+                  </div>
+                  <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-amber-200/80 text-amber-900 shrink-0">
+                    Pausa de {n8nResponseDelaySeconds}s
+                  </span>
+                </div>
+              )}
+
               {agentTestResult && (
                 <div className="bg-white border border-blue-200 rounded-xl p-4 space-y-3 text-xs shadow-2xs">
                   <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
@@ -2923,6 +3009,9 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                       <span>Resposta Gerada pelo Agente IA ({agentTestResult.triggeredTool})</span>
                     </span>
                     <div className="flex items-center gap-2 text-[11px] font-mono">
+                      <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-sans font-medium">
+                        ⏱️ Espera de {n8nResponseDelaySeconds}s respeitada · 📝 Bloco Único
+                      </span>
                       <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">
                         Latência: {agentTestResult.latencyMs}ms
                       </span>

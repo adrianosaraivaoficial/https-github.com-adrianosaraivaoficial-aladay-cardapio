@@ -3817,10 +3817,7 @@ async function startServer() {
       return {
         triggeredTool: 'tool_transferencia_atendente',
         actionType: 'human_handoff' as const,
-        replyMessage:
-          `Perfeito, *${firstName}*! 👨‍🍳\n\n` +
-          `Pausamos as respostas automáticas para o seu número. Um atendente humano da equipe do *${tenant.name}* já foi notificado e vai te responder em instantes!\n\n` +
-          `Enquanto aguarda, se quiser conferir nosso cardápio digital:\n👉 ${ctx.digitalMenuUrl}`,
+        replyMessage: `Perfeito, *${firstName}*! 👨‍🍳 Pausamos as respostas automáticas. Um atendente da equipe do *${tenant.name}* vai falar com você em instantes por aqui. Se preferir conferir nosso cardápio: ${ctx.digitalMenuUrl}`,
       };
     }
 
@@ -3840,14 +3837,7 @@ async function startServer() {
         return {
           triggeredTool: 'tool_consultar_status_pedido',
           actionType: 'order_status' as const,
-          replyMessage:
-            `Olá, *${firstName}*! Consultei seu pedido na cozinha do *${tenant.name}* agora mesmo: 🔍\n\n` +
-            `🧾 *Pedido:* #${latest.orderNumber}\n` +
-            `📌 *Status Atual:* *${latest.statusLabel}*\n` +
-            `🍔 *Itens:* ${latest.itemsSummary}\n` +
-            `💰 *Total:* ${latest.totalFormatted}\n\n` +
-            `👉 *Acompanhe em tempo real aqui:*\n${latest.trackingUrl}\n\n` +
-            `Qualquer dúvida, digite *2* para falar com nossa equipe!`,
+          replyMessage: `Olá, *${firstName}*! Seu pedido #${latest.orderNumber} no *${tenant.name}* está *${latest.statusLabel}* (${latest.itemsSummary}). 🛵 Acompanhe em tempo real pelo link: ${latest.trackingUrl} *(Para atendente, digite 2)*`,
         };
       }
 
@@ -3859,25 +3849,14 @@ async function startServer() {
         return {
           triggeredTool: 'tool_consultar_status_pedido',
           actionType: 'order_status' as const,
-          replyMessage:
-            `Olá, *${firstName}*! Consultei o painel da cozinha do *${tenant.name}* agora mesmo: 🔍\n\n` +
-            `🧾 *Pedido Recente Localizado:* #${anyTenantOrder.orderNumber}\n` +
-            `📌 *Status:* *${anyTenantOrder.status === 'preparing' ? 'Em Preparo na Cozinha 👨‍🍳' : anyTenantOrder.status === 'ready' ? 'Saiu para Entrega / Pronto 🛵' : 'Pedido Confirmado ✅'}*\n` +
-            `💰 *Total:* R$ ${((anyTenantOrder.totalCents || 0) / 100).toFixed(2).replace('.', ',')}\n\n` +
-            `Assim que o status muda na cozinha, nós te avisamos automaticamente aqui no WhatsApp!\n` +
-            `Se quiser fazer um novo pedido, acesse:\n👉 ${ctx.digitalMenuUrl}\n\n` +
-            `Para falar com um atendente humano, digite *2*.`,
+          replyMessage: `Olá, *${firstName}*! Localizei seu pedido recente #${anyTenantOrder.orderNumber} no *${tenant.name}* como *${anyTenantOrder.status === 'preparing' ? 'Em Preparo 👨‍🍳' : anyTenantOrder.status === 'ready' ? 'Saiu para Entrega 🛵' : 'Confirmado ✅'}*. Para um novo pedido, acesse: ${ctx.digitalMenuUrl} *(Para atendente, digite 2)*`,
         };
       }
 
       return {
         triggeredTool: 'tool_consultar_status_pedido',
         actionType: 'order_status' as const,
-        replyMessage:
-          `Olá, *${firstName}*! Consultei nosso sistema do *${tenant.name}* e ainda não encontrei um pedido ativo vinculado a este número hoje. 🔍\n\n` +
-          `👉 *Para fazer seu pedido agora mesmo sem fila, acesse nosso Cardápio Digital:*\n${ctx.digitalMenuUrl}\n\n` +
-          `Assim que você envia o pedido pelo link, você recebe os avisos automáticos aqui no WhatsApp (*Confirmado*, *Em Preparo* e *Saiu para Entrega*)!\n` +
-          `Se já pediu com outro telefone ou quer falar com um atendente, digite *2*.`,
+        replyMessage: `Olá, *${firstName}*! Não localizei nenhum pedido ativo hoje para este número no *${tenant.name}*. 🔍 Você pode pedir sem fila direto pelo cardápio: ${ctx.digitalMenuUrl} *(Para falar com atendente, digite 2)*`,
       };
     }
 
@@ -3937,29 +3916,10 @@ async function startServer() {
       cleanText.includes('cardapio completo') ||
       cleanText.includes('todos os itens')
     ) {
-      const itemsToDisplay = matchedProducts.length > 0 ? matchedProducts : ctx.tenantProducts;
-      const formattedList =
-        matchedProducts.length > 0
-          ? matchedProducts
-              .map(
-                (p) =>
-                  `• *${p.name}* — *R$ ${(p.priceCents / 100).toFixed(2).replace('.', ',')}*${
-                    p.description ? `\n  _${p.description}_` : ''
-                  }`
-              )
-              .join('\n')
-          : ctx.catalogTextFormatted || ctx.topItemsText;
-
       return {
         triggeredTool: 'tool_consultar_cardapio_e_precos',
         actionType: 'cardapio' as const,
-        replyMessage:
-          `Olá, *${firstName}*! Confira as opções e preços atualizados no cardápio do *${tenant.name}*: 🍽️✨\n\n` +
-          `${formattedList || '• Cardápio atualizado disponível no link abaixo!'}\n\n` +
-          `🕒 *Status:* ${tenant.isOpen ? '🟢 ABERTO AGORA' : '🔴 FECHADO'} (${ctx.openingHoursText})\n` +
-          `🛵 *Entrega:* ${ctx.deliveryFeeFormatted} | *Mínimo:* ${ctx.minOrderFormatted}\n\n` +
-          `👉 *Clique no link abaixo para escolher seus itens e finalizar o pedido:*\n${ctx.digitalMenuUrl}\n\n` +
-          `Se precisar de ajuda de um atendente humano, responda *2*.`,
+        replyMessage: `Olá, *${firstName}*! Nosso cardápio completo do *${tenant.name}* com opções, fotos e preços atualizados está disponível em: ${ctx.digitalMenuUrl} 🍽️ Peça direto pelo link com entrega rápida ou retirada! *(Para atendente, digite 2)*`,
       };
     }
 
@@ -3977,29 +3937,10 @@ async function startServer() {
       cleanText.includes('balcao') ||
       cleanText.includes('mesa')
     ) {
-      const zonesList =
-        Array.isArray(tenant.deliveryZones) && tenant.deliveryZones.length > 0
-          ? tenant.deliveryZones
-              .filter((z: any) => z.active !== false)
-              .map((z: any) => `• ${z.name}: R$ ${((z.feeCents || 0) / 100).toFixed(2).replace('.', ',')}`)
-              .join('\n')
-          : '';
-
       return {
         triggeredTool: 'tool_taxa_entrega_e_modalidades',
         actionType: 'cardapio' as const,
-        replyMessage:
-          `Olá, *${firstName}*! Aqui estão as informações de entrega e atendimento do *${tenant.name}*: 📍🛵\n\n` +
-          (tenant.address ? `🏠 *Endereço:* ${tenant.address}\n` : '') +
-          `🕒 *Horário:* ${ctx.openingHoursText} (${tenant.isOpen ? '🟢 Aberto Agora' : '🔴 Fechado no momento'})\n` +
-          `🛵 *Taxa de Entrega Padrão:* ${ctx.deliveryFeeFormatted}\n` +
-          `🛍️ *Pedido Mínimo:* ${ctx.minOrderFormatted}\n` +
-          (zonesList ? `\n🗺️ *Taxas por Região/Bairro:*\n${zonesList}\n` : '') +
-          `\nVocê pode pedir em 3 modalidades pelo nosso link:\n` +
-          `1️⃣ *Delivery (Entrega em casa)*\n` +
-          `2️⃣ *Retirada no Balcão (Sem taxa)*\n` +
-          `3️⃣ *Pedido na Mesa do Salão* (${ctx.tableQrCodeUrlExample})\n\n` +
-          `👉 *Peça agora pelo nosso Cardápio Digital:*\n${ctx.digitalMenuUrl}`,
+        replyMessage: `Olá, *${firstName}*! No *${tenant.name}*, entregamos na sua região com taxa padrão de ${ctx.deliveryFeeFormatted} (Mínimo: ${ctx.minOrderFormatted}). Aceitamos Delivery, Retirada e Pedido na Mesa pelo link: ${ctx.digitalMenuUrl}`,
       };
     }
 
@@ -4016,12 +3957,7 @@ async function startServer() {
       return {
         triggeredTool: 'tool_formas_pagamento_loja',
         actionType: 'cardapio' as const,
-        replyMessage:
-          `Olá, *${firstName}*! No Cardápio Digital do *${tenant.name}* você escolhe a forma de pagamento que preferir: 💳💠\n\n` +
-          `✅ *Pix Automático na Hora* (gera o QR Code e código Pix Copia e Cola direto na tela)\n` +
-          `✅ *Cartão de Crédito ou Débito* (levamos a maquininha na entrega ou no balcão)\n` +
-          `✅ *Dinheiro* (você informa no cardápio se precisa de troco)\n\n` +
-          `👉 *Monte seu pedido agora no nosso Cardápio Digital:*\n${ctx.digitalMenuUrl}`,
+        replyMessage: `Olá, *${firstName}*! Aceitamos Pix automático com confirmação na hora, cartão ou dinheiro com troco. Monte seu pedido no cardápio: ${ctx.digitalMenuUrl}`,
       };
     }
 
@@ -4038,14 +3974,9 @@ async function startServer() {
       return {
         triggeredTool: 'tool_horario_funcionamento_loja',
         actionType: tenant.isOpen ? ('cardapio' as const) : ('closed_hours' as const),
-        replyMessage:
-          `Olá, *${firstName}*! Confira o horário de atendimento do *${tenant.name}*: 🕒\n\n` +
-          `Status agora: *${tenant.isOpen ? '🟢 ABERTO AGORA (Recebendo Pedidos!)' : '🔴 FECHADO NO MOMENTO'}*\n` +
-          `🗓️ *Horário Oficial:* *${ctx.openingHoursText}*\n` +
-          `🛵 *Entrega:* ${ctx.deliveryFeeFormatted} | *Mínimo:* ${ctx.minOrderFormatted}\n` +
-          (ctx.topItemsText ? `\n🔥 *Destaques do Cardápio:*\n${ctx.topItemsText}\n` : '') +
-          `\n👉 *Acesse nosso Cardápio Digital Oficial:*\n${ctx.digitalMenuUrl}\n\n` +
-          `Se precisar falar com um atendente humano, digite *2*.`,
+        replyMessage: tenant.isOpen
+          ? `Olá, *${firstName}*! Estamos *🟢 ABERTOS AGORA* recebendo pedidos! Horário: *${ctx.openingHoursText}*. Peça sem fila pelo cardápio: ${ctx.digitalMenuUrl}`
+          : `Olá, *${firstName}*! O *${tenant.name}* está *🔴 FECHADO NO MOMENTO*. Nosso horário oficial é: *${ctx.openingHoursText}*. Confira nossos pratos em: ${ctx.digitalMenuUrl}`,
       };
     }
 
@@ -4054,28 +3985,14 @@ async function startServer() {
       return {
         triggeredTool: 'tool_enviar_cardapio_loja_fechada',
         actionType: 'closed_hours' as const,
-        replyMessage:
-          `Olá, *${firstName}*! Agradecemos sua mensagem para o *${tenant.name}*! 🙏\n\n` +
-          `🔴 No momento estamos *FECHADOS*.\n` +
-          `🕒 *Horário de Funcionamento:* *${ctx.openingHoursText}*\n` +
-          (ctx.topItemsText ? `\n🍽️ *Confira algumas delícias do nosso cardápio:*\n${ctx.topItemsText}\n` : '') +
-          `\n👉 *Você já pode abrir nosso Cardápio Digital Oficial e conferir todos os itens:*\n${ctx.digitalMenuUrl}\n\n` +
-          `Se precisar falar com um atendente, responda *2*.`,
+        replyMessage: `Olá, *${firstName}*! Bem-vindo(a) ao *${tenant.name}*. No momento estamos fechados (Horário: *${ctx.openingHoursText}*). Você já pode conferir nossos pratos e preços no cardápio digital: ${ctx.digitalMenuUrl} *(Para atendente, digite 2)*`,
       };
     }
 
     return {
       triggeredTool: 'tool_enviar_cardapio_digital',
       actionType: 'cardapio' as const,
-      replyMessage:
-        `Olá, *${firstName}*! Seja muito bem-vindo(a) ao *${tenant.name}*! 🍔✨\n\n` +
-        `Status da loja agora: *🟢 ABERTA (Recebendo Pedidos)*\n` +
-        `🕒 *Horário:* ${ctx.openingHoursText}\n` +
-        `🛵 *Entrega:* ${ctx.deliveryFeeFormatted} | *Mínimo:* ${ctx.minOrderFormatted}\n` +
-        (ctx.topItemsText ? `\n🔥 *Destaques de hoje no cardápio:*\n${ctx.topItemsText}\n` : '') +
-        `\n👉 *FAÇA SEU PEDIDO DIRETO PELO CARDÁPIO DIGITAL (Sem fila e com Pix na hora):*\n${ctx.digitalMenuUrl}\n\n` +
-        `💡 _Você pode pedir para Entrega (Delivery), Retirada no Balcão ou direto na Mesa!_\n` +
-        `Se preferir falar com um atendente humano, responda com *2*.`,
+      replyMessage: `Olá, *${firstName}*! Seja muito bem-vindo(a) ao *${tenant.name}*! Estamos abertos e prontos para o seu pedido. 🍔 Acesse nosso cardápio digital oficial para pedir sem fila: ${ctx.digitalMenuUrl} *(Para falar com atendente, digite 2)*`,
     };
   };
 
@@ -4584,70 +4501,25 @@ async function startServer() {
     if (agentProfile === 'sdr_aladay') {
       if (cleanText.includes('preço') || cleanText.includes('preco') || cleanText.includes('valor') || cleanText.includes('custa') || cleanText.includes('plano')) {
         triggeredTool = 'tool_consultar_planos_aladay';
-        agentReply =
-          `Olá, *${customerName.split(' ')[0]}*! Tudo bem? 🚀\n\n` +
-          `Na *Aladay Cardápios Digitais*, você tem *0% de comissão* sobre os pedidos (pedidos, produtos e fotos ilimitados + Módulo de Mesas & Garçons + Integração Oficial iFood + Relatórios de Vendas + Pix caindo na hora na sua conta).\n\n` +
-          `Temos duas opções para o seu restaurante:\n` +
-          `1️⃣ *Plano Anual Aladay Pro (Mais Vantajoso):* *12x de R$ 99,00* sem juros no cartão de crédito (você economiza R$ 370,80 no ano!).\n` +
-          `2️⃣ *Plano Mensal com 15 Dias Grátis:* Você começa hoje pagando *R$ 0,00*, testa todas as funções por 15 dias na prática, e só depois investe *R$ 129,90/mês* (no Pix, Boleto ou Cartão, sem fidelidade).\n\n` +
-          `👉 Crie sua conta em menos de 1 minuto aqui: ${baseAppUrl}\n\n` +
-          `Prefere começar pelos *15 dias grátis* no plano mensal ou garantir o desconto de *R$ 99/mês* no plano anual?`;
+        agentReply = `Olá, *${customerName.split(' ')[0]}*! Na Aladay você tem cardápio digital com 0% de comissão e Pix na hora. Temos o Plano Anual (12x R$ 99 no cartão) e Mensal (R$ 129,90 com 15 dias grátis). Comece grátis agora: ${baseAppUrl}`;
       } else if (cleanText.includes('mesa') || cleanText.includes('garçom') || cleanText.includes('garcom') || cleanText.includes('salão') || cleanText.includes('salao') || cleanText.includes('comanda')) {
         triggeredTool = 'tool_modulo_mesas_garcom';
-        agentReply =
-          `Excelente pergunta, *${customerName.split(' ')[0]}*! 🍽️🧑‍🍳\n\n` +
-          `A *Aladay* já inclui o *Módulo Completo de Salão, Mesas & Garçons* sem nenhum custo extra:\n` +
-          `1️⃣ *Mapa Interativo de Mesas:* Acompanhe em tempo real quais mesas estão *Livres*, *Ocupadas* ou *Aguardando Conta*.\n` +
-          `2️⃣ *Comanda no Celular do Garçom:* O garçom lança os pedidos na mesa pelo próprio celular e o pedido já sai direto no KDS da cozinha.\n` +
-          `3️⃣ *QR Code Individual por Mesa:* O cliente também pode escanear o QR Code da mesa e pedir sem fila (com taxa de entrega zero).\n` +
-          `4️⃣ *Divisão de Conta e Pix na Mesa:* Soma todas as parciais, divide o valor por pessoa automaticamente e gera o QR Code Pix na hora!\n\n` +
-          `👉 Comece a testar agora com *15 dias grátis* em: ${baseAppUrl}`;
+        agentReply = `Olá, *${customerName.split(' ')[0]}*! A Aladay inclui módulo completo de salão: mapa de mesas, comanda no celular do garçom, QR Code em cada mesa e divisão de conta com Pix na hora. Teste 15 dias grátis: ${baseAppUrl}`;
       } else if (cleanText.includes('ifood') || cleanText.includes('comissão') || cleanText.includes('comissao') || cleanText.includes('taxa')) {
         triggeredTool = 'tool_integracao_ifood_e_roi';
-        agentReply =
-          `Excelente pergunta, *${customerName.split(' ')[0]}*! 💡\n\n` +
-          `A *Aladay* possui *Integração Oficial iFood Partner API*! Você vincula sua loja em 1 clique por Código de Autorização e recebe todos os pedidos do iFood direto na mesma tela do nosso *Painel de Cozinha (KDS)* com alerta sonoro e impressão térmica 80mm.\n\n` +
-          `💰 *E o melhor:* Enquanto o iFood cobra de *12% a 27% de comissão*, no seu cardápio próprio Aladay você paga *0% de comissão* e o *Pix cai 100% direto na sua conta bancária na hora*! Você envia o QR Code da Aladay nas embalagens do iFood e fideliza o cliente no seu link próprio a partir do 2º pedido.\n\n` +
-          `Vamos liberar seus *15 dias grátis* agora mesmo em ${baseAppUrl}?`;
+        agentReply = `Olá, *${customerName.split(' ')[0]}*! Temos integração oficial iFood Partner API: receba pedidos do iFood direto no KDS da cozinha junto com seu cardápio próprio com 0% de comissão. Teste 15 dias grátis: ${baseAppUrl}`;
       } else if (cleanText.includes('relatório') || cleanText.includes('relatorio') || cleanText.includes('gráfico') || cleanText.includes('grafico') || cleanText.includes('mais vendidos')) {
         triggeredTool = 'tool_relatorios_analiticos';
-        agentReply =
-          `Sim, *${customerName.split(' ')[0]}*! 📊\n\n` +
-          `No painel da *Aladay*, você conta com a aba *Relatórios Analíticos & Dashboard Financeiro* em tempo real:\n` +
-          `📈 *Gráfico de Vendas por Dia* (7, 15 e 30 dias)\n` +
-          `🏆 *Ranking dos Produtos Mais Vendidos* (em quantidade e faturamento)\n` +
-          `💳 *Ticket Médio, Receita Auditada e Economia de Comissões*\n` +
-          `👥 *CRM de Clientes* com histórico completo de compras no WhatsApp e exportação em CSV/Excel!\n\n` +
-          `👉 Teste gratuitamente por 15 dias em: ${baseAppUrl}`;
+        agentReply = `Olá, *${customerName.split(' ')[0]}*! O painel Aladay possui relatórios de vendas, ticket médio, produtos mais vendidos e CRM de clientes no WhatsApp em tempo real. Crie sua conta grátis: ${baseAppUrl}`;
       } else if (cleanText.includes('planilha') || cleanText.includes('cadastrar') || cleanText.includes('importar') || cleanText.includes('produtos') || cleanText.includes('horário') || cleanText.includes('horario')) {
         triggeredTool = 'tool_onboarding_cardapio';
-        agentReply =
-          `É super rápido, *${customerName.split(' ')[0]}*! ⚡\n\n` +
-          `Você configura o *Horário de Funcionamento e status Aberto/Fechado* com 1 clique direto na barra superior do painel, e conta com o *Importador Inteligente de Planilhas (Excel/CSV)* para subir todo o cardápio em menos de 10 segundos!\n\n` +
-          `Além disso, seu cardápio já funciona para:\n` +
-          `🛵 *Delivery* (com cálculo automático de entrega)\n` +
-          `🛍️ *Retirada no Balcão*\n` +
-          `🍽️ *Mesas & Garçom no Salão (QR Code de Mesa)*\n` +
-          `🔴 *Integração Oficial iFood no KDS*\n\n` +
-          `Quer testar agora sem compromisso? Acesse ${baseAppUrl} ou fale com nosso especialista no WhatsApp: https://wa.me/559131976334`;
+        agentReply = `Olá, *${customerName.split(' ')[0]}*! Você configura o horário em 1 clique na barra superior e sobe todo o cardápio via planilha Excel/CSV em 10 segundos. Teste 15 dias grátis: ${baseAppUrl}`;
       } else if (cleanText === '2' || cleanText.includes('humano') || cleanText.includes('atendente') || cleanText.includes('consultor')) {
         triggeredTool = 'tool_human_handoff';
-        agentReply =
-          `Perfeito, *${customerName.split(' ')[0]}*! 👨‍💼\n\n` +
-          `Já transferi seu atendimento para nosso consultor comercial humano da *Aladay*. Você também pode falar diretamente no nosso WhatsApp Oficial de Suporte e Vendas clicando aqui:\n👉 https://wa.me/559131976334 (+55 91 3197-6334)`;
+        agentReply = `Perfeito, *${customerName.split(' ')[0]}*! Transferi seu atendimento. Fale diretamente com nosso consultor comercial no WhatsApp oficial: https://wa.me/559131976334 (+55 91 3197-6334)`;
       } else {
         triggeredTool = 'tool_qualificacao_sdr_aladay';
-        agentReply =
-          `Olá, *${customerName.split(' ')[0]}*! Seja muito bem-vindo(a) à *Aladay Cardápios Digitais*! 🚀\n\n` +
-          `Nós transformamos o WhatsApp e as mesas do seu restaurante em uma máquina de vendas própria:\n` +
-          `✅ *0% de comissão* (Pedidos e produtos ilimitados)\n` +
-          `✅ *Pix Direto* na conta do restaurante na hora\n` +
-          `✅ *Salão, Mesas & Garçom* (Mapa de mesas, comanda no celular do garçom e QR Code na mesa)\n` +
-          `✅ *Integração Oficial iFood* direto no Painel de Cozinha KDS (com impressão 80mm)\n` +
-          `✅ *Automação de WhatsApp* via Evolution API + *Relatórios de Vendas*\n\n` +
-          `Você pode começar hoje com *15 Dias de Teste Grátis* no Plano Mensal (R$ 129,90/mês) ou assinar o *Plano Anual por 12x de R$ 99,00* no cartão!\n\n` +
-          `👉 Conheça e crie sua loja agora: ${baseAppUrl}\n` +
-          `Qual é o segmento do seu negócio hoje (hamburgueria, pizzaria, churrascaria, restaurante, açaí...)?`;
+        agentReply = `Olá, *${customerName.split(' ')[0]}*! A Aladay é a plataforma de cardápio digital com 0% de comissão, automação de WhatsApp via n8n e módulo de mesas. Teste por 15 dias grátis agora: ${baseAppUrl}`;
       }
     } else {
       // Restaurant Customer Support Agent Profile (Cardápio Digital, Horário, Preços, Entrega e Status de Pedidos)
