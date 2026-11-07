@@ -546,10 +546,23 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
           </div>
         </div>
 
-        {/* Full-Width Restaurant Title (Sem corte/truncamento) */}
-        <h1 className="text-xl font-extrabold mt-2.5 leading-snug break-words">
-          {tenant.name}
-        </h1>
+        {/* Full-Width Restaurant Title & Logo (Sem corte/truncamento) */}
+        <div className="mt-2.5 flex items-center gap-3">
+          {tenant.logoUrl ? (
+            <img
+              src={tenant.logoUrl}
+              alt={tenant.name}
+              className="w-12 h-12 rounded-xl object-cover bg-white/20 border border-white/30 shrink-0 shadow-xs"
+            />
+          ) : (
+            <div className="w-11 h-11 rounded-xl bg-black/20 border border-white/25 flex items-center justify-center text-white font-extrabold text-sm shrink-0">
+              {tenant.name.slice(0, 2).toUpperCase()}
+            </div>
+          )}
+          <h1 className="text-xl font-extrabold leading-snug break-words min-w-0">
+            {tenant.name}
+          </h1>
+        </div>
 
         {/* Full-Width Opening Hours Bar inside Header */}
         <div className="mt-2 bg-black/15 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-xs">

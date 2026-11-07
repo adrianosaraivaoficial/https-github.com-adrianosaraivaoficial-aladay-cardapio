@@ -26,6 +26,7 @@ interface InMemTenant {
   id: string;
   name: string;
   slug: string;
+  logoUrl?: string;
   phone: string;
   address: string;
   primaryColor: string;
@@ -456,6 +457,7 @@ async function initializePostgresConnection(connectionString: string, runMigrati
             id: row.id,
             name: row.name,
             slug: row.slug,
+            logoUrl: row.logo_url || '',
             phone: row.phone || '',
             address: row.address || '',
             primaryColor: row.primary_color || '#EA580C',
@@ -838,6 +840,7 @@ async function startServer() {
               id: row.id,
               name: row.name,
               slug: row.slug,
+              logoUrl: row.logo_url || '',
               phone: row.phone || '',
               address: row.address || '',
               primaryColor: row.primary_color || '#2563EB',
@@ -1071,6 +1074,7 @@ async function startServer() {
           id: row.id,
           name: row.name,
           slug: row.slug,
+          logoUrl: row.logo_url || '',
           phone: row.phone || '',
           address: row.address || '',
           primaryColor: row.primary_color || '#EA580C',
@@ -1232,6 +1236,7 @@ async function startServer() {
       memoryTenants.push(tenant);
     } else if (tenant && incomingTenant) {
       if (incomingTenant.name) tenant.name = String(incomingTenant.name).trim();
+      if (incomingTenant.logoUrl !== undefined) tenant.logoUrl = String(incomingTenant.logoUrl || '').trim();
       if (incomingTenant.phone !== undefined) {
         const cleanIncomingPhone = String(incomingTenant.phone).replace(/\D/g, '');
         if (!cleanIncomingPhone.includes('9131976334')) {
@@ -1315,10 +1320,11 @@ async function startServer() {
       const syncedTenant = tenant;
       try {
         await pgPool.query(
-          `INSERT INTO tenants (id, name, slug, phone, address, primary_color, is_open, opening_hours_text, delivery_fee_cents, min_order_cents, delivery_zones, evolution_instance_id, evolution_status, pix_config, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb, NOW())
+          `INSERT INTO tenants (id, name, slug, logo_url, phone, address, primary_color, is_open, opening_hours_text, delivery_fee_cents, min_order_cents, delivery_zones, evolution_instance_id, evolution_status, pix_config, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15::jsonb, NOW())
            ON CONFLICT (slug) DO UPDATE SET
              name = EXCLUDED.name,
+             logo_url = EXCLUDED.logo_url,
              phone = EXCLUDED.phone,
              address = EXCLUDED.address,
              primary_color = EXCLUDED.primary_color,
@@ -1333,6 +1339,7 @@ async function startServer() {
             syncedTenant.id,
             syncedTenant.name,
             syncedTenant.slug,
+            syncedTenant.logoUrl || '',
             syncedTenant.phone || '',
             syncedTenant.address || '',
             syncedTenant.primaryColor || '#2563EB',
@@ -2119,18 +2126,210 @@ async function startServer() {
     });
   });
 
-  // GET PIX CHARGE STATUS (POLLING LISTENER)
-  app.get('/api/v1/pix/:txid/status', (req: Request, res: Response) => {
+  // GET PIX CHARGE STATUS (POLLING LISTENER WITH ASAAS STATUS INTEGRATION)
+  app.get('/api/v1/pix/:txid/status', async (req: Request, res: Response) => {
     const charge = memoryPixTransactions.find((c) => c.txid === req.params.txid);
     if (!charge) {
       return res.status(404).json({ error: 'Cobrança Pix não encontrada.' });
     }
     const order = memoryOrders.find((o) => o.id === charge.orderId);
+
+    // If Asaas API key is configured, also check Asaas payment status if linked
+    let asaasStatus = charge.status === 'PAID' ? 'RECEIVED' : 'PENDING';
+    if (asaasGatewayConfig.apiKey && charge.status !== 'PAID') {
+      try {
+        const paymentQuery = charge.txid.startsWith('pay_')
+          ? `/payments/${encodeURIComponent(charge.txid)}`
+          : `/payments?externalReference=${encodeURIComponent(charge.orderId || charge.txid)}`;
+        const asaasRes = await callAsaasApi(paymentQuery);
+        if (asaasRes.ok && asaasRes.data) {
+          const paymentObj = asaasRes.data.id
+            ? asaasRes.data
+            : Array.isArray(asaasRes.data.data) && asaasRes.data.data.length > 0
+            ? asaasRes.data.data[0]
+            : null;
+          if (paymentObj && paymentObj.status) {
+            asaasStatus = paymentObj.status;
+            if (paymentObj.status === 'RECEIVED' || paymentObj.status === 'CONFIRMED') {
+              charge.status = 'PAID';
+              charge.paidAt = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              if (order) {
+                order.paymentStatus = 'paid_online';
+                if (order.pixTransaction) {
+                  order.pixTransaction.status = 'PAID';
+                  order.pixTransaction.paidAt = charge.paidAt;
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        // Fallback to local charge status
+      }
+    }
+
     res.json({
       txid: charge.txid,
       status: charge.status,
+      asaasStatus,
+      paid: charge.status === 'PAID' || asaasStatus === 'RECEIVED' || asaasStatus === 'CONFIRMED',
       paidAt: charge.paidAt,
       endToEndId: charge.endToEndId,
+      order,
+    });
+  });
+
+  // GET /api/v1/asaas/pix/status
+  // Unified Asaas Pix Charge Validation endpoint for RestaurantAdminView checkout flow
+  app.get('/api/v1/asaas/pix/status', async (req: Request, res: Response) => {
+    const orderId = String(req.query.orderId || '').trim();
+    const txid = String(req.query.txid || '').trim();
+    const tenantSlug = String(req.query.tenantSlug || '').trim();
+    const paymentId = String(req.query.paymentId || '').trim();
+
+    const order = orderId
+      ? memoryOrders.find((o) => o.id === orderId)
+      : txid
+      ? memoryOrders.find((o) => o.pixTransaction?.txid === txid)
+      : undefined;
+
+    let charge = txid
+      ? memoryPixTransactions.find((c) => c.txid === txid)
+      : orderId
+      ? memoryPixTransactions.find((c) => c.orderId === orderId)
+      : undefined;
+
+    const tenant =
+      memoryTenants.find((t) => t.slug === (tenantSlug || order?.tenantSlug)) || memoryTenants[0];
+
+    // If order is a Pix order without a generated charge yet, generate one on the fly so QR Code & Copia e Cola are always available
+    if (order && !charge) {
+      const generatedTxid =
+        order.pixTransaction?.txid ||
+        `PIX${Date.now().toString(36).toUpperCase()}${Math.floor(100 + Math.random() * 900)}`;
+      const resolvedPixKey = String(
+        tenant?.pixKey || tenant?.pixConfig?.pixKey || tenant?.phone || '+5511987654321'
+      ).trim();
+      const resolvedBeneficiary = String(
+        tenant?.pixBeneficiaryName ||
+          tenant?.pixConfig?.beneficiaryName ||
+          tenant?.pixConfig?.merchantName ||
+          tenant?.name ||
+          'RESTAURANTE'
+      ).trim();
+      const resolvedCity = String(tenant?.pixConfig?.merchantCity || 'SAO PAULO')
+        .trim()
+        .toUpperCase();
+      const formattedKey = formatPixKeyForBacenServer(
+        resolvedPixKey,
+        tenant?.pixConfig?.pixKeyType,
+        tenant?.phone
+      );
+      const pixCopiaECola =
+        order.pixTransaction?.pixCopiaECola ||
+        generatePixPayload({
+          pixKey: formattedKey,
+          pixKeyType: tenant?.pixConfig?.pixKeyType,
+          tenantPhone: tenant?.phone,
+          merchantName: resolvedBeneficiary,
+          merchantCity: resolvedCity,
+          amountCents: order.totalCents,
+          txid: generatedTxid,
+        });
+
+      charge = {
+        txid: generatedTxid,
+        orderId: order.id,
+        tenantSlug: order.tenantSlug || tenant?.slug || 'default',
+        amountCents: order.totalCents,
+        pixKey: resolvedPixKey,
+        beneficiaryName: resolvedBeneficiary,
+        merchantName: sanitizeEmvField(resolvedBeneficiary, 25, 'RESTAURANTE'),
+        merchantCity: sanitizeEmvField(resolvedCity, 15, 'SAO PAULO'),
+        pixCopiaECola,
+        status: order.paymentStatus === 'paid_online' || order.pixTransaction?.status === 'PAID' ? 'PAID' : 'PENDING',
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+        psp: 'asaas_pix',
+        customerName: order.customerName,
+        customerPhone: order.customerPhone,
+        createdAt: new Date().toISOString(),
+      };
+      memoryPixTransactions.unshift(charge);
+      order.pixTransaction = charge;
+    }
+
+    let isPaid =
+      charge?.status === 'PAID' ||
+      order?.paymentStatus === 'paid_online' ||
+      order?.pixTransaction?.status === 'PAID';
+    let asaasStatus = isPaid ? 'RECEIVED' : 'PENDING';
+    let resolvedPaymentId = paymentId || charge?.txid || '';
+
+    // Query live Asaas API if configured
+    if (!isPaid && asaasGatewayConfig.apiKey) {
+      try {
+        const lookupPath =
+          resolvedPaymentId && resolvedPaymentId.startsWith('pay_')
+            ? `/payments/${encodeURIComponent(resolvedPaymentId)}`
+            : `/payments?externalReference=${encodeURIComponent(orderId || txid || tenantSlug)}`;
+        const asaasRes = await callAsaasApi(lookupPath);
+        if (asaasRes.ok && asaasRes.data) {
+          const paymentData = asaasRes.data.id
+            ? asaasRes.data
+            : Array.isArray(asaasRes.data.data) && asaasRes.data.data.length > 0
+            ? asaasRes.data.data[0]
+            : null;
+          if (paymentData && paymentData.status) {
+            asaasStatus = paymentData.status;
+            resolvedPaymentId = paymentData.id || resolvedPaymentId;
+            if (paymentData.status === 'RECEIVED' || paymentData.status === 'CONFIRMED') {
+              isPaid = true;
+              const nowTime = new Date().toLocaleTimeString('pt-BR', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+              });
+              if (charge) {
+                charge.status = 'PAID';
+                charge.paidAt = nowTime;
+              }
+              if (order) {
+                order.paymentStatus = 'paid_online';
+                if (order.pixTransaction) {
+                  order.pixTransaction.status = 'PAID';
+                  order.pixTransaction.paidAt = nowTime;
+                }
+              }
+              if (pgPool && order) {
+                pgPool
+                  .query(
+                    `UPDATE orders SET payment_status = 'paid_online', pix_transaction = $1::jsonb, updated_at = NOW() WHERE id = $2;`,
+                    [JSON.stringify(order.pixTransaction || charge), order.id]
+                  )
+                  .catch(() => {});
+              }
+            }
+          }
+        }
+      } catch {
+        // Ignore network error and keep current status
+      }
+    }
+
+    return res.json({
+      paid: isPaid,
+      asaasStatus,
+      status: isPaid ? 'PAID' : 'PENDING',
+      txid: charge?.txid || txid || resolvedPaymentId,
+      paymentId: resolvedPaymentId,
+      orderId: order?.id || orderId,
+      amountCents: order?.totalCents || charge?.amountCents || 0,
+      pixCopiaECola: charge?.pixCopiaECola || order?.pixTransaction?.pixCopiaECola || '',
+      paidAt: charge?.paidAt || order?.pixTransaction?.paidAt || null,
+      isRealGateway: Boolean(asaasGatewayConfig.apiKey),
+      message: isPaid
+        ? 'Pagamento Pix confirmado e validado pelo Asaas (RECEIVED)! Checkout liberado.'
+        : 'Aguardando confirmação de recebimento Pix na consulta de status do Asaas (PENDING)...',
       order,
     });
   });
@@ -3122,6 +3321,7 @@ async function startServer() {
 
     const {
       name,
+      logoUrl,
       phone,
       address,
       primaryColor,
@@ -3136,6 +3336,7 @@ async function startServer() {
     } = req.body;
 
     if (name) tenant.name = String(name).trim();
+    if (logoUrl !== undefined) tenant.logoUrl = String(logoUrl || '').trim();
     if (phone !== undefined) tenant.phone = String(phone).replace(/\D/g, '');
     if (address !== undefined) tenant.address = String(address).trim();
     if (primaryColor) tenant.primaryColor = primaryColor;
@@ -3167,22 +3368,26 @@ async function startServer() {
         .query(
           `UPDATE tenants SET
             name = $1,
-            phone = $2,
-            address = $3,
-            primary_color = $4,
-            is_open = $5,
-            delivery_fee_cents = $6,
-            min_order_cents = $7,
-            delivery_zones = $8::jsonb,
-            pix_config = $9::jsonb,
+            logo_url = $2,
+            phone = $3,
+            address = $4,
+            primary_color = $5,
+            is_open = $6,
+            opening_hours_text = $7,
+            delivery_fee_cents = $8,
+            min_order_cents = $9,
+            delivery_zones = $10::jsonb,
+            pix_config = $11::jsonb,
             updated_at = NOW()
-          WHERE slug = $10;`,
+          WHERE slug = $12;`,
           [
             tenant.name,
+            tenant.logoUrl || '',
             tenant.phone || '',
             tenant.address || '',
             tenant.primaryColor || '#EA580C',
             tenant.isOpen ?? true,
+            tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45',
             tenant.deliveryFeeCents || 0,
             tenant.minOrderCents || 0,
             JSON.stringify(tenant.deliveryZones || []),

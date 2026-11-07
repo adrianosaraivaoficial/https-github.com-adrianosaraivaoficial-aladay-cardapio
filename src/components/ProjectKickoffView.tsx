@@ -986,7 +986,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                           Escolha a Forma de Pagamento da Assinatura Mensal (R$ 129,90/mês)
                         </label>
 
-                        <div className="grid grid-cols-3 gap-2.5">
+                        <div className="grid grid-cols-2 gap-2.5">
                           <button
                             type="button"
                             onClick={() => setBillingType('PIX')}
@@ -1012,19 +1012,6 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                             <CreditCard className="w-4 h-4 text-blue-600" />
                             <span>Cartão de Crédito</span>
                           </button>
-
-                          <button
-                            type="button"
-                            onClick={() => setBillingType('BOLETO')}
-                            className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
-                              billingType === 'BOLETO'
-                                ? 'bg-blue-50 border-blue-600 text-blue-950 ring-1 ring-blue-600'
-                                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                            }`}
-                          >
-                            <FileText className="w-4 h-4 text-blue-600" />
-                            <span>Boleto Asaas</span>
-                          </button>
                         </div>
                       </>
                     )}
@@ -1041,18 +1028,6 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                                 : 'Dados do Cartão de Crédito (Plano Mensal R$ 129,90/mês)'}
                             </span>
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setCcNumber('4532 9988 7766 4242');
-                              setCcHolder((subscriberName || 'RESTAURANTE LTDA').toUpperCase());
-                              setCcExpiry('10/29');
-                              setCcCvv('888');
-                            }}
-                            className="text-[11px] font-semibold text-blue-700 hover:underline cursor-pointer"
-                          >
-                            Preencher Cartão Teste
-                          </button>
                         </div>
                         <div>
                           <label className="block text-[11px] font-semibold text-slate-700 mb-1">

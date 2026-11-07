@@ -472,8 +472,16 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                       <span className="font-mono text-[10px]">30-45 min</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-xs shadow-blue-600/30">
-                        {tenant.name.slice(0, 2).toUpperCase() || 'AL'}
+                      <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-xs shadow-blue-600/30 overflow-hidden">
+                        {tenant.logoUrl ? (
+                          <img
+                            src={tenant.logoUrl}
+                            alt={tenant.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          tenant.name.slice(0, 2).toUpperCase() || 'AL'
+                        )}
                       </div>
                       <div className="min-w-0">
                         <h2 className="text-xs font-bold text-white truncate">

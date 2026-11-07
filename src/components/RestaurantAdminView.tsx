@@ -38,8 +38,10 @@ import {
   PackageCheck,
   Zap,
   FileSpreadsheet,
-  Upload
+  Upload,
+  Lock
 } from 'lucide-react';
+import QRCode from 'qrcode';
 import { AuthSession, Category, CustomerRecord, DeliveryZone, NormalizedTenantCatalog, OptionGroup, OptionItem, Order, OrderStatus, PixGatewayConfig, Product, RestaurantTenant, UserRole } from '../types';
 import { ThermalTicketModal } from './ThermalTicketModal';
 import { ConsumerMenuView } from './ConsumerMenuView';
@@ -167,7 +169,301 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     }
   }, [authSession]);
 
-  const handleKdsStatusChange = async (order: Order, nextStatus: OrderStatus) => {
+  // ============================================================================
+  // FLUXO DE VALIDAÇÃO DE PAGAMENTO PIX & CHECKOUT (INTEGRAÇÃO ASAAS)
+  // ============================================================================
+  const [asaasPixValidationByOrder, setAsaasPixValidationByOrder] = useState<
+    Record<
+      string,
+      {
+        paid: boolean;
+        asaasStatus: string;
+        txid?: string;
+        paymentId?: string;
+        pixCopiaECola?: string;
+        pixQrDataUrl?: string;
+        paidAt?: string | null;
+        lastCheckedAt?: string;
+        isChecking?: boolean;
+        message?: string;
+      }
+    >
+  >({});
+  const [pixValidationModalOrder, setPixValidationModalOrder] = useState<Order | null>(null);
+  const [pendingKdsTransitionStatus, setPendingKdsTransitionStatus] = useState<OrderStatus>('delivered');
+  const [copiedPixCheckoutCode, setCopiedPixCheckoutCode] = useState(false);
+  const [isSimulatingPixReceipt, setIsSimulatingPixReceipt] = useState(false);
+
+  // Subscription Pix Status Polling State (Asaas)
+  const [asaasSubscriptionPixCheck, setAsaasSubscriptionPixCheck] = useState<{
+    paid: boolean;
+    status: string;
+    isChecking: boolean;
+    lastCheckedAt?: string;
+    message?: string;
+  }>({
+    paid: tenant.subscriptionStatus === 'active',
+    status: tenant.subscriptionStatus === 'active' ? 'RECEIVED' : 'PENDING',
+    isChecking: false,
+  });
+
+  const isPixOrderPayment = (order: Order): boolean => {
+    const method = (order.paymentMethod || '').toLowerCase();
+    return method.includes('pix') || Boolean(order.pixTransaction);
+  };
+
+  const isOrderPixPaidAndValidated = (order: Order): boolean => {
+    if (!isPixOrderPayment(order)) return true;
+    if (order.paymentStatus === 'paid_online') return true;
+    if (order.pixTransaction?.status === 'PAID') return true;
+    if (asaasPixValidationByOrder[order.id]?.paid) return true;
+    return false;
+  };
+
+  const validateOrderPixWithAsaas = async (order: Order, silent = false): Promise<boolean> => {
+    const nowLabel = new Date().toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+
+    setAsaasPixValidationByOrder((prev) => ({
+      ...prev,
+      [order.id]: {
+        ...(prev[order.id] || {
+          paid: order.paymentStatus === 'paid_online' || order.pixTransaction?.status === 'PAID',
+          asaasStatus: order.paymentStatus === 'paid_online' ? 'RECEIVED' : 'PENDING',
+        }),
+        isChecking: true,
+      },
+    }));
+
+    try {
+      const txidParam = order.pixTransaction?.txid || asaasPixValidationByOrder[order.id]?.txid || '';
+      const query = new URLSearchParams({
+        orderId: order.id,
+        txid: txidParam,
+        tenantSlug: tenant.slug,
+      });
+
+      const [asaasRes, subRes] = await Promise.all([
+        fetch(`/api/v1/asaas/pix/status?${query.toString()}`),
+        fetch(`/api/v1/asaas/subscription/${encodeURIComponent(tenant.slug)}/check-status`),
+      ]);
+
+      let paid = order.paymentStatus === 'paid_online' || order.pixTransaction?.status === 'PAID';
+      let asaasStatus = paid ? 'RECEIVED' : 'PENDING';
+      let resolvedTxid = txidParam;
+      let resolvedPaymentId = '';
+      let pixCopiaECola = order.pixTransaction?.pixCopiaECola || '';
+      let paidAt: string | null = order.pixTransaction?.paidAt || null;
+      let message = '';
+
+      if (asaasRes.ok) {
+        const data = await asaasRes.json();
+        if (data.paid || data.asaasStatus === 'RECEIVED' || data.asaasStatus === 'CONFIRMED' || data.status === 'PAID') {
+          paid = true;
+          asaasStatus = data.asaasStatus === 'CONFIRMED' ? 'CONFIRMED' : 'RECEIVED';
+        } else if (data.asaasStatus) {
+          asaasStatus = data.asaasStatus;
+        }
+        resolvedTxid = data.txid || resolvedTxid;
+        resolvedPaymentId = data.paymentId || resolvedTxid;
+        pixCopiaECola = data.pixCopiaECola || pixCopiaECola;
+        paidAt = data.paidAt || paidAt;
+        message = data.message || '';
+      }
+
+      if (subRes.ok) {
+        const subData = await subRes.json();
+        setAsaasSubscriptionPixCheck({
+          paid: Boolean(subData.paid),
+          status: subData.status || (subData.paid ? 'RECEIVED' : 'PENDING'),
+          isChecking: false,
+          lastCheckedAt: nowLabel,
+          message: subData.message,
+        });
+      }
+
+      let qrUrl = asaasPixValidationByOrder[order.id]?.pixQrDataUrl;
+      if (pixCopiaECola && !qrUrl) {
+        try {
+          qrUrl = await QRCode.toDataURL(pixCopiaECola, { width: 220, margin: 1 });
+        } catch {
+          // ignore QR generation error
+        }
+      }
+
+      setAsaasPixValidationByOrder((prev) => ({
+        ...prev,
+        [order.id]: {
+          paid,
+          asaasStatus,
+          txid: resolvedTxid,
+          paymentId: resolvedPaymentId,
+          pixCopiaECola,
+          pixQrDataUrl: qrUrl,
+          paidAt,
+          lastCheckedAt: nowLabel,
+          isChecking: false,
+          message:
+            message ||
+            (paid
+              ? 'Pagamento Pix validado com sucesso no Asaas (RECEIVED). Checkout liberado!'
+              : 'Cobrança Pix pendente de compensação no Asaas (PENDING). Checkout bloqueado até confirmação.'),
+        },
+      }));
+
+      if (paid) {
+        order.paymentStatus = 'paid_online';
+        if (order.pixTransaction) {
+          order.pixTransaction.status = 'PAID';
+        }
+        if (!silent) {
+          setStatusUpdateToast(
+            `✅ Pagamento Pix do Pedido #${order.orderNumber} (${formatBRL(order.totalCents)}) validado no Asaas (${asaasStatus})! Checkout liberado.`
+          );
+          setTimeout(() => setStatusUpdateToast(null), 5000);
+        }
+      } else if (!silent) {
+        setStatusUpdateToast(
+          `⏳ Consulta Asaas Pedido #${order.orderNumber}: Status "${asaasStatus}". Aguardando compensação do Pix para permitir o checkout.`
+        );
+        setTimeout(() => setStatusUpdateToast(null), 5000);
+      }
+
+      return paid;
+    } catch {
+      setAsaasPixValidationByOrder((prev) => ({
+        ...prev,
+        [order.id]: {
+          ...(prev[order.id] || { paid: false, asaasStatus: 'PENDING' }),
+          lastCheckedAt: nowLabel,
+          isChecking: false,
+        },
+      }));
+      return false;
+    }
+  };
+
+  const checkAsaasSubscriptionCheckoutStatus = async (silent = false): Promise<boolean> => {
+    const nowLabel = new Date().toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    setAsaasSubscriptionPixCheck((prev) => ({ ...prev, isChecking: true }));
+    try {
+      const res = await fetch(`/api/v1/asaas/subscription/${encodeURIComponent(tenant.slug)}/check-status`);
+      if (res.ok) {
+        const data = await res.json();
+        const isPaid = Boolean(data.paid || data.status === 'RECEIVED' || data.status === 'CONFIRMED');
+        setAsaasSubscriptionPixCheck({
+          paid: isPaid,
+          status: data.status || (isPaid ? 'RECEIVED' : 'PENDING'),
+          isChecking: false,
+          lastCheckedAt: nowLabel,
+          message: data.message,
+        });
+        if (isPaid && tenant.subscriptionStatus !== 'active') {
+          onUpdateTenant({ ...tenant, subscriptionStatus: 'active' });
+        }
+        if (!silent) {
+          setStatusUpdateToast(
+            isPaid
+              ? `✅ Assinatura Asaas de ${tenant.name} validada com status ${data.status || 'RECEIVED'}! Checkout concluído.`
+              : `⏳ Status da cobrança no Asaas: ${data.status || 'PENDING'}. Aguardando confirmação do pagamento Pix.`
+          );
+          setTimeout(() => setStatusUpdateToast(null), 5000);
+        }
+        return isPaid;
+      }
+    } catch {
+      // ignore error
+    }
+    setAsaasSubscriptionPixCheck((prev) => ({ ...prev, isChecking: false, lastCheckedAt: nowLabel }));
+    return false;
+  };
+
+  // Automatic polling for active Pix orders in KDS / Open Pix Checkout Validation Modal / Billing Tab
+  useEffect(() => {
+    if (pixValidationModalOrder) {
+      validateOrderPixWithAsaas(pixValidationModalOrder, true);
+      const timer = setInterval(() => {
+        validateOrderPixWithAsaas(pixValidationModalOrder, true);
+      }, 4000);
+      return () => clearInterval(timer);
+    }
+  }, [pixValidationModalOrder?.id, tenant.slug]);
+
+  useEffect(() => {
+    if (activeTab !== 'kds' && activeTab !== 'billing') return;
+
+    const runAutoValidation = () => {
+      if (activeTab === 'billing') {
+        checkAsaasSubscriptionCheckoutStatus(true);
+      }
+      if (activeTab === 'kds') {
+        const pendingPixOrders = orders.filter(
+          (o) =>
+            o.status !== 'delivered' &&
+            o.status !== 'cancelled' &&
+            isPixOrderPayment(o) &&
+            !isOrderPixPaidAndValidated(o)
+        );
+        pendingPixOrders.forEach((ord) => {
+          validateOrderPixWithAsaas(ord, true);
+        });
+      }
+    };
+
+    runAutoValidation();
+    const interval = setInterval(runAutoValidation, 6000);
+    return () => clearInterval(interval);
+  }, [activeTab, orders.length, tenant.slug]);
+
+  const handleConfirmPixWebhookSimulationForOrder = async (order: Order) => {
+    setIsSimulatingPixReceipt(true);
+    try {
+      const currentState = asaasPixValidationByOrder[order.id];
+      const txid = order.pixTransaction?.txid || currentState?.txid || `PIX_${order.id}`;
+      await fetch('/api/v1/webhooks/pix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          txid,
+          amountCents: order.totalCents,
+          payer: { name: order.customerName, phone: order.customerPhone },
+        }),
+      });
+      await validateOrderPixWithAsaas(order, false);
+    } catch {
+      // ignore
+    } finally {
+      setIsSimulatingPixReceipt(false);
+    }
+  };
+
+  const handleKdsStatusChange = async (order: Order, nextStatus: OrderStatus, bypassPixGate = false) => {
+    // Validação Automática de Pagamento Pix via Asaas antes de permitir o checkout / confirmação / conclusão
+    if (
+      !bypassPixGate &&
+      isPixOrderPayment(order) &&
+      (nextStatus === 'confirmed' || nextStatus === 'delivered') &&
+      !isOrderPixPaidAndValidated(order)
+    ) {
+      const isNowValidated = await validateOrderPixWithAsaas(order, true);
+      if (!isNowValidated) {
+        setPendingKdsTransitionStatus(nextStatus);
+        setPixValidationModalOrder(order);
+        setStatusUpdateToast(
+          `🔒 Checkout bloqueado: O pagamento Pix do Pedido #${order.orderNumber} ainda consta como PENDING no Asaas. Valide o recebimento antes de concluir!`
+        );
+        setTimeout(() => setStatusUpdateToast(null), 6000);
+        return;
+      }
+    }
+
     onUpdateOrderStatus(order.id, nextStatus);
 
     if (order.channel === 'IFOOD') {
@@ -253,6 +549,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
   // Settings form state
   const [settingsName, setSettingsName] = useState(tenant.name);
+  const [settingsLogoUrl, setSettingsLogoUrl] = useState(tenant.logoUrl || '');
   const [settingsPhone, setSettingsPhone] = useState(tenant.phone);
   const [settingsAddress, setSettingsAddress] = useState(tenant.address);
   const [settingsHours, setSettingsHours] = useState(tenant.openingHoursText);
@@ -297,6 +594,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
   useEffect(() => {
     setSettingsName(tenant.name);
+    setSettingsLogoUrl(tenant.logoUrl || '');
     setSettingsPhone(tenant.phone);
     setSettingsAddress(tenant.address);
     setSettingsHours(tenant.openingHoursText);
@@ -1240,6 +1538,48 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     setIsImportMenuModalOpen(false);
   };
 
+  const handleRestaurantLogoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = String(ev.target?.result || '');
+      if (!dataUrl) return;
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 256;
+        let w = img.width;
+        let h = img.height;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, w, h);
+          const compressed = canvas.toDataURL('image/webp', 0.85);
+          setSettingsLogoUrl(compressed);
+        } else {
+          setSettingsLogoUrl(dataUrl);
+        }
+      };
+      img.onerror = () => {
+        setSettingsLogoUrl(dataUrl);
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     const deliveryFeeCents = Math.round(parseFloat(settingsDeliveryFee.replace(',', '.')) * 100) || 0;
@@ -1262,6 +1602,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     const updated: RestaurantTenant = {
       ...tenant,
       name: settingsName.trim(),
+      logoUrl: settingsLogoUrl.trim(),
       phone: settingsPhone.replace(/\D/g, ''),
       address: settingsAddress.trim(),
       openingHoursText: settingsHours.trim(),
@@ -1288,6 +1629,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
           headers,
           body: JSON.stringify({
             name: updated.name,
+            logoUrl: updated.logoUrl,
             phone: updated.phone,
             address: updated.address,
             primaryColor: updated.primaryColor,
@@ -2829,6 +3171,67 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
             )}
 
             <form onSubmit={handleSaveSettings} className="space-y-4">
+              {/* Restaurant Logo / Image Editor */}
+              <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-xl flex flex-col sm:flex-row sm:items-center gap-4">
+                <div
+                  className="w-16 h-16 rounded-xl flex items-center justify-center text-white font-extrabold text-lg shrink-0 overflow-hidden shadow-xs border border-neutral-200"
+                  style={{ backgroundColor: settingsPrimaryColor || '#2563EB' }}
+                >
+                  {settingsLogoUrl ? (
+                    <img
+                      src={settingsLogoUrl}
+                      alt={settingsName || 'Logo do Restaurante'}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    (settingsName || tenant.name || 'AL').slice(0, 2).toUpperCase()
+                  )}
+                </div>
+
+                <div className="flex-1 space-y-2 min-w-0">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-900">
+                      Imagem / Logo do Restaurante
+                    </label>
+                    <p className="text-[11px] text-neutral-500">
+                      Exibida no topo do Cardápio Digital, na demonstração e no painel do restaurante.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 transition-colors">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Enviar Foto / Logo</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleRestaurantLogoFileChange}
+                        className="hidden"
+                      />
+                    </label>
+
+                    <input
+                      type="text"
+                      value={settingsLogoUrl.startsWith('data:') ? '' : settingsLogoUrl}
+                      onChange={(e) => setSettingsLogoUrl(e.target.value)}
+                      placeholder="Ou cole a URL da imagem (https://...)"
+                      className="flex-1 min-w-[180px] p-1.5 text-xs bg-white border border-neutral-300 rounded-lg text-neutral-900"
+                    />
+
+                    {settingsLogoUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setSettingsLogoUrl('')}
+                        className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-semibold cursor-pointer inline-flex items-center gap-1 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Remover</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-neutral-700 mb-1">Nome Fantasia do Estabelecimento</label>
@@ -3363,25 +3766,71 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                         <div className="flex justify-between items-center text-xs font-mono font-bold text-neutral-900 pt-1">
                           <span>{formatBRL(order.totalCents)}</span>
                           <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${
-                            order.paymentStatus === 'paid_online'
+                            isOrderPixPaidAndValidated(order) && isPixOrderPayment(order)
                               ? 'bg-emerald-100 text-emerald-800 font-bold border border-emerald-200'
+                              : isPixOrderPayment(order)
+                              ? 'bg-amber-100 text-amber-900 font-bold border border-amber-300'
                               : 'bg-white/80 text-neutral-800 border border-neutral-200'
                           }`}>
-                            {order.paymentStatus === 'paid_online' && <Zap className="w-2.5 h-2.5 text-emerald-600 fill-current" />}
-                            {order.paymentStatus === 'paid_online' ? '⚡ Pix Pago Online' : order.paymentMethod}
+                            {isPixOrderPayment(order) ? (
+                              isOrderPixPaidAndValidated(order) ? (
+                                <>
+                                  <Zap className="w-2.5 h-2.5 text-emerald-600 fill-current" />
+                                  <span>Pix Validado (Asaas RECEIVED)</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Clock className="w-2.5 h-2.5 text-amber-700" />
+                                  <span>Pix Pendente (Validar no Asaas)</span>
+                                </>
+                              )
+                            ) : (
+                              order.paymentMethod
+                            )}
                           </span>
                         </div>
 
                         {/* Card Action Buttons */}
                         <div className={`pt-2 border-t ${timer.dividerClass} flex flex-col gap-1.5`}>
+                          {isPixOrderPayment(order) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPendingKdsTransitionStatus('confirmed');
+                                setPixValidationModalOrder(order);
+                              }}
+                              className={`w-full py-1.5 px-2 text-[10px] font-bold rounded-lg transition-colors flex items-center justify-center gap-1 border cursor-pointer ${
+                                isOrderPixPaidAndValidated(order)
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                                  : 'bg-amber-500 hover:bg-amber-600 text-neutral-950 border-amber-600 shadow-2xs'
+                              }`}
+                            >
+                              <QrCode className="w-3 h-3 shrink-0" />
+                              <span>
+                                {isOrderPixPaidAndValidated(order)
+                                  ? 'Comprovante Pix Validado no Asaas'
+                                  : 'Validar Pagamento Pix no Asaas p/ Checkout'}
+                              </span>
+                            </button>
+                          )}
+
                           <div className="flex gap-1.5">
                             <button
                               type="button"
                               onClick={() => handleKdsStatusChange(order, 'confirmed')}
-                              className="flex-1 py-1.5 px-2 text-[11px] font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs"
+                              className="flex-1 py-1.5 px-2 text-[11px] font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer"
                             >
-                              <Check className="w-3 h-3 text-emerald-400" />
-                              <span>Confirmar Pedido</span>
+                              {isPixOrderPayment(order) && !isOrderPixPaidAndValidated(order) ? (
+                                <>
+                                  <Lock className="w-3 h-3 text-amber-400" />
+                                  <span>Validar Pix &amp; Confirmar</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-400" />
+                                  <span>Confirmar Pedido</span>
+                                </>
+                              )}
                             </button>
                             <button
                               type="button"
@@ -3576,13 +4025,52 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                         </div>
 
                         <div className={`pt-2 border-t ${timer.dividerClass} flex flex-col gap-1.5`}>
+                          {isPixOrderPayment(order) && (
+                            <div className="flex items-center justify-between px-2 py-1 rounded bg-white/90 border border-neutral-200 text-[10px]">
+                              <span className="font-semibold text-neutral-700 flex items-center gap-1">
+                                <QrCode className="w-3 h-3 text-blue-600" />
+                                <span>Status Pix Asaas:</span>
+                              </span>
+                              {isOrderPixPaidAndValidated(order) ? (
+                                <span className="font-bold text-emerald-700 flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                  <span>RECEIVED (Liberado)</span>
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPendingKdsTransitionStatus('delivered');
+                                    setPixValidationModalOrder(order);
+                                  }}
+                                  className="font-bold text-amber-700 underline hover:text-amber-900 cursor-pointer"
+                                >
+                                  PENDING · Validar Agora
+                                </button>
+                              )}
+                            </div>
+                          )}
+
                           <button
                             type="button"
                             onClick={() => handleKdsStatusChange(order, 'delivered')}
-                            className="w-full py-1.5 px-2 text-[11px] font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs"
+                            className={`w-full py-1.5 px-2 text-[11px] font-bold text-white rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer ${
+                              isPixOrderPayment(order) && !isOrderPixPaidAndValidated(order)
+                                ? 'bg-amber-600 hover:bg-amber-700'
+                                : 'bg-emerald-700 hover:bg-emerald-800'
+                            }`}
                           >
-                            <PackageCheck className="w-3.5 h-3.5" />
-                            <span>Concluir e Entregar</span>
+                            {isPixOrderPayment(order) && !isOrderPixPaidAndValidated(order) ? (
+                              <>
+                                <Lock className="w-3.5 h-3.5" />
+                                <span>Validar Pix no Asaas p/ Checkout</span>
+                              </>
+                            ) : (
+                              <>
+                                <PackageCheck className="w-3.5 h-3.5" />
+                                <span>Concluir Checkout e Entregar</span>
+                              </>
+                            )}
                           </button>
 
                           <div className="flex gap-1">
@@ -4000,10 +4488,18 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                                 <td className="p-3">
                                   <div className="flex items-center gap-2.5">
                                     <div
-                                      className="w-8 h-8 rounded-lg text-white flex items-center justify-center font-bold text-xs shrink-0"
+                                      className="w-8 h-8 rounded-lg text-white flex items-center justify-center font-bold text-xs shrink-0 overflow-hidden"
                                       style={{ backgroundColor: itemTenant.primaryColor || '#2563EB' }}
                                     >
-                                      {itemTenant.name.slice(0, 2).toUpperCase()}
+                                      {itemTenant.logoUrl ? (
+                                        <img
+                                          src={itemTenant.logoUrl}
+                                          alt={itemTenant.name}
+                                          className="w-full h-full object-cover"
+                                        />
+                                      ) : (
+                                        itemTenant.name.slice(0, 2).toUpperCase()
+                                      )}
                                     </div>
                                     <div>
                                       <div className="flex items-center gap-1.5">
@@ -4333,6 +4829,63 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Barra de Validação Automática de Pagamento Pix (Integração Asaas) */}
+            <div className="bg-white border border-blue-200 rounded-xl p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start sm:items-center gap-3">
+                <div
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                    asaasSubscriptionPixCheck.paid
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+                      : 'bg-amber-50 border-amber-200 text-amber-600'
+                  }`}
+                >
+                  <QrCode className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h4 className="text-xs font-bold text-slate-900">
+                      Validação Automática de Pagamento Pix (Consulta de Status Asaas)
+                    </h4>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border ${
+                        asaasSubscriptionPixCheck.paid
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : 'bg-amber-50 text-amber-800 border-amber-200'
+                      }`}
+                    >
+                      Status Asaas: {asaasSubscriptionPixCheck.status}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 mt-0.5">
+                    {asaasSubscriptionPixCheck.paid
+                      ? 'Recebimento Pix validado automaticamente na API do Asaas. Checkout da assinatura liberado!'
+                      : 'O sistema consulta automaticamente o status da cobrança no Asaas para validar o recebimento antes de permitir o checkout.'}
+                    {asaasSubscriptionPixCheck.lastCheckedAt && (
+                      <span className="ml-1.5 font-mono text-[10px] text-slate-400">
+                        (Última consulta: {asaasSubscriptionPixCheck.lastCheckedAt})
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={asaasSubscriptionPixCheck.isChecking}
+                onClick={() => checkAsaasSubscriptionCheckoutStatus(false)}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white flex items-center gap-1.5 shrink-0 cursor-pointer shadow-2xs"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 ${asaasSubscriptionPixCheck.isChecking ? 'animate-spin' : ''}`}
+                />
+                <span>
+                  {asaasSubscriptionPixCheck.isChecking
+                    ? 'Consultando Asaas...'
+                    : 'Validar Status Pix no Asaas'}
+                </span>
+              </button>
+            </div>
 
             <AsaasSubscriptionBillingView
               tenant={tenant}
@@ -4705,6 +5258,282 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
               />
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL DE VALIDAÇÃO DE PAGAMENTO PIX & CHECKOUT (ASAAS API)     */}
+      {/* ============================================================== */}
+      {pixValidationModalOrder && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in">
+          {(() => {
+            const modalOrder =
+              orders.find((o) => o.id === pixValidationModalOrder.id) || pixValidationModalOrder;
+            const validationState = asaasPixValidationByOrder[modalOrder.id];
+            const isPaidValidated = isOrderPixPaidAndValidated(modalOrder);
+            const asaasStatusLabel =
+              validationState?.asaasStatus || (isPaidValidated ? 'RECEIVED' : 'PENDING');
+            const pixPayload =
+              validationState?.pixCopiaECola || modalOrder.pixTransaction?.pixCopiaECola || '';
+
+            return (
+              <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+                {/* Header */}
+                <div className="bg-slate-900 text-white px-5 py-4 flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center border ${
+                        isPaidValidated
+                          ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300'
+                          : 'bg-amber-500/20 border-amber-400/40 text-amber-300'
+                      }`}
+                    >
+                      <QrCode className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold">
+                          Validação de Pagamento Pix &bull; Checkout Asaas
+                        </h3>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-800 text-sky-300 border border-slate-700">
+                          Pedido #{modalOrder.orderNumber}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-300">
+                        Consulta automática de status de cobrança no Asaas antes de liberar o checkout
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPixValidationModalOrder(null)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Body */}
+                <div className="p-5 overflow-y-auto space-y-4 flex-1">
+                  {/* Status Banner */}
+                  <div
+                    className={`p-3.5 rounded-xl border flex items-start justify-between gap-3 ${
+                      isPaidValidated
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                        : 'bg-amber-50 border-amber-300 text-amber-950'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      {isPaidValidated ? (
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                      ) : (
+                        <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5 animate-pulse" />
+                      )}
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-extrabold">
+                            {isPaidValidated
+                              ? 'Pagamento Pix Confirmado pelo Asaas!'
+                              : 'Aguardando Confirmação de Recebimento no Asaas'}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
+                              isPaidValidated
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-amber-500 text-neutral-950'
+                            }`}
+                          >
+                            ASAAS: {asaasStatusLabel}
+                          </span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed">
+                          {validationState?.message ||
+                            (isPaidValidated
+                              ? 'O recebimento foi validado automaticamente na consulta de cobrança do Asaas. O checkout deste pedido já está liberado.'
+                              : 'O sistema consulta automaticamente o status da cobrança Pix a cada 4 segundos. O botão de checkout será liberado assim que o status mudar para RECEIVED ou CONFIRMED.')}
+                        </p>
+                        {validationState?.lastCheckedAt && (
+                          <p className="text-[10px] font-mono opacity-75">
+                            Última verificação automática no Asaas: {validationState.lastCheckedAt}
+                            {validationState.txid ? ` · TXID: ${validationState.txid}` : ''}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={validationState?.isChecking}
+                      onClick={() => validateOrderPixWithAsaas(modalOrder, false)}
+                      className="px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 text-[11px] font-bold flex items-center gap-1 shrink-0 cursor-pointer shadow-2xs"
+                    >
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 text-blue-600 ${
+                          validationState?.isChecking ? 'animate-spin' : ''
+                        }`}
+                      />
+                      <span>Consultar</span>
+                    </button>
+                  </div>
+
+                  {/* Order Summary */}
+                  <div className="grid grid-cols-2 gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+                    <div>
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold block">
+                        Cliente
+                      </span>
+                      <span className="font-bold text-slate-900">{modalOrder.customerName}</span>
+                      <span className="block text-[11px] font-mono text-slate-500">
+                        +{modalOrder.customerPhone}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold block">
+                        Valor da Cobrança Pix
+                      </span>
+                      <span className="text-base font-black font-mono text-blue-700">
+                        {formatBRL(modalOrder.totalCents)}
+                      </span>
+                      <span className="block text-[10px] text-slate-500">
+                        {modalOrder.items.length} {modalOrder.items.length === 1 ? 'item' : 'itens'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* QR Code & Pix Copia e Cola */}
+                  {!isPaidValidated && (
+                    <div className="p-4 bg-white border border-slate-200 rounded-xl space-y-3">
+                      <div className="flex flex-col sm:flex-row items-center gap-4">
+                        <div className="w-36 h-36 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center p-2 shrink-0">
+                          {validationState?.pixQrDataUrl ? (
+                            <img
+                              src={validationState.pixQrDataUrl}
+                              alt="QR Code Pix Asaas"
+                              className="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <QrCode className="w-12 h-12 text-slate-300" />
+                          )}
+                        </div>
+                        <div className="flex-1 space-y-2 w-full">
+                          <label className="block text-[11px] font-bold text-slate-800">
+                            Código Pix Copia e Cola da Cobrança:
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              readOnly
+                              value={pixPayload || 'Gerando payload Pix...'}
+                              className="flex-1 p-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-mono text-slate-700 select-all"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!pixPayload) return;
+                                navigator.clipboard?.writeText(pixPayload).catch(() => {});
+                                setCopiedPixCheckoutCode(true);
+                                setTimeout(() => setCopiedPixCheckoutCode(false), 2500);
+                              }}
+                              className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold rounded-lg flex items-center gap-1 shrink-0 cursor-pointer"
+                            >
+                              {copiedPixCheckoutCode ? (
+                                <>
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>Copiado</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3.5 h-3.5" />
+                                  <span>Copiar</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-slate-500 leading-relaxed">
+                            Assim que o cliente concluir o pagamento no app do banco, o Asaas atualiza o status para{' '}
+                            <code className="font-mono font-bold text-slate-700">RECEIVED</code> e libera o checkout automaticamente.
+                          </p>
+                        </div>
+                      </div>
+
+                      {isSuperAdmin && (
+                        <div className="pt-2 border-t border-slate-100 flex justify-end">
+                          <button
+                            type="button"
+                            disabled={isSimulatingPixReceipt}
+                            onClick={() => handleConfirmPixWebhookSimulationForOrder(modalOrder)}
+                            className="px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Zap className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>
+                              {isSimulatingPixReceipt
+                                ? 'Simulando liquidação no Asaas...'
+                                : 'Simular Recebimento Pix no Asaas (Webhook RECEIVED)'}
+                            </span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer with Gated Checkout Action */}
+                <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-2.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setPixValidationModalOrder(null)}
+                    className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-200/70 cursor-pointer"
+                  >
+                    Fechar
+                  </button>
+
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      disabled={validationState?.isChecking}
+                      onClick={() => validateOrderPixWithAsaas(modalOrder, false)}
+                      className="flex-1 sm:flex-initial px-3.5 py-2.5 rounded-xl text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 ${validationState?.isChecking ? 'animate-spin' : ''}`}
+                      />
+                      <span>Verificar Status Asaas</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={!isPaidValidated}
+                      onClick={() => {
+                        handleKdsStatusChange(modalOrder, pendingKdsTransitionStatus, true);
+                        setPixValidationModalOrder(null);
+                      }}
+                      className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                        isPaidValidated
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm cursor-pointer'
+                          : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                      }`}
+                    >
+                      {isPaidValidated ? (
+                        <>
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>
+                            {pendingKdsTransitionStatus === 'confirmed'
+                              ? 'Confirmar Pedido (Pix Validado)'
+                              : 'Liberar e Concluir Checkout'}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <Lock className="w-3.5 h-3.5" />
+                          <span>Aguardando Validação Asaas...</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
