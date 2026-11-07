@@ -940,6 +940,12 @@ export default function App() {
             ...INITIAL_TENANT,
             ...prev,
             ...serverTenant,
+            pixKey: serverTenant.pixKey || serverTenant.pixConfig?.pixKey || prev.pixKey,
+            pixBeneficiaryName:
+              serverTenant.pixBeneficiaryName ||
+              serverTenant.pixConfig?.beneficiaryName ||
+              prev.pixBeneficiaryName,
+            pixConfig: serverTenant.pixConfig || prev.pixConfig,
             subscriptionStatus: serverTenant.subscriptionStatus || prev.subscriptionStatus || 'active',
           });
         });
@@ -947,8 +953,8 @@ export default function App() {
         if (serverCategories.length > 0 || serverProducts.length > 0) {
           setCatalogsByTenant((prev) => {
             const existing = prev[serverTenant.slug];
-            // Se o navegador do cliente não tem produtos salvos localmente para este restaurante, hidrata do servidor
-            if (!existing || existing.productIds.length === 0) {
+            // Para clientes no link público (?loja=...) ou sem catálogo local, usa sempre o cardápio oficial do servidor
+            if (Boolean(sharedLojaParam) || !authSession || !existing || existing.productIds.length === 0) {
               return {
                 ...prev,
                 [serverTenant.slug]: sanitizeTenantCatalog({
@@ -970,7 +976,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [sharedLojaParam, currentView, tenant.slug]);
+  }, [sharedLojaParam, currentView, tenant.slug, authSession]);
 
   React.useEffect(() => {
     if (isSuperAdmin) return;
@@ -1058,9 +1064,10 @@ export default function App() {
     [currentCatalog.orderIds, currentCatalog.ordersById]
   );
 
-  // Sincroniza automaticamente o restaurante e seu cardápio com o backend para que o link público (?loja=slug) esteja sempre atualizado em qualquer dispositivo
+  // Sincroniza automaticamente o restaurante e seu cardápio com o backend apenas quando o lojista/admin está autenticado (evitando que clientes públicos sobrescrevam dados)
   React.useEffect(() => {
     if (!tenant?.slug) return;
+    if (!authSession && Boolean(sharedLojaParam)) return;
     const timeoutId = setTimeout(() => {
       fetch(`/api/v1/tenants/${encodeURIComponent(tenant.slug)}/catalog/sync`, {
         method: 'POST',
@@ -1073,7 +1080,77 @@ export default function App() {
       }).catch(() => {});
     }, 350);
     return () => clearTimeout(timeoutId);
-  }, [tenant, categories, products]);
+  }, [tenant, categories, products, authSession, sharedLojaParam]);
+
+  // Sincroniza pedidos em tempo real do servidor para o Painel & KDS do restaurante (para que novos pedidos feitos no celular dos clientes apareçam imediatamente no KDS)
+  React.useEffect(() => {
+    if (!tenant?.slug) return;
+    let isMounted = true;
+
+    const syncOrdersFromServer = async () => {
+      try {
+        const headers: Record<string, string> = {};
+        if (authSession?.token) {
+          headers['Authorization'] = `Bearer ${authSession.token}`;
+        }
+        const res = await fetch(`/api/v1/tenants/${encodeURIComponent(tenant.slug)}/orders`, {
+          headers,
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        const serverOrders: Order[] = Array.isArray(json?.data) ? json.data : [];
+        if (!isMounted || serverOrders.length === 0) return;
+
+        setCatalogsByTenant((prev) => {
+          const existing = prev[tenant.slug] || defaultNormalizedCatalog;
+          let hasChanges = false;
+          const nextOrdersById = { ...existing.ordersById };
+          const nextOrderIds = [...existing.orderIds];
+
+          for (const srvOrd of serverOrders) {
+            if (!srvOrd || !srvOrd.id) continue;
+            const localOrd = nextOrdersById[srvOrd.id];
+            if (!localOrd) {
+              nextOrdersById[srvOrd.id] = srvOrd;
+              nextOrderIds.unshift(srvOrd.id);
+              hasChanges = true;
+            } else if (
+              localOrd.status !== srvOrd.status ||
+              localOrd.paymentStatus !== srvOrd.paymentStatus ||
+              localOrd.updatedAt !== srvOrd.updatedAt
+            ) {
+              nextOrdersById[srvOrd.id] = {
+                ...localOrd,
+                ...srvOrd,
+              };
+              hasChanges = true;
+            }
+          }
+
+          if (!hasChanges) return prev;
+          markTenantCatalogDirty(tenant.slug);
+          return {
+            ...prev,
+            [tenant.slug]: {
+              ...existing,
+              ordersById: nextOrdersById,
+              orderIds: Array.from(new Set(nextOrderIds)),
+              updatedAt: Date.now(),
+            },
+          };
+        });
+      } catch {
+        // Ignore transient network errors
+      }
+    };
+
+    syncOrdersFromServer();
+    const pollInterval = setInterval(syncOrdersFromServer, 3500);
+    return () => {
+      isMounted = false;
+      clearInterval(pollInterval);
+    };
+  }, [tenant.slug, authSession?.token, defaultNormalizedCatalog]);
 
   // Tenant Handlers
   const handleTenantCreated = (newTenant: RestaurantTenant) => {
@@ -2332,20 +2409,22 @@ export default function App() {
         </div>
       )}
 
-      {/* Clean quiet footer with WhatsApp support button, Terms of Use and Privacy Policy links */}
+      {/* Clean quiet footer with Terms of Use and Privacy Policy links (WhatsApp support button hidden on restaurant digital menu) */}
       <footer className="border-t border-slate-200 bg-white py-5 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-slate-500">
           <div className="flex flex-wrap items-center justify-center md:justify-start gap-3">
             <span className="font-bold text-slate-900">Aladay Cardápios Digitais</span>
-            <a
-              href={`https://wa.me/559131976334?text=${encodeURIComponent('Olá! Gostaria de tirar uma dúvida sobre o Aladay Cardápios Digitais.')}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-2xs transition-colors cursor-pointer"
-            >
-              <MessageSquare className="w-3.5 h-3.5" />
-              <span>Tirar dúvidas no WhatsApp</span>
-            </a>
+            {!sharedLojaParam && currentView !== 'consumer' && currentView !== 'tracking' && (
+              <a
+                href={`https://wa.me/559131976334?text=${encodeURIComponent('Olá! Gostaria de tirar uma dúvida sobre o Aladay Cardápios Digitais.')}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-2xs transition-colors cursor-pointer"
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                <span>Tirar dúvidas no WhatsApp</span>
+              </a>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-4">

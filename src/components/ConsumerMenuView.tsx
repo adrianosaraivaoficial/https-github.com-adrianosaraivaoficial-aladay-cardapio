@@ -343,8 +343,8 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
     : 0;
   const cartGrandTotalCents = cartSubtotalCents + deliveryFee;
 
-  // Checkout submission (Idempotency + Outbox pattern simulation)
-  const handleCheckoutSubmit = (e: React.FormEvent) => {
+  // Checkout submission (Real-time sync with backend + KDS)
+  const handleCheckoutSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCheckoutError(null);
     if (cartItems.length === 0) return;
@@ -359,51 +359,88 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
 
     setIsSubmitting(true);
 
-    setTimeout(() => {
-      const orderNumber = Math.floor(1043 + Math.random() * 50);
-      const isPixDynamic = paymentMethod.includes('Pix Instantâneo');
-      const formattedTable = deliveryType === 'dine_in' ? tableNumber.trim().padStart(2, '0') : undefined;
-      const newOrder: Order = {
-        id: `ord_${orderNumber}`,
-        orderNumber,
-        tenantId: tenant.id,
-        tenantSlug: tenant.slug,
-        customerName: customerName.trim() || (formattedTable ? `Mesa ${formattedTable}` : 'Cliente'),
-        customerPhone: customerPhone.trim() || tenant.phone,
-        type: deliveryType,
-        tableNumber: formattedTable,
-        deliveryAddress: deliveryType === 'delivery' ? deliveryAddress.trim() : formattedTable ? `Mesa ${formattedTable} (Salão)` : undefined,
-        deliveryZoneName: selectedZone?.name,
-        estimatedMinutes: deliveryType === 'dine_in' ? 15 : selectedZone?.estimatedMinutes || 35,
-        items: [...cartItems],
-        subtotalCents: cartSubtotalCents,
-        deliveryFeeCents: deliveryFee,
-        totalCents: cartGrandTotalCents,
-        status: isPixDynamic ? 'received' : 'confirmed',
-        paymentStatus: 'pending',
-        paymentMethod: isPixDynamic ? 'Pix Dinâmico Instantâneo' : paymentMethod,
-        whatsAppStatus: 'delivered',
-        whatsAppLogs: [
-          {
-            timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            event: 'order.created',
-            detail: `Pedido #${orderNumber} registrado no sistema via Cardápio Digital${formattedTable ? ` (Mesa ${formattedTable})` : ''} (${isPixDynamic ? 'Aguardando Pagamento Pix' : paymentMethod}).`,
-          },
-        ],
-        createdAt: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-        updatedAt: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-      };
+    const orderNumber = Math.floor(1043 + Math.random() * 8900);
+    const isPixDynamic = paymentMethod.includes('Pix');
+    const formattedTable = deliveryType === 'dine_in' ? tableNumber.trim().padStart(2, '0') : undefined;
+    const nowTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-      onOrderCreated(newOrder);
-      setLastPlacedOrder(newOrder);
-      setCartItems([]);
-      setIsSubmitting(false);
-      setIsCartOpen(false);
+    const localOrder: Order = {
+      id: `ord_${orderNumber}`,
+      orderNumber,
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      customerName: customerName.trim() || (formattedTable ? `Mesa ${formattedTable}` : 'Cliente'),
+      customerPhone: (customerPhone.trim() || tenant.phone).replace(/\D/g, ''),
+      type: deliveryType,
+      tableNumber: formattedTable,
+      deliveryAddress:
+        deliveryType === 'delivery'
+          ? deliveryAddress.trim()
+          : formattedTable
+          ? `Mesa ${formattedTable} (Salão)`
+          : undefined,
+      deliveryZoneName: selectedZone?.name,
+      estimatedMinutes: deliveryType === 'dine_in' ? 15 : selectedZone?.estimatedMinutes || 35,
+      items: [...cartItems],
+      subtotalCents: cartSubtotalCents,
+      deliveryFeeCents: deliveryFee,
+      totalCents: cartGrandTotalCents,
+      status: isPixDynamic ? 'received' : 'confirmed',
+      paymentStatus: 'pending',
+      paymentMethod: isPixDynamic ? 'Pix' : paymentMethod,
+      whatsAppStatus: 'delivered',
+      whatsAppLogs: [
+        {
+          timestamp: new Date().toLocaleTimeString('pt-BR', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          }),
+          event: 'order.created',
+          detail: `Pedido #${orderNumber} recebido via Cardápio Digital${
+            formattedTable ? ` (Mesa ${formattedTable})` : ''
+          } (${isPixDynamic ? 'Pix' : paymentMethod}).`,
+        },
+      ],
+      createdAt: nowTime,
+      updatedAt: nowTime,
+    };
 
-      if (isPixDynamic) {
-        setActivePixOrder(newOrder);
+    let finalOrder: Order = localOrder;
+
+    try {
+      const response = await fetch('/api/v1/orders/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...localOrder,
+          tenantName: tenant.name,
+          tenantPhone: tenant.phone,
+          idempotencyKey: `${tenant.slug}_${localOrder.id}_${Date.now()}`,
+        }),
+      });
+      if (response.ok) {
+        const json = await response.json();
+        if (json?.data) {
+          finalOrder = {
+            ...localOrder,
+            ...json.data,
+          };
+        }
       }
-    }, 600);
+    } catch {
+      // Fallback to localOrder if offline
+    }
+
+    onOrderCreated(finalOrder);
+    setLastPlacedOrder(finalOrder);
+    setCartItems([]);
+    setIsSubmitting(false);
+    setIsCartOpen(false);
+
+    if (isPixDynamic) {
+      setActivePixOrder(finalOrder);
+    }
   };
 
   const formatBRL = (cents: number) => {
@@ -755,29 +792,47 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
       {/* If Order Placed: Confirmation Screen */}
       {lastPlacedOrder ? (
         <div className="p-6 flex-1 flex flex-col items-center justify-center text-center space-y-4">
-          <div className="w-12 h-12 bg-emerald-100 text-emerald-800 rounded-full flex items-center justify-center">
-            <Check className="w-6 h-6 stroke-[3]" />
+          <div className="w-14 h-14 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center shadow-xs">
+            <Check className="w-7 h-7 stroke-[3]" />
           </div>
 
           <div>
-            <span className="text-xs text-neutral-500 font-mono">
+            <span className="text-xs text-neutral-500 font-mono font-bold">
               Pedido #{lastPlacedOrder.orderNumber}
             </span>
             <h2 className="text-xl font-bold text-neutral-900 mt-0.5">Pedido Enviado com Sucesso!</h2>
-            <p className="text-xs text-neutral-600 mt-1">
-              O pedido foi validado e gravado no banco de dados. Uma notificação foi enviada ao seu WhatsApp pelo restaurante.
+            <p className="text-xs text-neutral-600 mt-1 max-w-xs mx-auto leading-relaxed">
+              Seu pedido já foi recebido pelo <strong>{tenant.name}</strong>. Você pode acompanhar o status do preparo em tempo real abaixo.
             </p>
           </div>
 
-          {/* WhatsApp Evolution Simulation Box */}
-          <div className="w-full bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-left space-y-2">
-            <div className="flex items-center gap-2 text-emerald-900 text-xs font-semibold">
-              <MessageSquare className="w-3.5 h-3.5 text-emerald-700" />
-              <span>WhatsApp Evolution API Dispatched</span>
+          {/* Customer Order Summary Box */}
+          <div className="w-full bg-neutral-50 border border-neutral-200 rounded-xl p-3.5 text-left space-y-2 text-xs">
+            <div className="flex items-center justify-between border-b border-neutral-200 pb-2">
+              <span className="font-bold text-neutral-800">{tenant.name}</span>
+              <span className="font-mono font-bold text-emerald-700">
+                Total: {formatBRL(lastPlacedOrder.totalCents)}
+              </span>
             </div>
-            <p className="text-[11px] text-emerald-800 font-mono whitespace-pre-wrap leading-relaxed">
-              {`🍔 *${tenant.name}*\nOlá, ${lastPlacedOrder.customerName}! Recebemos seu pedido #${lastPlacedOrder.orderNumber}.\nTotal: ${formatBRL(lastPlacedOrder.totalCents)}\nAguarde a confirmação da cozinha!`}
-            </p>
+            <div className="space-y-1 text-[11px] text-neutral-600">
+              <p>
+                <strong>Cliente:</strong> {lastPlacedOrder.customerName}
+              </p>
+              <p>
+                <strong>Modalidade:</strong>{' '}
+                {lastPlacedOrder.type === 'delivery'
+                  ? `Entrega (${lastPlacedOrder.deliveryAddress || 'Endereço informado'})`
+                  : lastPlacedOrder.type === 'dine_in'
+                  ? `Consumo no Salão (Mesa ${lastPlacedOrder.tableNumber || ''})`
+                  : 'Retirada no Balcão'}
+              </p>
+              <p>
+                <strong>Pagamento:</strong>{' '}
+                {lastPlacedOrder.paymentStatus === 'paid_online'
+                  ? 'Pix Confirmado'
+                  : lastPlacedOrder.paymentMethod}
+              </p>
+            </div>
           </div>
 
           <div className="w-full border-t border-neutral-200 pt-3 flex flex-col gap-2">
@@ -785,17 +840,17 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
               <button
                 type="button"
                 onClick={() => setActivePixOrder(lastPlacedOrder)}
-                className={`w-full py-2.5 px-4 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-xs ${
+                className={`w-full py-2.5 px-4 text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer ${
                   lastPlacedOrder.paymentStatus === 'paid_online'
                     ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                    : 'bg-emerald-600 hover:bg-emerald-700 text-white animate-pulse'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white'
                 }`}
               >
                 <Zap className="w-3.5 h-3.5 text-amber-300" />
                 <span>
                   {lastPlacedOrder.paymentStatus === 'paid_online'
-                    ? '✓ Pix Pago com Sucesso (Ver Comprovante)'
-                    : '⚡ Pagar Agora com Pix Dinâmico (QR Code)'}
+                    ? '✓ Pagamento Pix Confirmado (Ver Comprovante)'
+                    : 'Pagar Agora com Pix (QR Code / Copia e Cola)'}
                 </span>
               </button>
             )}
@@ -804,42 +859,32 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
               <button
                 type="button"
                 onClick={() => onViewTracking(lastPlacedOrder)}
-                className="w-full py-2.5 px-4 text-xs font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-xs"
+                className="w-full py-2.5 px-4 text-xs font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-xl transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
               >
                 <Clock className="w-3.5 h-3.5 text-amber-400" />
-                <span>Rastrear Pedido em Tempo Real (Visão Cliente)</span>
+                <span>Acompanhar Status do Pedido em Tempo Real</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             )}
 
             <a
-              href={`https://wa.me/${tenant.phone}?text=${encodeURIComponent(`Olá! Acabei de fazer o pedido #${lastPlacedOrder.orderNumber} pelo cardápio digital do ${tenant.name}. Total: ${formatBRL(lastPlacedOrder.totalCents)}. Poderiam confirmar o recebimento?`)}`}
+              href={`https://wa.me/${tenant.phone.replace(/\D/g, '').startsWith('55') ? tenant.phone.replace(/\D/g, '') : `55${tenant.phone.replace(/\D/g, '')}`}?text=${encodeURIComponent(`Olá! Acabei de fazer o pedido #${lastPlacedOrder.orderNumber} pelo cardápio digital do ${tenant.name}. Total: ${formatBRL(lastPlacedOrder.totalCents)}.`)}`}
               target="_blank"
               rel="noreferrer"
-              className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-xs"
+              className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors flex items-center justify-center gap-1.5 shadow-xs"
             >
               <MessageSquare className="w-3.5 h-3.5" />
-              <span>Acompanhar Pedido no WhatsApp</span>
+              <span>Falar com o Restaurante no WhatsApp</span>
               <ExternalLink className="w-3 h-3 opacity-80" />
             </a>
 
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setShowThermalModal(true)}
-                className="flex-1 py-2 px-3 text-xs font-semibold text-neutral-700 bg-white border border-neutral-300 hover:bg-neutral-50 rounded-lg transition-colors flex items-center justify-center gap-1.5"
-              >
-                <Printer className="w-3.5 h-3.5 text-neutral-500" />
-                <span>Comanda Térmica</span>
-              </button>
-
-              <button
-                onClick={() => setLastPlacedOrder(null)}
-                className="flex-1 py-2 px-3 text-xs font-semibold text-neutral-800 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors"
-              >
-                Novo Pedido
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => setLastPlacedOrder(null)}
+              className="w-full py-2.5 px-3 text-xs font-semibold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-xl transition-colors cursor-pointer"
+            >
+              Voltar ao Cardápio / Novo Pedido
+            </button>
           </div>
         </div>
       ) : (
