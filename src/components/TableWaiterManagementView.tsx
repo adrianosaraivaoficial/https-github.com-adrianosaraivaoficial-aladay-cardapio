@@ -18,6 +18,8 @@ import {
   BellRing,
   ChefHat,
   ExternalLink,
+  Download,
+  X,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
@@ -88,6 +90,9 @@ export const TableWaiterManagementView: React.FC<TableWaiterManagementViewProps>
   // QR Code for Selected Table
   const [tableQrDataUrl, setTableQrDataUrl] = useState<string>('');
   const [qrLinkCopied, setQrLinkCopied] = useState<boolean>(false);
+  const [isBatchPlaquesModalOpen, setIsBatchPlaquesModalOpen] = useState<boolean>(false);
+  const [allTablesQrMap, setAllTablesQrMap] = useState<Record<string, string>>({});
+  const [isGeneratingBatchQrs, setIsGeneratingBatchQrs] = useState<boolean>(false);
 
   const formatBRL = (cents: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
@@ -202,6 +207,42 @@ export const TableWaiterManagementView: React.FC<TableWaiterManagementViewProps>
       active = false;
     };
   }, [selectedTableMenuUrl]);
+
+  // Generate QR codes for all tables in batch when batch modal opens
+  useEffect(() => {
+    if (!isBatchPlaquesModalOpen) return;
+    let active = true;
+    setIsGeneratingBatchQrs(true);
+    const base =
+      typeof window !== 'undefined'
+        ? `${window.location.origin}${window.location.pathname}`
+        : 'https://aladay.com.br/';
+
+    Promise.all(
+      tableNumbers.map(async (num) => {
+        const url = `${base}?loja=${encodeURIComponent(tenant.slug)}&mesa=${encodeURIComponent(num)}`;
+        const qr = await QRCode.toDataURL(url, { width: 280, margin: 1 });
+        return { num, qr };
+      })
+    )
+      .then((results) => {
+        if (active) {
+          const map: Record<string, string> = {};
+          results.forEach((r) => {
+            map[r.num] = r.qr;
+          });
+          setAllTablesQrMap(map);
+          setIsGeneratingBatchQrs(false);
+        }
+      })
+      .catch(() => {
+        if (active) setIsGeneratingBatchQrs(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [isBatchPlaquesModalOpen, tableNumbers, tenant.slug]);
 
   // Filtered products for Waiter POS
   const availableProducts = useMemo(() => {
@@ -416,7 +457,7 @@ export const TableWaiterManagementView: React.FC<TableWaiterManagementViewProps>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <span className="text-xs text-slate-600 font-medium">Total de Mesas no Salão:</span>
+            <span className="text-xs text-slate-600 font-semibold">Mesas do Salão:</span>
             <select
               value={totalTables}
               onChange={(e) =>
@@ -425,14 +466,40 @@ export const TableWaiterManagementView: React.FC<TableWaiterManagementViewProps>
                   tablesCount: Number(e.target.value) || 12,
                 })
               }
-              className="p-2 text-xs font-semibold border border-slate-300 rounded-lg bg-slate-50 text-slate-900"
+              className="p-2 text-xs font-bold border border-slate-300 rounded-lg bg-slate-50 text-slate-900 cursor-pointer"
             >
+              <option value={4}>4 Mesas</option>
+              <option value={6}>6 Mesas</option>
               <option value={8}>8 Mesas</option>
+              <option value={10}>10 Mesas</option>
               <option value={12}>12 Mesas</option>
               <option value={16}>16 Mesas</option>
               <option value={20}>20 Mesas</option>
               <option value={24}>24 Mesas</option>
+              <option value={30}>30 Mesas</option>
+              <option value={40}>40 Mesas</option>
+              <option value={50}>50 Mesas</option>
             </select>
+
+            <button
+              type="button"
+              onClick={() => setRightPanelTab('qrcode')}
+              className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Ver e configurar QR Codes individuais das mesas"
+            >
+              <QrCode className="w-3.5 h-3.5 text-amber-700" />
+              <span>QR Codes</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsBatchPlaquesModalOpen(true)}
+              className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+              title="Gerar e imprimir plaquinhas de todas as mesas deste restaurante"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Imprimir Todas as Plaquinhas</span>
+            </button>
           </div>
         </div>
 
@@ -1074,38 +1141,126 @@ export const TableWaiterManagementView: React.FC<TableWaiterManagementViewProps>
             </div>
           )}
 
-          {/* SUB-TAB 3: QR CODE EXCLUSIVO DA MESA */}
+          {/* SUB-TAB 3: QR CODE EXCLUSIVO DA MESA & IMPRESSÃO EM LOTE */}
           {rightPanelTab === 'qrcode' && (
-            <div className="p-5 text-center space-y-4">
-              <div className="inline-block p-4 bg-white border-2 border-slate-900 rounded-2xl shadow-sm">
-                <p className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-1">
-                  {tenant.name}
-                </p>
-                <span className="inline-block px-3 py-0.5 rounded-md bg-blue-600 text-white text-xs font-bold mb-2">
-                  MESA {selectedTableNumber}
-                </span>
-                {tableQrDataUrl ? (
-                  <img
-                    src={tableQrDataUrl}
-                    alt={`QR Code Mesa ${selectedTableNumber}`}
-                    className="w-44 h-44 mx-auto"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  <div className="w-44 h-44 mx-auto flex items-center justify-center bg-slate-100 rounded-lg">
-                    <QrCode className="w-10 h-10 text-slate-400" />
-                  </div>
-                )}
-                <p className="text-[11px] text-slate-600 font-medium mt-2">
-                  Aponte a câmera do celular para fazer seu pedido direto da Mesa {selectedTableNumber}
-                </p>
+            <div className="p-5 space-y-4">
+              {/* Table Selector Header inside QR Tab */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                    <QrCode className="w-4 h-4 text-blue-600" />
+                    <span>Configurar QR Code por Mesa:</span>
+                  </span>
+                  <span className="text-[11px] font-mono text-slate-500">
+                    {totalTables} mesas cadastradas
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <select
+                    value={selectedTableNumber}
+                    onChange={(e) => setSelectedTableNumber(e.target.value)}
+                    className="p-2 text-xs font-bold font-mono border border-slate-300 rounded-lg bg-white text-slate-900 cursor-pointer flex-1"
+                  >
+                    {tableNumbers.map((num) => (
+                      <option key={num} value={num}>
+                        Mesa {num} {activeDineInOrdersByTable[num]?.length ? '(Ocupada)' : '(Livre)'}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsBatchPlaquesModalOpen(true)}
+                    className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs shrink-0"
+                    title="Abrir folha com todas as plaquinhas para imprimir ou salvar"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Todas as Mesas</span>
+                  </button>
+                </div>
+
+                {/* Quick table badge pills */}
+                <div className="flex gap-1.5 overflow-x-auto no-scrollbar pt-1">
+                  {tableNumbers.map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => setSelectedTableNumber(num)}
+                      className={`px-2 py-1 rounded-md text-[11px] font-mono font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                        selectedTableNumber === num
+                          ? 'bg-blue-600 text-white shadow-2xs'
+                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      Mesa {num}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              <div className="p-2.5 bg-slate-100 rounded-lg font-mono text-[11px] text-slate-700 truncate">
+              {/* Single Table Plaque Card (Visualização idêntica ao display de mesa de acrílico) */}
+              <div className="max-w-xs mx-auto p-5 bg-white border-2 border-slate-900 rounded-2xl shadow-md text-center space-y-3">
+                <div className="flex items-center justify-center gap-2">
+                  {tenant.logoUrl ? (
+                    <img
+                      src={tenant.logoUrl}
+                      alt={tenant.name}
+                      className="w-8 h-8 rounded-lg object-cover border border-slate-200 shadow-2xs"
+                    />
+                  ) : (
+                    <div
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-extrabold text-xs shadow-2xs"
+                      style={{ backgroundColor: tenant.primaryColor || '#2563EB' }}
+                    >
+                      {tenant.name.slice(0, 2).toUpperCase()}
+                    </div>
+                  )}
+                  <p className="text-xs font-bold text-slate-900 uppercase tracking-wide truncate max-w-[190px]">
+                    {tenant.name}
+                  </p>
+                </div>
+
+                <div className="inline-block px-4 py-1 rounded-full bg-slate-950 text-white text-xs font-black tracking-wider">
+                  MESA {selectedTableNumber}
+                </div>
+
+                {tableQrDataUrl ? (
+                  <div className="p-2.5 bg-white border border-slate-200 rounded-xl inline-block shadow-inner">
+                    <img
+                      src={tableQrDataUrl}
+                      alt={`QR Code Mesa ${selectedTableNumber}`}
+                      className="w-48 h-48 mx-auto"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                ) : (
+                  <div className="w-48 h-48 mx-auto flex items-center justify-center bg-slate-100 rounded-xl">
+                    <QrCode className="w-12 h-12 text-slate-400 animate-pulse" />
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-slate-900 leading-snug">
+                    Aponte a câmera do seu celular
+                  </p>
+                  <p className="text-[11px] text-slate-500 leading-tight">
+                    Veja o cardápio e faça seu pedido direto desta mesa sem esperar pelo garçom.
+                  </p>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 text-[10px] font-mono text-slate-400">
+                  aladay.com.br • Mesa {selectedTableNumber}
+                </div>
+              </div>
+
+              {/* Direct Link Display */}
+              <div className="p-2.5 bg-slate-100 rounded-xl font-mono text-[11px] text-slate-700 truncate border border-slate-200 text-center select-all" title={selectedTableMenuUrl}>
                 {selectedTableMenuUrl}
               </div>
 
-              <div className="flex flex-wrap justify-center gap-2">
+              {/* Action Buttons for this Table */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -1113,25 +1268,229 @@ export const TableWaiterManagementView: React.FC<TableWaiterManagementViewProps>
                     setQrLinkCopied(true);
                     setTimeout(() => setQrLinkCopied(false), 2500);
                   }}
-                  className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer"
+                  className="py-2.5 px-3 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
                 >
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>{qrLinkCopied ? 'Link Copiado!' : 'Copiar Link da Mesa'}</span>
+                  {qrLinkCopied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Copiado!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copiar Link</span>
+                    </>
+                  )}
                 </button>
+
+                {tableQrDataUrl && (
+                  <a
+                    href={tableQrDataUrl}
+                    download={`qr-code-mesa-${selectedTableNumber}-${tenant.slug}.png`}
+                    className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs text-center"
+                    title="Baixar imagem PNG de alta resolução para impressão"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Baixar PNG</span>
+                  </a>
+                )}
+
+                <a
+                  href={selectedTableMenuUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer border border-slate-200 text-center"
+                  title="Abrir o cardápio configurado para esta mesa em uma nova aba"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Testar Menu</span>
+                </a>
 
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer"
+                  className="py-2.5 px-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                  title="Imprimir plaquinha individual da mesa"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>Imprimir Plaquinha</span>
+                  <span>Imprimir Esta</span>
+                </button>
+              </div>
+
+              {/* Batch Action Prominent Banner */}
+              <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <p className="text-xs font-bold text-blue-950 flex items-center gap-1.5">
+                    <Printer className="w-4 h-4 text-blue-600" />
+                    <span>Deseja imprimir as plaquinhas de todas as {totalTables} mesas?</span>
+                  </p>
+                  <p className="text-[11px] text-blue-800">
+                    Gere uma folha completa de impressão com os QR Codes de todas as mesas do <strong>{tenant.name}</strong> para recortar e montar seus displays de acrílico.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsBatchPlaquesModalOpen(true)}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Imprimir Todas ({totalTables} Mesas)</span>
                 </button>
               </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* ============================================================== */}
+      {/* MODAL DE IMPRESSÃO EM LOTE DE TODAS AS MESAS DO RESTAURANTE     */}
+      {/* ============================================================== */}
+      {isBatchPlaquesModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-4xl w-full p-5 sm:p-7 shadow-2xl border border-slate-200 space-y-5 animate-in fade-in duration-150 max-h-[90vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-200 pb-4 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center">
+                  <Printer className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-950">
+                    Plaquinhas de QR Code para Mesas · {tenant.name}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Grade com as {totalTables} mesas prontas para impressão e recorte para displays de acrílico.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Imprimir Folhas</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsBatchPlaquesModalOpen(false)}
+                  className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+                  title="Fechar"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Scrollable Plaques Grid */}
+            <div className="flex-1 overflow-y-auto p-1 space-y-4">
+              {isGeneratingBatchQrs ? (
+                <div className="text-center py-12 space-y-2">
+                  <QrCode className="w-8 h-8 text-blue-600 animate-spin mx-auto" />
+                  <p className="text-xs font-bold text-slate-700">
+                    Gerando QR Codes individuais para todas as {totalTables} mesas...
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                  {tableNumbers.map((num) => {
+                    const qrUrl = allTablesQrMap[num];
+                    const tableUrl = typeof window !== 'undefined'
+                      ? `${window.location.origin}/?loja=${encodeURIComponent(tenant.slug)}&mesa=${num}`
+                      : `https://aladay.com.br/?loja=${tenant.slug}&mesa=${num}`;
+
+                    return (
+                      <div
+                        key={num}
+                        className="bg-white border-2 border-slate-900 rounded-2xl p-4 text-center space-y-2.5 shadow-sm relative flex flex-col justify-between"
+                      >
+                        <div className="flex items-center justify-center gap-2">
+                          {tenant.logoUrl ? (
+                            <img
+                              src={tenant.logoUrl}
+                              alt={tenant.name}
+                              className="w-7 h-7 rounded-lg object-cover border border-slate-200"
+                            />
+                          ) : (
+                            <div
+                              className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-black text-[11px]"
+                              style={{ backgroundColor: tenant.primaryColor || '#2563EB' }}
+                            >
+                              {tenant.name.slice(0, 2).toUpperCase()}
+                            </div>
+                          )}
+                          <span className="text-xs font-bold text-slate-900 uppercase tracking-wide truncate max-w-[140px]">
+                            {tenant.name}
+                          </span>
+                        </div>
+
+                        <div className="inline-block px-3 py-0.5 rounded-full bg-slate-950 text-white text-[11px] font-black tracking-wider mx-auto">
+                          MESA {num}
+                        </div>
+
+                        {qrUrl ? (
+                          <div className="p-1.5 bg-white border border-slate-200 rounded-xl inline-block mx-auto shadow-inner">
+                            <img
+                              src={qrUrl}
+                              alt={`QR Code Mesa ${num}`}
+                              className="w-36 h-36 mx-auto"
+                              referrerPolicy="no-referrer"
+                            />
+                          </div>
+                        ) : (
+                          <div className="w-36 h-36 mx-auto flex items-center justify-center bg-slate-100 rounded-xl">
+                            <QrCode className="w-8 h-8 text-slate-400" />
+                          </div>
+                        )}
+
+                        <div className="space-y-0.5">
+                          <p className="text-[11px] font-bold text-slate-900">
+                            Aponte a câmera do celular
+                          </p>
+                          <p className="text-[10px] text-slate-500 leading-tight">
+                            Faça seu pedido direto desta mesa.
+                          </p>
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[9px] font-mono text-slate-400">
+                          <span>Mesa {num}</span>
+                          <span className="truncate max-w-[120px]">{tenant.slug}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between border-t border-slate-200 pt-3 text-xs text-slate-500 shrink-0">
+              <span>
+                Total: <strong>{totalTables} plaquinhas</strong> para <strong>{tenant.name}</strong>
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBatchPlaquesModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl cursor-pointer"
+                >
+                  Fechar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Imprimir Plaquinhas</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

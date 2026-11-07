@@ -556,6 +556,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   const [settingsPrimaryColor, setSettingsPrimaryColor] = useState(tenant.primaryColor);
   const [settingsDeliveryFee, setSettingsDeliveryFee] = useState((tenant.deliveryFeeCents / 100).toFixed(2));
   const [settingsMinOrder, setSettingsMinOrder] = useState((tenant.minOrderCents / 100).toFixed(2));
+  const [settingsTablesCount, setSettingsTablesCount] = useState<number>(tenant.tablesCount || 12);
   const [settingsIsOpen, setSettingsIsOpen] = useState(tenant.isOpen);
   const [settingsSuccessNotice, setSettingsSuccessNotice] = useState<string | null>(null);
 
@@ -601,6 +602,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     setSettingsPrimaryColor(tenant.primaryColor);
     setSettingsDeliveryFee((tenant.deliveryFeeCents / 100).toFixed(2));
     setSettingsMinOrder((tenant.minOrderCents / 100).toFixed(2));
+    setSettingsTablesCount(tenant.tablesCount || 12);
     setSettingsIsOpen(tenant.isOpen);
     setDeliveryZones(tenant.deliveryZones || []);
 
@@ -1610,6 +1612,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       deliveryFeeCents,
       minOrderCents,
       isOpen: settingsIsOpen,
+      tablesCount: settingsTablesCount,
       deliveryZones,
       pixKey: cleanPixKey,
       pixBeneficiaryName: cleanBeneficiary,
@@ -1637,6 +1640,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
             openingHoursText: updated.openingHoursText,
             deliveryFeeCents: updated.deliveryFeeCents,
             minOrderCents: updated.minOrderCents,
+            tablesCount: updated.tablesCount,
             deliveryZones: updated.deliveryZones,
             pixKey: cleanPixKey,
             pixBeneficiaryName: cleanBeneficiary,
@@ -3323,6 +3327,60 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                 />
               </div>
 
+              {/* Configuração de Mesas & QR Code do Salão para Este Restaurante */}
+              <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-xl space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="space-y-0.5">
+                    <h4 className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                      <QrCode className="w-4 h-4 text-amber-700" />
+                      <span>Configuração de Mesas &amp; QR Codes do Salão</span>
+                    </h4>
+                    <p className="text-[11px] text-amber-800">
+                      Configure a quantidade de mesas do restaurante e gere os QR Codes individuais para colocar nos displays de acrílico.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('tables')}
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer shrink-0"
+                  >
+                    <QrCode className="w-3.5 h-3.5" />
+                    <span>Ver &amp; Imprimir QR Codes das Mesas</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center pt-2 border-t border-amber-200/80">
+                  <div className="sm:col-span-5">
+                    <label className="block text-xs font-semibold text-neutral-800 mb-1">
+                      Quantidade de Mesas no Salão
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={settingsTablesCount}
+                        onChange={(e) => setSettingsTablesCount(Math.max(1, Math.min(100, Number(e.target.value) || 12)))}
+                        className="w-24 p-2 text-xs border border-amber-300 rounded-lg bg-white text-neutral-900 font-mono font-bold"
+                      />
+                      <span className="text-xs text-neutral-600">mesas ativas</span>
+                    </div>
+                  </div>
+
+                  <div className="sm:col-span-7 bg-white p-2.5 rounded-lg border border-amber-200 text-xs space-y-1">
+                    <span className="text-[10px] uppercase font-bold text-neutral-500 block">
+                      Link do QR Code de Mesa deste Restaurante:
+                    </span>
+                    <p className="font-mono text-[11px] text-amber-900 truncate">
+                      {typeof window !== 'undefined' ? `${window.location.origin}/?loja=${tenant.slug}&mesa=01` : `https://aladay.com.br/?loja=${tenant.slug}&mesa=01`}
+                    </p>
+                    <p className="text-[10px] text-neutral-500">
+                      Ao ler o QR Code com o celular, o cardápio abre automaticamente configurado para a mesa do cliente com 0% taxa de entrega.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               {/* Direct Pix Credentials Section inside Settings Form */}
               <div className="pt-4 border-t border-neutral-200 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -3654,15 +3712,6 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                       <span>+ Simular Pedido iFood</span>
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('whatsapp')}
-                    className="text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors"
-                    title="Configurar e testar textos das mensagens de notificação"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Ajustar Textos WhatsApp</span>
-                  </button>
                   <span className="text-xs text-neutral-500 font-mono bg-neutral-100 px-2.5 py-1.5 rounded-lg">
                     {orders.length} pedidos hoje
                   </span>

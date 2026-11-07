@@ -66,6 +66,7 @@ interface InMemTenant {
     lastPollingAt?: string;
     webhookUrl?: string;
   };
+  tablesCount?: number;
 }
 
 const memoryTenants: InMemTenant[] = [
@@ -251,6 +252,7 @@ ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(30) NOT
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS status_notification_templates JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS pix_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS tables_count INTEGER NOT NULL DEFAULT 12;
 
 CREATE TABLE IF NOT EXISTS categories (
   id VARCHAR(80) PRIMARY KEY,
@@ -429,6 +431,7 @@ async function initializePostgresConnection(connectionString: string, runMigrati
           ALTER TABLE tenants ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
           ALTER TABLE tenants ADD COLUMN IF NOT EXISTS status_notification_templates JSONB NOT NULL DEFAULT '{}'::jsonb;
           ALTER TABLE tenants ADD COLUMN IF NOT EXISTS pix_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+          ALTER TABLE tenants ADD COLUMN IF NOT EXISTS tables_count INTEGER NOT NULL DEFAULT 12;
           ALTER TABLE categories ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 1;
           ALTER TABLE products ADD COLUMN IF NOT EXISTS is_featured BOOLEAN NOT NULL DEFAULT FALSE;
           ALTER TABLE products ADD COLUMN IF NOT EXISTS option_groups JSONB NOT NULL DEFAULT '[]'::jsonb;
@@ -474,6 +477,7 @@ async function initializePostgresConnection(connectionString: string, runMigrati
             pixKey: row.pix_config?.pixKey || undefined,
             pixBeneficiaryName: row.pix_config?.beneficiaryName || row.pix_config?.merchantName || undefined,
             pixConfig: row.pix_config || undefined,
+            tablesCount: Number(row.tables_count) || 12,
           };
           if (existingIdx >= 0) {
             memoryTenants[existingIdx] = mappedTenant;
@@ -857,6 +861,7 @@ async function startServer() {
               pixKey: row.pix_config?.pixKey || undefined,
               pixBeneficiaryName: row.pix_config?.beneficiaryName || row.pix_config?.merchantName || undefined,
               pixConfig: row.pix_config || undefined,
+              tablesCount: Number(row.tables_count) || 12,
             };
             const existingIdx = memoryTenants.findIndex((m) => m.slug.toLowerCase() === mappedTenant.slug.toLowerCase());
             if (existingIdx >= 0) {
@@ -1091,6 +1096,7 @@ async function startServer() {
           pixKey: row.pix_config?.pixKey || undefined,
           pixBeneficiaryName: row.pix_config?.beneficiaryName || row.pix_config?.merchantName || undefined,
           pixConfig: row.pix_config || undefined,
+          tablesCount: Number(row.tables_count) || 12,
         };
         const existingIdx = memoryTenants.findIndex((m) => m.slug.toLowerCase() === cleanSlug);
         if (existingIdx >= 0) {
@@ -3333,6 +3339,7 @@ async function startServer() {
       pixKey,
       pixBeneficiaryName,
       pixConfig,
+      tablesCount,
     } = req.body;
 
     if (name) tenant.name = String(name).trim();
@@ -3345,6 +3352,9 @@ async function startServer() {
     if (typeof deliveryFeeCents === 'number') tenant.deliveryFeeCents = deliveryFeeCents;
     if (typeof minOrderCents === 'number') tenant.minOrderCents = minOrderCents;
     if (Array.isArray(deliveryZones)) tenant.deliveryZones = deliveryZones;
+    if (tablesCount !== undefined) {
+      tenant.tablesCount = Math.max(1, Math.min(100, Number(tablesCount) || 12));
+    }
     if (pixKey !== undefined) tenant.pixKey = String(pixKey).trim();
     if (pixBeneficiaryName !== undefined) tenant.pixBeneficiaryName = String(pixBeneficiaryName).trim();
     if (pixConfig && typeof pixConfig === 'object') {
@@ -3378,8 +3388,9 @@ async function startServer() {
             min_order_cents = $9,
             delivery_zones = $10::jsonb,
             pix_config = $11::jsonb,
+            tables_count = $12,
             updated_at = NOW()
-          WHERE slug = $12;`,
+          WHERE slug = $13;`,
           [
             tenant.name,
             tenant.logoUrl || '',
@@ -3392,6 +3403,7 @@ async function startServer() {
             tenant.minOrderCents || 0,
             JSON.stringify(tenant.deliveryZones || []),
             JSON.stringify(tenant.pixConfig || {}),
+            tenant.tablesCount || 12,
             tenant.slug,
           ]
         )
