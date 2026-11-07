@@ -892,7 +892,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 </div>
                 <div className="flex items-start gap-2">
                   <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
-                  <span>Disparos automáticos no WhatsApp via Evolution API</span>
+                  <span>Disparos automáticos no WhatsApp </span>
                 </div>
                 <div className="flex items-start gap-2">
                   <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
@@ -944,7 +944,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 </div>
                 <h3 className="text-xl font-black text-slate-950 mt-1">Plano Aladay Mensal</h3>
                 <p className="text-xs text-slate-600 mt-1">
-                  Sem fidelidade anual. Pague mês a mês via Pix, Cartão de Crédito ou Boleto Asaas.
+                  Sem fidelidade anual. Pague mês a mês via Pix, Cartão de Crédito ou Boleto .
                 </p>
               </div>
 
@@ -974,7 +974,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 </div>
                 <div className="flex items-start gap-2">
                   <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                  <span>KDS Cozinha + WhatsApp Automático Evolution API</span>
+                  <span>KDS Cozinha + WhatsApp Automático </span>
                 </div>
                 <div className="flex items-start gap-2">
                   <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -1001,7 +1001,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 <ArrowRight className="w-4 h-4" />
               </button>
               <p className="text-[11px] text-slate-500 text-center">
-                R$ 0,00 hoje &middot; Após 15 dias, R$ 129,90/mês via Asaas.
+                R$ 0,00 hoje &middot; Após 15 dias, R$ 129,90/mês.
               </p>
             </div>
           </div>
@@ -1043,7 +1043,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 <tr>
                   <td className="py-3 px-4 font-medium text-slate-900">Notificações no WhatsApp</td>
                   <td className="py-3 px-4 text-slate-600">Não disponível</td>
-                  <td className="py-3 px-4 font-bold text-blue-700 bg-blue-50/60">100% automáticas via Evolution API</td>
+                  <td className="py-3 px-4 font-bold text-blue-700 bg-blue-50/60">100% automáticas</td>
                 </tr>
                 <tr>
                   <td className="py-3 px-4 font-medium text-slate-900">Custo Total Mensal</td>

@@ -2536,22 +2536,11 @@ export default function App() {
         </div>
       )}
 
-      {/* Clean quiet footer with Terms of Use and Privacy Policy links (WhatsApp support button hidden on restaurant digital menu) */}
+      {/* Clean quiet footer with Terms of Use and Privacy Policy links */}
       <footer className="border-t border-slate-200 bg-white py-5 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-slate-500">
           <div className="flex flex-wrap items-center justify-center md:justify-start gap-3">
             <span className="font-bold text-slate-900">Aladay Cardápios Digitais</span>
-            {!sharedLojaParam && currentView !== 'consumer' && currentView !== 'tracking' && (
-              <a
-                href={`https://wa.me/559131976334?text=${encodeURIComponent('Olá! Gostaria de tirar uma dúvida sobre o Aladay Cardápios Digitais.')}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-2xs transition-colors cursor-pointer"
-              >
-                <MessageSquare className="w-3.5 h-3.5" />
-                <span>Tirar dúvidas no WhatsApp</span>
-              </a>
-            )}
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-4">
