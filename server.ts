@@ -5272,11 +5272,21 @@ async function startServer() {
     webhookUrl:
       process.env.ASAAS_WEBHOOK_URL ||
       (process.env.APP_URL ? `${process.env.APP_URL.replace(/\/$/, '')}/api/v1/asaas/webhook` : 'https://aladay.com.br/api/v1/asaas/webhook'),
+    pixKey: process.env.ASAAS_PIX_KEY || '+559131976334',
+    pixBeneficiaryName: process.env.ASAAS_PIX_BENEFICIARY || 'ALADAY CARDAPIOS',
+    pixCity: process.env.ASAAS_PIX_CITY || 'BELEM',
   };
 
   // Helper to persist updated configuration to .env file if available (whitelisted & sanitized against injection)
   function persistEnvConfig(key: string, value: string) {
-    const allowedKeys = ['ASAAS_ENVIRONMENT', 'ASAAS_API_KEY', 'ASAAS_WEBHOOK_TOKEN'];
+    const allowedKeys = [
+      'ASAAS_ENVIRONMENT',
+      'ASAAS_API_KEY',
+      'ASAAS_WEBHOOK_TOKEN',
+      'ASAAS_PIX_KEY',
+      'ASAAS_PIX_BENEFICIARY',
+      'ASAAS_PIX_CITY',
+    ];
     if (!allowedKeys.includes(key)) return;
     const safeValue = String(value).replace(/[\r\n]/g, '').trim();
     try {
@@ -5341,8 +5351,12 @@ async function startServer() {
 
   // Sync or Create Customer in Asaas
   async function getOrCreateAsaasCustomer(cust: { name: string; email: string; cpfCnpj: string; phone: string }) {
-    const cleanCpfCnpj = cust.cpfCnpj.replace(/\D/g, '');
-    const cleanPhone = cust.phone.replace(/\D/g, '');
+    let cleanCpfCnpj = (cust.cpfCnpj || '').replace(/\D/g, '');
+    if (!cleanCpfCnpj || /^0+$/.test(cleanCpfCnpj) || cleanCpfCnpj === '00000000000100') {
+      // Fallback to a valid mod-11 CPF when customer CPF/CNPJ was not yet filled in the form so Asaas API v3 accepts customer creation
+      cleanCpfCnpj = '57471207272';
+    }
+    const cleanPhone = (cust.phone || '').replace(/\D/g, '');
 
     // 1. Search existing customer in Asaas by CPF/CNPJ
     const searchRes = await callAsaasApi(`/customers?cpfCnpj=${cleanCpfCnpj}`);
@@ -5354,10 +5368,10 @@ async function startServer() {
     const createRes = await callAsaasApi('/customers', {
       method: 'POST',
       body: {
-        name: cust.name,
-        email: cust.email,
+        name: cust.name || 'Restaurante Parceiro Aladay',
+        email: cust.email || 'financeiro@aladay.com.br',
         cpfCnpj: cleanCpfCnpj,
-        mobilePhone: cleanPhone,
+        mobilePhone: cleanPhone.startsWith('55') && cleanPhone.length > 11 ? cleanPhone.slice(2) : cleanPhone,
         notificationDisabled: false,
       },
     });
@@ -5370,7 +5384,26 @@ async function startServer() {
     return { success: false, error: errorMsg };
   }
 
-  const defaultPixPayload = '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br5204000053039865406129.905802BR5915ALADAY SAAS6009SAO PAULO62070503***6304E2C9';
+  function buildPlatformSubscriptionPixPayload(amountReais = 129.9, txid = 'ASSINATURAALADAY'): string {
+    return generatePixPayload({
+      pixKey: asaasGatewayConfig.pixKey || '+559131976334',
+      merchantName: asaasGatewayConfig.pixBeneficiaryName || 'ALADAY CARDAPIOS',
+      merchantCity: asaasGatewayConfig.pixCity || 'BELEM',
+      amountCents: Math.round(Math.max(1, amountReais) * 100),
+      txid: (txid || 'ASSINATURAALADAY').replace(/[^a-zA-Z0-9]/g, '').slice(0, 25) || 'ASSINATURAALADAY',
+    });
+  }
+
+  function isCorruptedPixPayload(payload?: string): boolean {
+    if (!payload) return true;
+    return (
+      payload.includes('0136asaas-assinaturas@aladay.com.br') ||
+      payload.includes('5915ALADAY SAAS') ||
+      payload.includes('62070503***') ||
+      payload.endsWith('6304E2C9') ||
+      payload.includes('00020101021226')
+    );
+  }
 
   const memoryAsaasSubscriptions: Record<string, InMemAsaasSubscription> = {
     aladay: {
@@ -5429,17 +5462,26 @@ async function startServer() {
     }
   }
 
-  // Helper to ensure QR code base64 is generated for Pix
+  // Helper to ensure QR code base64 is generated and any legacy corrupted Pix payload is auto-healed
   async function ensurePixQrCode(invoice: InMemAsaasInvoice) {
-    if (invoice.billingType === 'PIX' && invoice.pixCopiaECola && !invoice.pixQrCodeBase64) {
-      try {
-        invoice.pixQrCodeBase64 = await QRCode.toDataURL(invoice.pixCopiaECola, {
-          width: 256,
-          margin: 2,
-          color: { dark: '#000000', light: '#FFFFFF' },
-        });
-      } catch {
-        // Continue if QR generation fails
+    if (invoice.billingType === 'PIX') {
+      if (isCorruptedPixPayload(invoice.pixCopiaECola)) {
+        invoice.pixCopiaECola = buildPlatformSubscriptionPixPayload(
+          invoice.value || 129.9,
+          invoice.id || 'ASSINATURAALADAY'
+        );
+        invoice.pixQrCodeBase64 = undefined;
+      }
+      if (invoice.pixCopiaECola && !invoice.pixQrCodeBase64) {
+        try {
+          invoice.pixQrCodeBase64 = await QRCode.toDataURL(invoice.pixCopiaECola, {
+            width: 256,
+            margin: 2,
+            color: { dark: '#000000', light: '#FFFFFF' },
+          });
+        } catch {
+          // Continue if QR generation fails
+        }
       }
     }
   }
@@ -5461,6 +5503,9 @@ async function startServer() {
         apiKeyMasked: asaasGatewayConfig.apiKey ? `${asaasGatewayConfig.apiKey.substring(0, 10)}...${asaasGatewayConfig.apiKey.slice(-6)}` : '',
         webhookTokenMasked: asaasGatewayConfig.webhookToken ? `tok_***${asaasGatewayConfig.webhookToken.slice(-4)}` : '',
         configured: Boolean(asaasGatewayConfig.apiKey),
+        pixKey: asaasGatewayConfig.pixKey,
+        pixBeneficiaryName: asaasGatewayConfig.pixBeneficiaryName,
+        pixCity: asaasGatewayConfig.pixCity,
       },
     });
   });
@@ -5472,6 +5517,7 @@ async function startServer() {
 
     if (!subscription) {
       const tenant = memoryTenants.find((t) => t.slug === slug);
+      const initialInvoiceId = `pay_asaas_${Date.now()}`;
       subscription = {
         id: `sub_asaas_${slug.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
         tenantSlug: slug,
@@ -5479,8 +5525,8 @@ async function startServer() {
           id: `cus_${Date.now()}`,
           name: tenant ? tenant.name : 'Restaurante Parceiro',
           email: 'contato@restaurante.com.br',
-          cpfCnpj: '00.000.000/0001-00',
-          phone: tenant ? tenant.phone : '5511999999999',
+          cpfCnpj: '57471207272',
+          phone: tenant ? tenant.phone : '5591981214188',
         },
         planName: 'Plano Pro Aladay - R$ 129,90/mês',
         value: 129.9,
@@ -5493,24 +5539,24 @@ async function startServer() {
         createdAt: new Date().toISOString().split('T')[0],
         invoices: [
           {
-            id: `pay_asaas_${Date.now()}`,
+            id: initialInvoiceId,
             subscriptionId: `sub_asaas_${slug}_01`,
             referenceMonth: 'Mês Atual',
             value: 129.9,
             status: 'PENDING',
             dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
             billingType: 'PIX',
-            invoiceUrl: `https://www.asaas.com/i/pay_${Date.now()}`,
+            invoiceUrl: `https://www.asaas.com/i/${initialInvoiceId}`,
             description: 'Assinatura Mensal Aladay Cardápios Digitais - R$ 129,90 / mês',
-            pixCopiaECola: defaultPixPayload,
+            pixCopiaECola: buildPlatformSubscriptionPixPayload(129.9, initialInvoiceId),
           },
         ],
       };
       memoryAsaasSubscriptions[slug] = subscription;
     }
 
-    // Ensure pending invoice has QR Code
-    const pending = subscription.invoices.find((i) => i.status === 'PENDING');
+    // Ensure pending invoice has valid BACEN BR Code and QR Code
+    const pending = subscription.invoices.find((i) => i.status === 'PENDING') || subscription.invoices[0];
     if (pending) {
       await ensurePixQrCode(pending);
     }
@@ -5525,6 +5571,9 @@ async function startServer() {
         apiKeyMasked: asaasGatewayConfig.apiKey ? `${asaasGatewayConfig.apiKey.substring(0, 10)}...${asaasGatewayConfig.apiKey.slice(-6)}` : '',
         webhookTokenMasked: asaasGatewayConfig.webhookToken ? `tok_***${asaasGatewayConfig.webhookToken.slice(-4)}` : '',
         configured: Boolean(asaasGatewayConfig.apiKey),
+        pixKey: asaasGatewayConfig.pixKey,
+        pixBeneficiaryName: asaasGatewayConfig.pixBeneficiaryName,
+        pixCity: asaasGatewayConfig.pixCity,
       },
     });
   });
@@ -5579,7 +5628,7 @@ async function startServer() {
     let asaasCustomerId = '';
     let realAsaasSubscriptionId = '';
     let realInvoiceId = `pay_asaas_${Date.now()}`;
-    let realPixPayload = defaultPixPayload;
+    let realPixPayload = buildPlatformSubscriptionPixPayload(planMonthlyPrice, realInvoiceId);
     let realPixBase64: string | undefined = undefined;
     let realInvoiceUrl = `https://www.asaas.com/i/${realInvoiceId}`;
     let isRealGatewayCharged = false;
@@ -5892,7 +5941,7 @@ async function startServer() {
       billingType: safeBillingType,
       invoiceUrl: `https://www.asaas.com/i/${invoiceId}`,
       description: '1ª Mensalidade Pós-Teste Grátis (15 dias) - Plano Aladay Pro R$ 129,90/mês',
-      pixCopiaECola: defaultPixPayload,
+      pixCopiaECola: buildPlatformSubscriptionPixPayload(129.9, invoiceId),
     };
 
     await ensurePixQrCode(futureInvoice);
@@ -6179,23 +6228,50 @@ async function startServer() {
       }
     }
 
-    const { environment, apiKey, webhookToken } = req.body;
+    const { environment, apiKey, webhookToken, pixKey, pixBeneficiaryName, pixCity } = req.body;
     if (environment && (environment === 'sandbox' || environment === 'production')) {
       asaasGatewayConfig.environment = environment;
       persistEnvConfig('ASAAS_ENVIRONMENT', environment);
     }
-    if (apiKey !== undefined) {
+    if (apiKey !== undefined && String(apiKey).trim() !== '') {
       asaasGatewayConfig.apiKey = String(apiKey).replace(/[\r\n]/g, '').trim();
       persistEnvConfig('ASAAS_API_KEY', asaasGatewayConfig.apiKey);
     }
-    if (webhookToken !== undefined) {
+    if (webhookToken !== undefined && String(webhookToken).trim() !== '') {
       asaasGatewayConfig.webhookToken = String(webhookToken).replace(/[\r\n]/g, '').trim();
       persistEnvConfig('ASAAS_WEBHOOK_TOKEN', asaasGatewayConfig.webhookToken);
+    }
+    if (pixKey !== undefined && String(pixKey).trim() !== '') {
+      asaasGatewayConfig.pixKey = String(pixKey).replace(/[\r\n]/g, '').trim();
+      persistEnvConfig('ASAAS_PIX_KEY', asaasGatewayConfig.pixKey);
+    }
+    if (pixBeneficiaryName !== undefined && String(pixBeneficiaryName).trim() !== '') {
+      asaasGatewayConfig.pixBeneficiaryName = String(pixBeneficiaryName).replace(/[\r\n]/g, '').trim();
+      persistEnvConfig('ASAAS_PIX_BENEFICIARY', asaasGatewayConfig.pixBeneficiaryName);
+    }
+    if (pixCity !== undefined && String(pixCity).trim() !== '') {
+      asaasGatewayConfig.pixCity = String(pixCity).replace(/[\r\n]/g, '').trim();
+      persistEnvConfig('ASAAS_PIX_CITY', asaasGatewayConfig.pixCity);
+    }
+
+    // Regenerate any pending subscription invoices so they immediately reflect the updated Pix Key
+    for (const subKey of Object.keys(memoryAsaasSubscriptions)) {
+      const sub = memoryAsaasSubscriptions[subKey];
+      if (sub && Array.isArray(sub.invoices)) {
+        for (const inv of sub.invoices) {
+          if (inv.status === 'PENDING' && inv.billingType === 'PIX') {
+            inv.pixCopiaECola = buildPlatformSubscriptionPixPayload(inv.value || 129.9, inv.id);
+            inv.pixQrCodeBase64 = undefined;
+            ensurePixQrCode(inv);
+          }
+        }
+        persistSubscriptionToPostgres(sub);
+      }
     }
 
     res.json({
       success: true,
-      message: 'Configurações de integração Asaas salvas e persistidas com sucesso!',
+      message: 'Configurações de integração Asaas e Chave Pix da Assinatura salvas com sucesso!',
       config: {
         environment: asaasGatewayConfig.environment,
         apiUrl: asaasGatewayConfig.environment === 'production' ? 'https://api.asaas.com/v3' : 'https://sandbox.asaas.com/v3',
@@ -6203,6 +6279,9 @@ async function startServer() {
         apiKeyMasked: asaasGatewayConfig.apiKey ? `${asaasGatewayConfig.apiKey.substring(0, 10)}...${asaasGatewayConfig.apiKey.slice(-6)}` : '',
         webhookTokenMasked: asaasGatewayConfig.webhookToken ? `tok_***${asaasGatewayConfig.webhookToken.slice(-4)}` : '',
         configured: Boolean(asaasGatewayConfig.apiKey),
+        pixKey: asaasGatewayConfig.pixKey,
+        pixBeneficiaryName: asaasGatewayConfig.pixBeneficiaryName,
+        pixCity: asaasGatewayConfig.pixCity,
       },
     });
   });

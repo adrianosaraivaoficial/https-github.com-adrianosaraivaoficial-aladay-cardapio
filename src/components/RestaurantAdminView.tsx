@@ -1495,12 +1495,10 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
               <div className="flex items-center gap-2 text-xs text-slate-500">
                 <span className="font-bold text-slate-900">{tenant.name}</span>
                 <span aria-hidden="true">·</span>
-                <span className="font-mono text-[11px]">slug: {tenant.slug}</span>
-                <span aria-hidden="true">·</span>
                 <span className="text-blue-700 font-medium">Assinatura Ativa</span>
               </div>
               <div className="flex flex-wrap items-center gap-2 mt-1">
-                <span className="text-[11px] text-slate-500 font-medium">Perfil RBAC:</span>
+                <span className="text-[11px] text-slate-500 font-medium">Visualização da Equipe:</span>
                 <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-[11px]">
                   <button
                     type="button"
@@ -3230,19 +3228,27 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                     <span>Quadro KDS em Tempo Real com Contador de Tempo &amp; Notificação WhatsApp</span>
                   </h3>
                   <p className="text-xs text-neutral-500 mt-0.5">
-                    Ao avançar o status no Kanban, o sistema dispara automaticamente uma mensagem formatada para o WhatsApp do cliente via Evolution API (instância <code className="font-mono text-neutral-800 font-bold">{tenant.evolutionInstanceId || 'aladay'}</code>).
+                    {isSuperAdmin ? (
+                      <>
+                        Ao avançar o status no Kanban, o sistema dispara automaticamente uma mensagem formatada para o WhatsApp do cliente via Evolution API (instância <code className="font-mono text-neutral-800 font-bold">{tenant.evolutionInstanceId || 'aladay'}</code>).
+                      </>
+                    ) : (
+                      'Ao avançar o status do pedido, o cliente recebe automaticamente uma notificação no WhatsApp.'
+                    )}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={handleQuickSimulateIfoodOrderInKds}
-                    className="text-xs font-bold text-white bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
-                    title="Injetar um pedido iFood de teste imediatamente no KDS"
-                  >
-                    <Bike className="w-3.5 h-3.5" />
-                    <span>+ Simular Pedido iFood</span>
-                  </button>
+                  {isSuperAdmin && (
+                    <button
+                      type="button"
+                      onClick={handleQuickSimulateIfoodOrderInKds}
+                      className="text-xs font-bold text-white bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+                      title="Injetar um pedido iFood de teste imediatamente no KDS"
+                    >
+                      <Bike className="w-3.5 h-3.5" />
+                      <span>+ Simular Pedido iFood</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setActiveTab('whatsapp')}
@@ -4303,7 +4309,11 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
               </div>
             )}
 
-            <AsaasSubscriptionBillingView tenant={tenant} onUpdateTenant={onUpdateTenant} />
+            <AsaasSubscriptionBillingView
+              tenant={tenant}
+              onUpdateTenant={onUpdateTenant}
+              isSuperAdmin={isSuperAdmin}
+            />
           </div>
         )}
 

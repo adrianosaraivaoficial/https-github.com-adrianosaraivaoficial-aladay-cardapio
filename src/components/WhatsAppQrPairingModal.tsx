@@ -295,12 +295,20 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-bold tracking-tight">Pareamento de WhatsApp</h3>
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
-                  Evolution API v2
-                </span>
+                {isSuperAdmin && (
+                  <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                    Evolution API v2
+                  </span>
+                )}
               </div>
               <p className="text-xs text-neutral-400">
-                Instância: <code className="font-mono text-emerald-300 font-semibold">{instanceId}</code> &bull; {tenant.name}
+                {isSuperAdmin ? (
+                  <>
+                    Instância: <code className="font-mono text-emerald-300 font-semibold">{instanceId}</code> &bull; {tenant.name}
+                  </>
+                ) : (
+                  <>{tenant.name} &bull; Atendimento Oficial</>
+                )}
               </p>
             </div>
           </div>
@@ -410,7 +418,13 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
                       WhatsApp Pareado e Operando em Tempo Real!
                     </h4>
                     <p className="text-xs text-emerald-700 max-w-md mx-auto mt-1">
-                      A instância <code className="font-mono font-bold bg-emerald-100/70 px-1.5 py-0.5 rounded text-emerald-900">{instanceId}</code> está conectada via Baileys e pronta para enviar cardápios e notificações de pedidos do KDS.
+                      {isSuperAdmin ? (
+                        <>
+                          A instância <code className="font-mono font-bold bg-emerald-100/70 px-1.5 py-0.5 rounded text-emerald-900">{instanceId}</code> está conectada via Baileys e pronta para enviar cardápios e notificações de pedidos do KDS.
+                        </>
+                      ) : (
+                        'O WhatsApp do seu restaurante está conectado e pronto para enviar o cardápio digital e avisos de pedidos aos clientes.'
+                      )}
                     </p>
                   </div>
 
@@ -576,41 +590,43 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
                       </div>
                     </div>
 
-                    {/* Simulation Button for testing without 2nd phone */}
-                    <div className="pt-2 border-t border-neutral-100">
-                      <div className="p-3 bg-neutral-900 text-white rounded-xl space-y-2">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold flex items-center gap-1.5 text-emerald-400">
-                            <Zap className="w-3.5 h-3.5 fill-current" />
-                            Ambiente de Demonstração / Teste
-                          </span>
-                          <span className="text-[10px] bg-neutral-800 text-neutral-300 px-1.5 py-0.5 rounded font-mono">
-                            1 Clique
-                          </span>
+                    {/* Simulation Button for testing without 2nd phone (Somente Super Admin) */}
+                    {isSuperAdmin && (
+                      <div className="pt-2 border-t border-neutral-100">
+                        <div className="p-3 bg-neutral-900 text-white rounded-xl space-y-2">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-bold flex items-center gap-1.5 text-emerald-400">
+                              <Zap className="w-3.5 h-3.5 fill-current" />
+                              Ambiente de Demonstração / Teste
+                            </span>
+                            <span className="text-[10px] bg-neutral-800 text-neutral-300 px-1.5 py-0.5 rounded font-mono">
+                              1 Clique
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-neutral-300">
+                            Sem um segundo celular em mãos? Clique abaixo para simular a leitura do QR Code e conectar imediatamente a instância <code className="font-mono text-emerald-300 font-bold">{instanceId}</code>.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleSimulateScan}
+                            disabled={isSimulatingScan}
+                            className="w-full py-2 px-3 text-xs font-bold text-neutral-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-xs disabled:opacity-50"
+                          >
+                            {isSimulatingScan ? (
+                              <>
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                <span>Validando leitura do WhatsApp...</span>
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Simular Leitura do QR Code no Celular</span>
+                              </>
+                            )}
+                          </button>
                         </div>
-                        <p className="text-[11px] text-neutral-300">
-                          Sem um segundo celular em mãos? Clique abaixo para simular a leitura do QR Code e conectar imediatamente a instância <code className="font-mono text-emerald-300 font-bold">{instanceId}</code>.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={handleSimulateScan}
-                          disabled={isSimulatingScan}
-                          className="w-full py-2 px-3 text-xs font-bold text-neutral-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-xs disabled:opacity-50"
-                        >
-                          {isSimulatingScan ? (
-                            <>
-                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                              <span>Validando leitura do WhatsApp...</span>
-                            </>
-                          ) : (
-                            <>
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>Simular Leitura do QR Code no Celular</span>
-                            </>
-                          )}
-                        </button>
                       </div>
-                    </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -687,15 +703,17 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
                   </span>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleSimulateScan}
-                  disabled={isSimulatingScan}
-                  className="w-full py-2 px-3 text-xs font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors flex items-center justify-center gap-2"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Confirmar / Simular Pareamento deste Número</span>
-                </button>
+                {isSuperAdmin && (
+                  <button
+                    type="button"
+                    onClick={handleSimulateScan}
+                    disabled={isSimulatingScan}
+                    className="w-full py-2 px-3 text-xs font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors flex items-center justify-center gap-2"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Confirmar / Simular Pareamento deste Número</span>
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -783,7 +801,11 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
         <div className="bg-neutral-50 px-5 py-3 border-t border-neutral-200 flex flex-wrap items-center justify-between text-[11px] text-neutral-500 gap-2">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Sessão segura Baileys &bull; Multi-Device Protocol oficial</span>
+            <span>
+              {isSuperAdmin
+                ? 'Sessão segura Baileys • Multi-Device Protocol oficial'
+                : 'Conexão oficial segura e criptografada'}
+            </span>
           </div>
           <div className="flex items-center gap-3">
             <span className="font-mono text-neutral-400">Status: {tenant.evolutionStatus}</span>

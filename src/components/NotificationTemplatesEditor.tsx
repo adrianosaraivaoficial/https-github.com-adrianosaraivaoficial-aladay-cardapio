@@ -28,6 +28,7 @@ import { Order, RestaurantTenant } from '../types';
 interface NotificationTemplatesEditorProps {
   tenant: RestaurantTenant;
   orders: Order[];
+  isSuperAdmin?: boolean;
   onUpdateTenant?: (updatedTenant: RestaurantTenant) => void;
   onNavigateToLogs?: () => void;
 }
@@ -155,6 +156,7 @@ const DEFAULT_MOCK_ORDER: Order = {
 export const NotificationTemplatesEditor: React.FC<NotificationTemplatesEditorProps> = ({
   tenant,
   orders = [],
+  isSuperAdmin = false,
   onUpdateTenant,
   onNavigateToLogs,
 }) => {
@@ -354,7 +356,11 @@ export const NotificationTemplatesEditor: React.FC<NotificationTemplatesEditorPr
           <div>
             <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold mb-2 border border-emerald-500/30">
               <Zap className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Evolution API v2 • Instância: {tenant.evolutionInstanceId || 'aladay'}</span>
+              <span>
+                {isSuperAdmin
+                  ? `Evolution API v2 • Instância: ${tenant.evolutionInstanceId || 'aladay'}`
+                  : `Avisos Automáticos de Status • ${tenant.name}`}
+              </span>
             </div>
             <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
               <MessageSquare className="w-5 h-5 text-emerald-400" />

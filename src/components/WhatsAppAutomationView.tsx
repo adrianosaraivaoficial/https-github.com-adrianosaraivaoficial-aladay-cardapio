@@ -1517,8 +1517,8 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                   </button>
                 </div>
 
-                {/* Status Badge: Real Evolution API vs Simulation */}
-                {embeddedQrData && (
+                {/* Status Badge: Real Evolution API vs Simulation (Somente Super Admin) */}
+                {isSuperAdmin && embeddedQrData && (
                   <div
                     className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold border ${
                       embeddedQrData.remoteFetched
@@ -1669,8 +1669,8 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                   </div>
                 )}
 
-                {/* Diagnostic Box if Instance Needs Global API Key on Evolution API */}
-                {embeddedQrData && !embeddedQrData.remoteFetched && (
+                {/* Diagnostic Box if Instance Needs Global API Key on Evolution API (Somente Super Admin) */}
+                {isSuperAdmin && embeddedQrData && !embeddedQrData.remoteFetched && (
                   <div className="w-full max-w-[350px] p-3.5 bg-amber-50 border border-amber-300 rounded-xl text-left space-y-2.5 text-xs text-amber-950">
                     <div className="flex items-start gap-2">
                       <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -1740,7 +1740,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                     Como parear o WhatsApp do Restaurante
                   </h3>
                   <p className="text-xs text-neutral-500 mt-1 leading-relaxed">
-                    Siga o procedimento padrão do WhatsApp no aparelho da loja para sincronizar a instância da Evolution API:
+                    Siga os 4 passos abaixo no aparelho da loja para sincronizar o atendimento:
                   </p>
                 </div>
 
@@ -1795,49 +1795,51 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                   </div>
                 </div>
 
-                {/* 1-Click Test Simulation Card */}
-                <div className="p-4 bg-neutral-900 text-white rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold flex items-center gap-1.5 text-emerald-400">
-                      <Zap className="w-4 h-4 fill-current" />
-                      Testar Agora (Simulação em 1 Clique)
-                    </span>
-                    <span className="text-[10px] bg-neutral-800 text-neutral-300 px-2 py-0.5 rounded font-mono font-semibold">
-                      Sem Celular Físico
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-neutral-300 leading-relaxed">
-                    Você pode simular o pareamento imediatamente para ver o fluxo completo de envio de mensagens no KDS e simulador de chat.
-                  </p>
+                {/* 1-Click Test Simulation Card (Somente Super Admin) */}
+                {isSuperAdmin && (
+                  <div className="p-4 bg-neutral-900 text-white rounded-2xl space-y-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold flex items-center gap-1.5 text-emerald-400">
+                        <Zap className="w-4 h-4 fill-current" />
+                        Testar Agora (Simulação em 1 Clique)
+                      </span>
+                      <span className="text-[10px] bg-neutral-800 text-neutral-300 px-2 py-0.5 rounded font-mono font-semibold">
+                        Sem Celular Físico
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-neutral-300 leading-relaxed">
+                      Você pode simular o pareamento imediatamente para ver o fluxo completo de envio de mensagens no KDS e simulador de chat.
+                    </p>
 
-                  <div className="flex flex-col sm:flex-row items-center gap-2">
-                    <input
-                      type="text"
-                      value={embeddedPhoneInput}
-                      onChange={(e) => setEmbeddedPhoneInput(e.target.value)}
-                      placeholder="5511987654321"
-                      className="w-full sm:w-auto flex-1 p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-xs font-mono text-white placeholder-neutral-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleEmbeddedSimulateScan}
-                      disabled={isSimulatingEmbeddedScan}
-                      className="w-full sm:w-auto px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50 cursor-pointer whitespace-nowrap"
-                    >
-                      {isSimulatingEmbeddedScan ? (
-                        <>
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          <span>Pareando...</span>
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Simular Leitura do QR Code</span>
-                        </>
-                      )}
-                    </button>
+                    <div className="flex flex-col sm:flex-row items-center gap-2">
+                      <input
+                        type="text"
+                        value={embeddedPhoneInput}
+                        onChange={(e) => setEmbeddedPhoneInput(e.target.value)}
+                        placeholder="5511987654321"
+                        className="w-full sm:w-auto flex-1 p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-xs font-mono text-white placeholder-neutral-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleEmbeddedSimulateScan}
+                        disabled={isSimulatingEmbeddedScan}
+                        className="w-full sm:w-auto px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                      >
+                        {isSimulatingEmbeddedScan ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>Pareando...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Simular Leitura do QR Code</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
           </div>
@@ -1851,6 +1853,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
         <NotificationTemplatesEditor
           tenant={tenant}
           orders={orders}
+          isSuperAdmin={isSuperAdmin}
           onUpdateTenant={onUpdateTenant}
           onNavigateToLogs={isSuperAdmin ? () => setSubTab('logs') : undefined}
         />
@@ -2042,24 +2045,26 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
               </div>
             </div>
 
-            {/* Quick Summary of Current Stack Settings */}
-            <div className="bg-neutral-900 text-neutral-100 rounded-xl p-4 text-xs font-mono space-y-2">
-              <div className="text-neutral-400 font-bold uppercase text-[10px]">Parâmetros Atuais da VPS:</div>
-              <div className="flex justify-between border-b border-neutral-800 pb-1">
-                <span className="text-neutral-400">Instância Evolution:</span>
-                <span className="text-white font-semibold">{tenant.evolutionInstanceId}</span>
+            {/* Quick Summary of Current Stack Settings (Somente Super Admin) */}
+            {isSuperAdmin && (
+              <div className="bg-neutral-900 text-neutral-100 rounded-xl p-4 text-xs font-mono space-y-2">
+                <div className="text-neutral-400 font-bold uppercase text-[10px]">Parâmetros Atuais da VPS:</div>
+                <div className="flex justify-between border-b border-neutral-800 pb-1">
+                  <span className="text-neutral-400">Instância Evolution:</span>
+                  <span className="text-white font-semibold">{tenant.evolutionInstanceId}</span>
+                </div>
+                <div className="flex justify-between border-b border-neutral-800 pb-1">
+                  <span className="text-neutral-400">Webhook n8n:</span>
+                  <span className="text-emerald-400 truncate max-w-xs">{n8nWebhookUrl}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-neutral-400">Status do Bot:</span>
+                  <span className={botPausedForCustomer ? 'text-amber-400' : 'text-emerald-400'}>
+                    {botPausedForCustomer ? 'Pausado (Em Atendimento Humano)' : 'Ativo (Auto-Resposta Ligada)'}
+                  </span>
+                </div>
               </div>
-              <div className="flex justify-between border-b border-neutral-800 pb-1">
-                <span className="text-neutral-400">Webhook n8n:</span>
-                <span className="text-emerald-400 truncate max-w-xs">{n8nWebhookUrl}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-neutral-400">Status do Bot:</span>
-                <span className={botPausedForCustomer ? 'text-amber-400' : 'text-emerald-400'}>
-                  {botPausedForCustomer ? 'Pausado (Em Atendimento Humano)' : 'Ativo (Auto-Resposta Ligada)'}
-                </span>
-              </div>
-            </div>
+            )}
           </div>
 
           {/* Right: Simulated WhatsApp Chat Device */}
@@ -2133,7 +2138,9 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                     <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-bounce" />
                     <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-bounce [animation-delay:0.2s]" />
                     <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-bounce [animation-delay:0.4s]" />
-                    <span className="text-[10px] ml-1">n8n processando resposta...</span>
+                    <span className="text-[10px] ml-1">
+                      {isSuperAdmin ? 'n8n processando resposta...' : 'Respondendo...'}
+                    </span>
                   </div>
                 )}
               </div>

@@ -20,15 +20,19 @@ import {
   DollarSign
 } from 'lucide-react';
 import { RestaurantTenant, AsaasSubscriptionData, AsaasInvoice, AsaasBillingType } from '../types';
+import { generateDynamicPixPayload } from '../utils/pixPayloadGenerator';
+import QRCode from 'qrcode';
 
 interface AsaasSubscriptionBillingViewProps {
   tenant: RestaurantTenant;
   onUpdateTenant: (updatedTenant: RestaurantTenant) => void;
+  isSuperAdmin?: boolean;
 }
 
 export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingViewProps> = ({
   tenant,
   onUpdateTenant,
+  isSuperAdmin = false,
 }) => {
   const [subscription, setSubscription] = useState<AsaasSubscriptionData | null>(null);
   const [gatewayConfig, setGatewayConfig] = useState<{
@@ -38,6 +42,9 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
     apiKeyMasked: string;
     webhookTokenMasked: string;
     configured: boolean;
+    pixKey?: string;
+    pixBeneficiaryName?: string;
+    pixCity?: string;
   }>({
     environment: 'sandbox',
     apiUrl: 'https://sandbox.asaas.com/v3',
@@ -45,6 +52,9 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
     apiKeyMasked: '',
     webhookTokenMasked: '',
     configured: true,
+    pixKey: '+559131976334',
+    pixBeneficiaryName: 'ALADAY CARDAPIOS',
+    pixCity: 'BELEM',
   });
 
   const [isLoading, setIsLoading] = useState(false);
@@ -52,6 +62,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
   const [selectedBillingType, setSelectedBillingType] = useState<AsaasBillingType>('CREDIT_CARD');
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [feedbackNotice, setFeedbackNotice] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const [localPixQrUrl, setLocalPixQrUrl] = useState<string>('');
 
   // Credit Card Form State
   const [ccNumber, setCcNumber] = useState('');
@@ -65,6 +76,8 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
   const [configEnv, setConfigEnv] = useState<'sandbox' | 'production'>('sandbox');
   const [configApiKey, setConfigApiKey] = useState('');
   const [configWebhookToken, setConfigWebhookToken] = useState('');
+  const [configPixKey, setConfigPixKey] = useState('+559131976334');
+  const [configPixBeneficiary, setConfigPixBeneficiary] = useState('ALADAY CARDAPIOS');
 
   // Fetch subscription data
   const fetchSubscription = async () => {
@@ -84,6 +97,8 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
         if (data.gateway) {
           setGatewayConfig(data.gateway);
           setConfigEnv(data.gateway.environment);
+          if (data.gateway.pixKey) setConfigPixKey(data.gateway.pixKey);
+          if (data.gateway.pixBeneficiaryName) setConfigPixBeneficiary(data.gateway.pixBeneficiaryName);
         }
       }
     } catch (err) {
@@ -224,7 +239,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
     }
   };
 
-  // Save Gateway Credentials
+  // Save Gateway Credentials & Platform Pix Key
   const handleSaveGatewayConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -235,13 +250,16 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
           environment: configEnv,
           apiKey: configApiKey || undefined,
           webhookToken: configWebhookToken || undefined,
+          pixKey: configPixKey || undefined,
+          pixBeneficiaryName: configPixBeneficiary || undefined,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         setGatewayConfig(data.config);
         setShowConfigSettings(false);
-        showToast('success', 'Configurações de credenciais Asaas salvas com sucesso!');
+        fetchSubscription();
+        showToast('success', 'Configurações Asaas e Chave Pix da Assinatura salvas com sucesso!');
       }
     } catch {
       showToast('error', 'Erro ao salvar credenciais Asaas.');
@@ -270,6 +288,45 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
   };
 
   const pendingInvoice = subscription?.invoices?.find((i) => i.status === 'PENDING') || subscription?.invoices?.[0];
+
+  const isLegacyCorruptedPix = (code?: string) =>
+    !code ||
+    code.includes('0136asaas-assinaturas@aladay.com.br') ||
+    code.includes('5915ALADAY SAAS') ||
+    code.includes('62070503***') ||
+    code.endsWith('6304E2C9');
+
+  const validSubscriptionPixPayload = React.useMemo(() => {
+    if (pendingInvoice?.pixCopiaECola && !isLegacyCorruptedPix(pendingInvoice.pixCopiaECola)) {
+      return pendingInvoice.pixCopiaECola;
+    }
+    return generateDynamicPixPayload({
+      pixKey: gatewayConfig.pixKey || '+559131976334',
+      beneficiaryName: gatewayConfig.pixBeneficiaryName || 'ALADAY CARDAPIOS',
+      merchantCity: gatewayConfig.pixCity || 'BELEM',
+      amountCents: Math.round((pendingInvoice?.value || 129.9) * 100),
+      txid: pendingInvoice?.id || 'ASSINATURAALADAY',
+    });
+  }, [
+    pendingInvoice?.pixCopiaECola,
+    pendingInvoice?.value,
+    pendingInvoice?.id,
+    gatewayConfig.pixKey,
+    gatewayConfig.pixBeneficiaryName,
+    gatewayConfig.pixCity,
+  ]);
+
+  useEffect(() => {
+    let active = true;
+    QRCode.toDataURL(validSubscriptionPixPayload, { width: 256, margin: 2 })
+      .then((url) => {
+        if (active) setLocalPixQrUrl(url);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [validSubscriptionPixPayload]);
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -309,11 +366,13 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <span className="px-2 py-0.5 rounded text-[11px] font-mono font-semibold bg-blue-500/20 text-sky-400 border border-blue-500/30">
-                Gateway Asaas Recorrente v3
+                {isSuperAdmin ? 'Gateway Asaas Recorrente v3' : 'Assinatura Oficial Aladay'}
               </span>
-              <span className="text-xs text-slate-400 font-mono">
-                {gatewayConfig.environment === 'production' ? 'Produção Oficial' : 'Ambiente Sandbox Ativo'}
-              </span>
+              {isSuperAdmin && (
+                <span className="text-xs text-slate-400 font-mono">
+                  {gatewayConfig.environment === 'production' ? 'Produção Oficial' : 'Ambiente Sandbox Ativo'}
+                </span>
+              )}
             </div>
             <h2 className="text-lg font-bold tracking-tight">
               Assinatura Aladay &bull; Anual R$ 99,00/mês (Cartão) ou Mensal R$ 129,90/mês
@@ -324,27 +383,29 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
           </div>
 
           <div className="flex flex-wrap items-center gap-2 self-start md:self-center">
-            <button
-              onClick={() => setShowConfigSettings(!showConfigSettings)}
-              className="px-3 py-2 text-xs font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors flex items-center gap-1.5"
-            >
-              <Sliders className="w-3.5 h-3.5 text-slate-400" />
-              <span>Configurar Asaas API</span>
-            </button>
+            {isSuperAdmin && (
+              <button
+                onClick={() => setShowConfigSettings(!showConfigSettings)}
+                className="px-3 py-2 text-xs font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors flex items-center gap-1.5"
+              >
+                <Sliders className="w-3.5 h-3.5 text-slate-400" />
+                <span>Configurar Asaas API</span>
+              </button>
+            )}
             <button
               onClick={fetchSubscription}
               disabled={isLoading}
               className="px-3 py-2 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors flex items-center gap-1.5 shadow-xs"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-              <span>Sincronizar</span>
+              <span>Atualizar Fatura</span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* Asaas API Configuration Drawer (When toggled) */}
-      {showConfigSettings && (
+      {/* Asaas API Configuration Drawer (Somente Super Admin) */}
+      {isSuperAdmin && showConfigSettings && (
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div>
@@ -389,6 +450,32 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                   value={configApiKey}
                   onChange={(e) => setConfigApiKey(e.target.value)}
                   className="w-full p-2.5 text-xs font-mono border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Chave Pix Direta da Plataforma (CPF, CNPJ, E-mail ou Celular)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: +559131976334 ou CPF/CNPJ"
+                  value={configPixKey}
+                  onChange={(e) => setConfigPixKey(e.target.value)}
+                  className="w-full p-2.5 text-xs font-mono border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Nome do Beneficiário Pix (Plataforma Aladay)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: ALADAY CARDAPIOS"
+                  value={configPixBeneficiary}
+                  onChange={(e) => setConfigPixBeneficiary(e.target.value)}
+                  className="w-full p-2.5 text-xs border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
                 />
               </div>
             </div>
@@ -504,9 +591,15 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
               </span>
             )}
           </div>
-          <p className="text-[11px] text-slate-500 font-mono mt-1">
-            ID Asaas: {subscription?.id || 'sub_asaas_brasas_01'}
-          </p>
+          {isSuperAdmin ? (
+            <p className="text-[11px] text-slate-500 font-mono mt-1">
+              ID Asaas: {subscription?.id || 'sub_asaas_brasas_01'}
+            </p>
+          ) : (
+            <p className="text-[11px] text-slate-500 mt-1">
+              Licença {tenant.name}
+            </p>
+          )}
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1 shadow-xs">
@@ -773,10 +866,10 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
               {/* QR Code Display */}
               <div className="flex flex-col items-center justify-center p-4 bg-white border border-slate-200 rounded-xl shadow-xs text-center">
-                {pendingInvoice?.pixQrCodeBase64 ? (
+                {localPixQrUrl || pendingInvoice?.pixQrCodeBase64 ? (
                   <img
-                    src={pendingInvoice.pixQrCodeBase64}
-                    alt="QR Code Pix Asaas"
+                    src={localPixQrUrl || pendingInvoice?.pixQrCodeBase64}
+                    alt="QR Code Pix Assinatura"
                     className="w-44 h-44 object-contain rounded"
                   />
                 ) : (
@@ -793,28 +886,24 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
               <div className="md:col-span-2 space-y-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-800 mb-1">
-                    Código Pix Copia e Cola (Asaas Recorrência):
+                    Código Pix Copia e Cola:
                   </label>
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
                       readOnly
-                      value={
-                        pendingInvoice?.pixCopiaECola ||
-                        '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br5204000053039865406129.905802BR5915ALADAY SAAS6009SAO PAULO62070503***6304E2C9'
-                      }
+                      value={validSubscriptionPixPayload}
                       className="flex-1 p-2.5 bg-white border border-slate-200 rounded-lg text-xs font-mono text-slate-700 select-all"
                     />
                     <button
                       type="button"
                       onClick={() =>
                         handleCopy(
-                          pendingInvoice?.pixCopiaECola ||
-                            '00020126580014br.gov.bcb.pix0136asaas-assinaturas@aladay.com.br5204000053039865406129.905802BR5915ALADAY SAAS6009SAO PAULO62070503***6304E2C9',
+                          validSubscriptionPixPayload,
                           'Código Pix Asaas'
                         )
                       }
-                      className="px-4 py-2.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap shadow-xs"
+                      className="px-4 py-2.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap shadow-xs cursor-pointer"
                     >
                       {copiedCode === 'Código Pix Asaas' ? (
                         <>
@@ -840,30 +929,32 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                     1. Copie o código acima ou escaneie o QR Code no aplicativo do seu banco.
                   </p>
                   <p className="text-[11px] leading-relaxed">
-                    2. Ao confirmar o pagamento de <strong>R$ 129,90</strong>, o Asaas envia um webhook para o Aladay em até 3 segundos liberando o próximo mês da sua licença.
+                    2. Ao confirmar o pagamento de <strong>R$ 129,90</strong>, sua assinatura é renovada automaticamente.
                   </p>
                 </div>
 
-                {/* Sandbox / Testing Buttons */}
-                <div className="pt-2 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleSimulateWebhook('PAYMENT_RECEIVED')}
-                    className="px-3 py-2 text-xs font-semibold text-blue-800 bg-blue-100 hover:bg-blue-200 border border-blue-300 rounded-lg flex items-center gap-1.5 transition-colors"
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5 text-blue-700" />
-                    <span>Simular Pagamento no Asaas (Webhook PAYMENT_RECEIVED)</span>
-                  </button>
+                {/* Sandbox / Testing Buttons (Somente Super Admin) */}
+                {isSuperAdmin && (
+                  <div className="pt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleSimulateWebhook('PAYMENT_RECEIVED')}
+                      className="px-3 py-2 text-xs font-semibold text-blue-800 bg-blue-100 hover:bg-blue-200 border border-blue-300 rounded-lg flex items-center gap-1.5 transition-colors"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 text-blue-700" />
+                      <span>Simular Pagamento no Asaas (Webhook PAYMENT_RECEIVED)</span>
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={() => handleSimulateWebhook('PAYMENT_OVERDUE')}
-                    className="px-3 py-2 text-xs font-semibold text-red-800 bg-red-100 hover:bg-red-200 border border-red-300 rounded-lg flex items-center gap-1.5 transition-colors"
-                  >
-                    <AlertTriangle className="w-3.5 h-3.5 text-red-700" />
-                    <span>Simular Atraso (PAYMENT_OVERDUE)</span>
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      onClick={() => handleSimulateWebhook('PAYMENT_OVERDUE')}
+                      className="px-3 py-2 text-xs font-semibold text-red-800 bg-red-100 hover:bg-red-200 border border-red-300 rounded-lg flex items-center gap-1.5 transition-colors"
+                    >
+                      <AlertTriangle className="w-3.5 h-3.5 text-red-700" />
+                      <span>Simular Atraso (PAYMENT_OVERDUE)</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -977,18 +1068,20 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                   </span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCcNumber('4532 9988 7766 4242');
-                    setCcHolder('RESTAURANTE LTDA');
-                    setCcExpiry('10/29');
-                    setCcCvv('888');
-                  }}
-                  className="px-3 py-2 text-xs text-slate-600 hover:text-slate-900 bg-slate-200/60 rounded-lg cursor-pointer"
-                >
-                  Preencher Cartão Teste
-                </button>
+                {isSuperAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCcNumber('4532 9988 7766 4242');
+                      setCcHolder('RESTAURANTE LTDA');
+                      setCcExpiry('10/29');
+                      setCcCvv('888');
+                    }}
+                    className="px-3 py-2 text-xs text-slate-600 hover:text-slate-900 bg-slate-200/60 rounded-lg cursor-pointer"
+                  >
+                    Preencher Cartão Teste
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -1000,7 +1093,7 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
             <div className="border-b border-slate-200/60 pb-3">
               <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
                 <FileText className="w-4 h-4 text-blue-700" />
-                <span>Boleto Bancário Registrado Asaas (R$ 129,90)</span>
+                <span>Boleto Bancário Registrado (R$ 129,90)</span>
               </h4>
               <p className="text-[11px] text-slate-500">
                 Emitido com código de barras FEBRABAN e compensação automática no próximo dia útil.
@@ -1043,17 +1136,19 @@ export const AsaasSubscriptionBillingView: React.FC<AsaasSubscriptionBillingView
                   className="px-4 py-2 text-xs font-semibold text-slate-800 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg inline-flex items-center gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5 text-slate-600" />
-                  <span>Visualizar Boleto Asaas em PDF</span>
+                  <span>Visualizar Boleto em PDF</span>
                 </a>
 
-                <button
-                  type="button"
-                  onClick={() => handleSimulateWebhook('PAYMENT_RECEIVED')}
-                  className="px-4 py-2 text-xs font-semibold text-blue-800 bg-blue-100 hover:bg-blue-200 border border-blue-300 rounded-lg inline-flex items-center gap-1.5"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-700" />
-                  <span>Simular Compensação do Boleto</span>
-                </button>
+                {isSuperAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => handleSimulateWebhook('PAYMENT_RECEIVED')}
+                    className="px-4 py-2 text-xs font-semibold text-blue-800 bg-blue-100 hover:bg-blue-200 border border-blue-300 rounded-lg inline-flex items-center gap-1.5"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 text-blue-700" />
+                    <span>Simular Compensação do Boleto</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>

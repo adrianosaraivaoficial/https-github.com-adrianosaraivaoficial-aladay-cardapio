@@ -336,19 +336,21 @@ export const IfoodIntegrationView: React.FC<IfoodIntegrationViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          <button
-            type="button"
-            onClick={handleSimulateIfoodOrder}
-            disabled={isSimulatingOrder}
-            className="px-4 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl text-xs flex items-center gap-2 shadow-sm transition-colors cursor-pointer disabled:opacity-50"
-          >
-            {isSimulatingOrder ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              <Zap className="w-4 h-4 fill-current" />
-            )}
-            <span>Simular Pedido iFood no KDS</span>
-          </button>
+          {isSuperAdmin && (
+            <button
+              type="button"
+              onClick={handleSimulateIfoodOrder}
+              disabled={isSimulatingOrder}
+              className="px-4 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl text-xs flex items-center gap-2 shadow-sm transition-colors cursor-pointer disabled:opacity-50"
+            >
+              {isSimulatingOrder ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Zap className="w-4 h-4 fill-current" />
+              )}
+              <span>Simular Pedido iFood no KDS</span>
+            </button>
+          )}
 
           {onNavigateToTab && (
             <button
@@ -548,18 +550,20 @@ export const IfoodIntegrationView: React.FC<IfoodIntegrationViewProps> = ({
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-semibold text-slate-700">
-                    iFood Merchant ID (UUID da Loja no iFood)
+                    iFood Merchant ID (Código da Loja no iFood)
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMerchantId(`9f4c2a10-8b3e-4d12-9a55-${tenant.slug.slice(0, 6).padEnd(6, '0')}123456`);
-                      setEnabled(true);
-                    }}
-                    className="text-[11px] font-semibold text-red-600 hover:underline cursor-pointer"
-                  >
-                    Preencher UUID de Homologação
-                  </button>
+                  {isSuperAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMerchantId(`9f4c2a10-8b3e-4d12-9a55-${tenant.slug.slice(0, 6).padEnd(6, '0')}123456`);
+                        setEnabled(true);
+                      }}
+                      className="text-[11px] font-semibold text-red-600 hover:underline cursor-pointer"
+                    >
+                      Preencher UUID de Homologação
+                    </button>
+                  )}
                 </div>
                 <input
                   type="text"
@@ -650,60 +654,60 @@ export const IfoodIntegrationView: React.FC<IfoodIntegrationViewProps> = ({
 
         {/* Right 5 Cols: Webhook Endpoint, Bidirectional Mapping & Live Event Log */}
         <div className="lg:col-span-5 space-y-6">
-          {/* Webhook Endpoint Box */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3 shadow-2xs">
-            <div className="flex items-center gap-2">
-              <Webhook className="w-4 h-4 text-red-600" />
-              <h3 className="text-sm font-bold text-slate-900">
-                Endpoint de Webhook Oficial (iFood Developer)
-              </h3>
-            </div>
-            <p className="text-xs text-slate-500">
-              Configure esta URL na aba <strong>Webhook</strong> do seu aplicativo no portal <code>developer.ifood.com.br</code> para receber eventos <code>PLACED</code>, <code>CANCELLED</code> e <code>CONCLUDED</code> em tempo real:
-            </p>
+          {/* Webhook Endpoint Box (Exibido apenas para Super Admin) */}
+          {isSuperAdmin ? (
+            <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3 shadow-2xs">
+              <div className="flex items-center gap-2">
+                <Webhook className="w-4 h-4 text-red-600" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  Endpoint de Webhook Oficial (iFood Developer)
+                </h3>
+              </div>
+              <p className="text-xs text-slate-500">
+                Configure esta URL na aba <strong>Webhook</strong> do seu aplicativo no portal <code>developer.ifood.com.br</code> para receber eventos <code>PLACED</code>, <code>CANCELLED</code> e <code>CONCLUDED</code> em tempo real:
+              </p>
 
-            <div className="p-2.5 bg-slate-900 text-slate-100 rounded-lg font-mono text-[11px] flex items-center justify-between gap-2">
-              <span className="truncate">{webhookUrl}</span>
-              <button
-                type="button"
-                onClick={() => handleCopy(webhookUrl, 'webhook')}
-                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[10px] font-sans font-semibold shrink-0 flex items-center gap-1 cursor-pointer"
-              >
-                {copiedField === 'webhook' ? (
-                  <>
-                    <Check className="w-3 h-3 text-emerald-400" />
-                    <span>Copiado!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3 h-3" />
-                    <span>Copiar URL</span>
-                  </>
-                )}
-              </button>
-            </div>
+              <div className="p-2.5 bg-slate-900 text-slate-100 rounded-lg font-mono text-[11px] flex items-center justify-between gap-2">
+                <span className="truncate">{webhookUrl}</span>
+                <button
+                  type="button"
+                  onClick={() => handleCopy(webhookUrl, 'webhook')}
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[10px] font-sans font-semibold shrink-0 flex items-center gap-1 cursor-pointer"
+                >
+                  {copiedField === 'webhook' ? (
+                    <>
+                      <Check className="w-3 h-3 text-emerald-400" />
+                      <span>Copiado!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3" />
+                      <span>Copiar URL</span>
+                    </>
+                  )}
+                </button>
+              </div>
 
-            <div className="pt-2 border-t border-slate-100 space-y-1.5 text-[11px] text-slate-600">
-              <p className="font-bold text-slate-800">Mapeamento Bidirecional Automático (KDS &rarr; iFood):</p>
-              <div className="flex justify-between">
-                <span>1. Confirmar Pedido no KDS:</span>
-                <code className="font-mono text-emerald-700 font-semibold">POST /orders/&#123;id&#125;/confirm</code>
+              <div className="pt-2 border-t border-slate-100 space-y-1.5 text-[11px] text-slate-600">
+                <p className="font-bold text-slate-800">Mapeamento Bidirecional Automático (KDS &rarr; iFood):</p>
+                <div className="flex justify-between">
+                  <span>1. Confirmar Pedido no KDS:</span>
+                  <code className="font-mono text-emerald-700 font-semibold">POST /orders/&#123;id&#125;/confirm</code>
+                </div>
+                <div className="flex justify-between">
+                  <span>2. Pronto / Despachar (Entrega):</span>
+                  <code className="font-mono text-blue-700 font-semibold">POST /orders/&#123;id&#125;/dispatch</code>
+                </div>
+                <div className="flex justify-between">
+                  <span>3. Pronto (Retirada Balcão):</span>
+                  <code className="font-mono text-purple-700 font-semibold">POST /orders/&#123;id&#125;/readyToPickup</code>
+                </div>
+                <div className="flex justify-between">
+                  <span>4. Recusar Pedido:</span>
+                  <code className="font-mono text-rose-700 font-semibold">POST /orders/&#123;id&#125;/requestCancellation</code>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span>2. Pronto / Despachar (Entrega):</span>
-                <code className="font-mono text-blue-700 font-semibold">POST /orders/&#123;id&#125;/dispatch</code>
-              </div>
-              <div className="flex justify-between">
-                <span>3. Pronto (Retirada Balcão):</span>
-                <code className="font-mono text-purple-700 font-semibold">POST /orders/&#123;id&#125;/readyToPickup</code>
-              </div>
-              <div className="flex justify-between">
-                <span>4. Recusar Pedido:</span>
-                <code className="font-mono text-rose-700 font-semibold">POST /orders/&#123;id&#125;/requestCancellation</code>
-              </div>
-            </div>
 
-            {isSuperAdmin && (
               <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-lg text-[11px] text-indigo-900 space-y-1">
                 <p className="font-bold flex items-center gap-1">
                   <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
@@ -713,8 +717,20 @@ export const IfoodIntegrationView: React.FC<IfoodIntegrationViewProps> = ({
                   Para produção com API real iFood, adicione <code>IFOOD_CLIENT_ID</code> e <code>IFOOD_CLIENT_SECRET</code> nas variáveis de ambiente do Easypanel.
                 </p>
               </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3 shadow-2xs">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  Sincronização Automática com o KDS
+                </h3>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Assim que o seu código de vínculo e o ID da loja estiverem salvos, todos os pedidos do iFood entram automaticamente na coluna <strong>Novos</strong> do seu KDS e atualizam o aplicativo do cliente quando você avança o status.
+              </p>
+            </div>
+          )}
 
           {/* Recent iFood Webhook & Sync Logs */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3 shadow-2xs">
