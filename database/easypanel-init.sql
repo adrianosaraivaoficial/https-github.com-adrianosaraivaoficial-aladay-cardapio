@@ -33,6 +33,18 @@ CREATE TABLE IF NOT EXISTS tenants (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS background_color VARCHAR(20) NOT NULL DEFAULT '#FAFAFA';
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS font_family VARCHAR(60) NOT NULL DEFAULT 'Inter';
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS logo_url TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS opening_hours_text VARCHAR(200) DEFAULT 'Ter a Dom • 18h às 23h30';
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS delivery_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS pickup_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS delivery_zones JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(30) NOT NULL DEFAULT 'active';
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS status_notification_templates JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS pix_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 CREATE INDEX IF NOT EXISTS idx_tenants_slug ON tenants(slug);
 
 -- 2. TABELA DE CATEGORIAS DO CARDÁPIO (ISOLADA POR TENANT)
@@ -44,6 +56,8 @@ CREATE TABLE IF NOT EXISTS categories (
   display_order INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 1;
 
 CREATE INDEX IF NOT EXISTS idx_categories_tenant_slug ON categories(tenant_slug);
 
@@ -64,6 +78,10 @@ CREATE TABLE IF NOT EXISTS products (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE products ADD COLUMN IF NOT EXISTS is_featured BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS option_groups JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
 CREATE INDEX IF NOT EXISTS idx_products_tenant_slug ON products(tenant_slug);
 CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id);
 
@@ -76,6 +94,7 @@ CREATE TABLE IF NOT EXISTS orders (
   customer_name VARCHAR(120) NOT NULL,
   customer_phone VARCHAR(30) NOT NULL,
   order_type VARCHAR(20) NOT NULL DEFAULT 'delivery',
+  table_number VARCHAR(30),
   delivery_address TEXT,
   delivery_zone_name VARCHAR(100),
   estimated_minutes INTEGER DEFAULT 35,
@@ -86,12 +105,20 @@ CREATE TABLE IF NOT EXISTS orders (
   status VARCHAR(30) NOT NULL DEFAULT 'received',
   payment_status VARCHAR(30) NOT NULL DEFAULT 'pending',
   payment_method VARCHAR(60) NOT NULL DEFAULT 'Pix',
+  whatsapp_status VARCHAR(40) DEFAULT 'delivered',
   idempotency_key VARCHAR(120),
   pix_transaction JSONB,
   whatsapp_logs JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS table_number VARCHAR(30);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_zone_name VARCHAR(100);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimated_minutes INTEGER DEFAULT 35;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS whatsapp_status VARCHAR(40) DEFAULT 'delivered';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS pix_transaction JSONB;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS whatsapp_logs JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_orders_tenant_slug ON orders(tenant_slug);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);

@@ -149,7 +149,13 @@ CREATE TABLE IF NOT EXISTS tenants (
   phone VARCHAR(30) NOT NULL DEFAULT '',
   address TEXT NOT NULL DEFAULT '',
   primary_color VARCHAR(20) NOT NULL DEFAULT '#EA580C',
+  background_color VARCHAR(20) NOT NULL DEFAULT '#FAFAFA',
+  font_family VARCHAR(60) NOT NULL DEFAULT 'Inter',
+  logo_url TEXT,
   is_open BOOLEAN NOT NULL DEFAULT TRUE,
+  opening_hours_text VARCHAR(200) DEFAULT 'Ter a Dom • 18h às 23h30',
+  delivery_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  pickup_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   delivery_fee_cents INTEGER NOT NULL DEFAULT 0,
   min_order_cents INTEGER NOT NULL DEFAULT 0,
   delivery_zones JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -162,7 +168,18 @@ CREATE TABLE IF NOT EXISTS tenants (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS background_color VARCHAR(20) NOT NULL DEFAULT '#FAFAFA';
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS font_family VARCHAR(60) NOT NULL DEFAULT 'Inter';
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS logo_url TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS opening_hours_text VARCHAR(200) DEFAULT 'Ter a Dom • 18h às 23h30';
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS delivery_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS pickup_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS delivery_zones JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(30) NOT NULL DEFAULT 'active';
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS status_notification_templates JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS pix_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 CREATE TABLE IF NOT EXISTS categories (
   id VARCHAR(80) PRIMARY KEY,
   tenant_id VARCHAR(80) NOT NULL,
@@ -171,6 +188,8 @@ CREATE TABLE IF NOT EXISTS categories (
   display_order INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 1;
+
 CREATE TABLE IF NOT EXISTS products (
   id VARCHAR(80) PRIMARY KEY,
   tenant_id VARCHAR(80) NOT NULL,
@@ -186,6 +205,10 @@ CREATE TABLE IF NOT EXISTS products (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE products ADD COLUMN IF NOT EXISTS is_featured BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS option_groups JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
 CREATE TABLE IF NOT EXISTS orders (
   id VARCHAR(80) PRIMARY KEY,
   order_number INTEGER NOT NULL,
@@ -194,7 +217,10 @@ CREATE TABLE IF NOT EXISTS orders (
   customer_name VARCHAR(120) NOT NULL,
   customer_phone VARCHAR(30) NOT NULL,
   order_type VARCHAR(20) NOT NULL DEFAULT 'delivery',
+  table_number VARCHAR(30),
   delivery_address TEXT,
+  delivery_zone_name VARCHAR(100),
+  estimated_minutes INTEGER DEFAULT 35,
   items JSONB NOT NULL DEFAULT '[]'::jsonb,
   subtotal_cents INTEGER NOT NULL DEFAULT 0,
   delivery_fee_cents INTEGER NOT NULL DEFAULT 0,
@@ -202,12 +228,36 @@ CREATE TABLE IF NOT EXISTS orders (
   status VARCHAR(30) NOT NULL DEFAULT 'received',
   payment_status VARCHAR(30) NOT NULL DEFAULT 'pending',
   payment_method VARCHAR(60) NOT NULL DEFAULT 'Pix',
+  whatsapp_status VARCHAR(40) DEFAULT 'delivered',
   idempotency_key VARCHAR(120),
   pix_transaction JSONB,
   whatsapp_logs JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS table_number VARCHAR(30);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_zone_name VARCHAR(100);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimated_minutes INTEGER DEFAULT 35;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS whatsapp_status VARCHAR(40) DEFAULT 'delivered';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS pix_transaction JSONB;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS whatsapp_logs JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+CREATE TABLE IF NOT EXISTS pix_transactions (
+  txid VARCHAR(80) PRIMARY KEY,
+  order_id VARCHAR(80) NOT NULL,
+  tenant_slug VARCHAR(100) NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  pix_copia_e_cola TEXT NOT NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
+  psp VARCHAR(60) DEFAULT 'direct_bank',
+  customer_name VARCHAR(120),
+  customer_phone VARCHAR(30),
+  end_to_end_id VARCHAR(100),
+  paid_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS outbox_events (
   id VARCHAR(80) PRIMARY KEY,
   tenant_id VARCHAR(80) NOT NULL,
@@ -299,43 +349,30 @@ async function initializePostgresConnection(connectionString: string, runMigrati
         const ddl = getInitSqlScript();
         await client.query(ddl);
 
-        // Sync memoryTenants to PostgreSQL if table is empty or upsert
-        for (const t of memoryTenants) {
-          await client.query(
-            `INSERT INTO tenants (id, name, slug, phone, address, primary_color, is_open, delivery_fee_cents, min_order_cents, delivery_zones, evolution_instance_id, evolution_status, pix_config)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13::jsonb)
-             ON CONFLICT (slug) DO UPDATE SET
-               name = EXCLUDED.name,
-               phone = EXCLUDED.phone,
-               address = EXCLUDED.address,
-               primary_color = EXCLUDED.primary_color,
-               is_open = EXCLUDED.is_open,
-               delivery_fee_cents = EXCLUDED.delivery_fee_cents,
-               min_order_cents = EXCLUDED.min_order_cents,
-               pix_config = EXCLUDED.pix_config,
-               updated_at = NOW();`,
-            [
-              t.id,
-              t.name,
-              t.slug,
-              t.phone || '',
-              t.address || '',
-              t.primaryColor || '#EA580C',
-              t.isOpen ?? true,
-              t.deliveryFeeCents || 0,
-              t.minOrderCents || 0,
-              JSON.stringify(t.deliveryZones || []),
-              t.evolutionInstanceId || 'aladay',
-              t.evolutionStatus || 'disconnected',
-              JSON.stringify(t.pixConfig || {}),
-            ]
-          );
-        }
+        // Always run idempotent column migrations so existing production databases never miss newer columns
+        await client.query(`
+          ALTER TABLE tenants ADD COLUMN IF NOT EXISTS opening_hours_text VARCHAR(200) DEFAULT 'Ter a Dom • 18h às 23h30';
+          ALTER TABLE tenants ADD COLUMN IF NOT EXISTS delivery_zones JSONB NOT NULL DEFAULT '[]'::jsonb;
+          ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(30) NOT NULL DEFAULT 'active';
+          ALTER TABLE tenants ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
+          ALTER TABLE tenants ADD COLUMN IF NOT EXISTS status_notification_templates JSONB NOT NULL DEFAULT '{}'::jsonb;
+          ALTER TABLE tenants ADD COLUMN IF NOT EXISTS pix_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+          ALTER TABLE categories ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 1;
+          ALTER TABLE products ADD COLUMN IF NOT EXISTS is_featured BOOLEAN NOT NULL DEFAULT FALSE;
+          ALTER TABLE products ADD COLUMN IF NOT EXISTS option_groups JSONB NOT NULL DEFAULT '[]'::jsonb;
+          ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+          ALTER TABLE orders ADD COLUMN IF NOT EXISTS table_number VARCHAR(30);
+          ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_zone_name VARCHAR(100);
+          ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimated_minutes INTEGER DEFAULT 35;
+          ALTER TABLE orders ADD COLUMN IF NOT EXISTS whatsapp_status VARCHAR(40) DEFAULT 'delivered';
+          ALTER TABLE orders ADD COLUMN IF NOT EXISTS pix_transaction JSONB;
+          ALTER TABLE orders ADD COLUMN IF NOT EXISTS whatsapp_logs JSONB NOT NULL DEFAULT '[]'::jsonb;
+        `);
 
-        // Load saved tenants from PostgreSQL into memoryTenants
+        // 1. Load saved tenants from PostgreSQL FIRST so real DB records take precedence over default seeds
         const dbTenants = await client.query('SELECT * FROM tenants ORDER BY created_at ASC;');
         dbTenants.rows.forEach((row) => {
-          const existingIdx = memoryTenants.findIndex((m) => m.slug === row.slug);
+          const existingIdx = memoryTenants.findIndex((m) => m.slug.toLowerCase() === String(row.slug || '').toLowerCase());
           const mappedTenant: InMemTenant = {
             id: row.id,
             name: row.name,
@@ -344,10 +381,11 @@ async function initializePostgresConnection(connectionString: string, runMigrati
             address: row.address || '',
             primaryColor: row.primary_color || '#EA580C',
             isOpen: row.is_open ?? true,
+            openingHoursText: row.opening_hours_text || 'Segunda a Domingo: 18:00 às 23:45',
             deliveryFeeCents: Number(row.delivery_fee_cents) || 0,
             minOrderCents: Number(row.min_order_cents) || 0,
             deliveryZones: Array.isArray(row.delivery_zones) ? row.delivery_zones : [],
-            evolutionInstanceId: row.evolution_instance_id || 'aladay',
+            evolutionInstanceId: row.evolution_instance_id || `instancia_${row.slug}`,
             evolutionStatus: (row.evolution_status as any) || 'disconnected',
             subscriptionStatus: (row.subscription_status as any) || 'active',
             trialEndsAt: row.trial_ends_at ? new Date(row.trial_ends_at).toISOString() : undefined,
@@ -363,66 +401,108 @@ async function initializePostgresConnection(connectionString: string, runMigrati
           }
         });
 
-        // Load saved categories from PostgreSQL into memoryCategories
+        // 2. Seed any missing default tenants without overwriting existing PostgreSQL rows
+        for (const t of memoryTenants) {
+          await client.query(
+            `INSERT INTO tenants (id, name, slug, phone, address, primary_color, is_open, opening_hours_text, delivery_fee_cents, min_order_cents, delivery_zones, evolution_instance_id, evolution_status, pix_config)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb)
+             ON CONFLICT (slug) DO NOTHING;`,
+            [
+              t.id,
+              t.name,
+              t.slug,
+              t.phone || '',
+              t.address || '',
+              t.primaryColor || '#EA580C',
+              t.isOpen ?? true,
+              t.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45',
+              t.deliveryFeeCents || 0,
+              t.minOrderCents || 0,
+              JSON.stringify(t.deliveryZones || []),
+              t.evolutionInstanceId || 'aladay',
+              t.evolutionStatus || 'disconnected',
+              JSON.stringify(t.pixConfig || {}),
+            ]
+          );
+        }
+
+        // 3. Load saved categories from PostgreSQL into memoryCategories
         const dbCategories = await client.query('SELECT * FROM categories ORDER BY display_order ASC, created_at ASC;');
         dbCategories.rows.forEach((row) => {
-          if (!memoryCategories.some((c) => c.id === row.id)) {
-            memoryCategories.push({
-              id: row.id,
-              tenantId: row.tenant_id,
-              tenantSlug: row.tenant_slug,
-              name: row.name,
-              order: Number(row.display_order) || 1,
-            });
+          const existingIdx = memoryCategories.findIndex((c) => c.id === row.id);
+          const mappedCat = {
+            id: row.id,
+            tenantId: row.tenant_id,
+            tenantSlug: row.tenant_slug,
+            name: row.name,
+            order: Number(row.display_order) || 1,
+          };
+          if (existingIdx >= 0) {
+            memoryCategories[existingIdx] = mappedCat;
+          } else {
+            memoryCategories.push(mappedCat);
           }
         });
 
-        // Load saved products from PostgreSQL into memoryProducts
+        // 4. Load saved products from PostgreSQL into memoryProducts
         const dbProducts = await client.query('SELECT * FROM products ORDER BY created_at DESC;');
         dbProducts.rows.forEach((row) => {
-          if (!memoryProducts.some((p) => p.id === row.id)) {
-            memoryProducts.push({
-              id: row.id,
-              tenantId: row.tenant_id,
-              tenantSlug: row.tenant_slug,
-              categoryId: row.category_id,
-              name: row.name,
-              description: row.description || '',
-              priceCents: Number(row.price_cents) || 0,
-              imageUrl: row.image_url || undefined,
-              isAvailable: row.is_available ?? true,
-              isFeatured: row.is_featured ?? false,
-              optionGroups: Array.isArray(row.option_groups) ? row.option_groups : [],
-            });
+          const existingIdx = memoryProducts.findIndex((p) => p.id === row.id);
+          const mappedProd = {
+            id: row.id,
+            tenantId: row.tenant_id,
+            tenantSlug: row.tenant_slug,
+            categoryId: row.category_id,
+            name: row.name,
+            description: row.description || '',
+            priceCents: Number(row.price_cents) || 0,
+            imageUrl: row.image_url || undefined,
+            isAvailable: row.is_available ?? true,
+            isFeatured: row.is_featured ?? false,
+            optionGroups: Array.isArray(row.option_groups) ? row.option_groups : [],
+          };
+          if (existingIdx >= 0) {
+            memoryProducts[existingIdx] = mappedProd;
+          } else {
+            memoryProducts.push(mappedProd);
           }
         });
 
-        // Load saved orders from PostgreSQL into memoryOrders
+        // 5. Load saved orders from PostgreSQL into memoryOrders
         const dbOrders = await client.query('SELECT * FROM orders ORDER BY created_at DESC LIMIT 200;');
         dbOrders.rows.forEach((row) => {
-          if (!memoryOrders.some((o) => o.id === row.id)) {
-            memoryOrders.push({
-              id: row.id,
-              orderNumber: Number(row.order_number) || 1000,
-              tenantId: row.tenant_id,
-              tenantSlug: row.tenant_slug,
-              customerName: row.customer_name,
-              customerPhone: row.customer_phone,
-              type: row.order_type || 'delivery',
-              deliveryAddress: row.delivery_address || undefined,
-              items: Array.isArray(row.items) ? row.items : [],
-              subtotalCents: Number(row.subtotal_cents) || 0,
-              deliveryFeeCents: Number(row.delivery_fee_cents) || 0,
-              totalCents: Number(row.total_cents) || 0,
-              status: row.status || 'received',
-              paymentStatus: row.payment_status || 'pending',
-              paymentMethod: row.payment_method || 'Pix',
-              idempotencyKey: row.idempotency_key || undefined,
-              pixTransaction: row.pix_transaction || undefined,
-              whatsAppLogs: Array.isArray(row.whatsapp_logs) ? row.whatsapp_logs : [],
-              createdAt: row.created_at ? new Date(row.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : 'Agora',
-              receivedAtMs: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
-            });
+          const existingIdx = memoryOrders.findIndex((o) => o.id === row.id);
+          const mappedOrd = {
+            id: row.id,
+            orderNumber: Number(row.order_number) || 1000,
+            tenantId: row.tenant_id,
+            tenantSlug: row.tenant_slug,
+            customerName: row.customer_name,
+            customerPhone: row.customer_phone,
+            type: row.order_type || 'delivery',
+            tableNumber: row.table_number || undefined,
+            deliveryAddress: row.delivery_address || undefined,
+            deliveryZoneName: row.delivery_zone_name || undefined,
+            estimatedMinutes: Number(row.estimated_minutes) || 35,
+            items: Array.isArray(row.items) ? row.items : [],
+            subtotalCents: Number(row.subtotal_cents) || 0,
+            deliveryFeeCents: Number(row.delivery_fee_cents) || 0,
+            totalCents: Number(row.total_cents) || 0,
+            status: row.status || 'received',
+            paymentStatus: row.payment_status || 'pending',
+            paymentMethod: row.payment_method || 'Pix',
+            whatsAppStatus: row.whatsapp_status || 'delivered',
+            idempotencyKey: row.idempotency_key || undefined,
+            pixTransaction: row.pix_transaction || undefined,
+            whatsAppLogs: Array.isArray(row.whatsapp_logs) ? row.whatsapp_logs : [],
+            createdAt: row.created_at ? new Date(row.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : 'Agora',
+            updatedAt: row.updated_at ? new Date(row.updated_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : 'Agora',
+            receivedAtMs: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+          };
+          if (existingIdx >= 0) {
+            memoryOrders[existingIdx] = mappedOrd;
+          } else {
+            memoryOrders.push(mappedOrd);
           }
         });
       }
@@ -764,9 +844,99 @@ async function startServer() {
     });
   });
 
+  // Helper to hydrate tenant, categories, and products from PostgreSQL into memory on demand
+  async function hydrateTenantCatalogFromDb(slug: string) {
+    if (!pgPool || !slug) return;
+    const cleanSlug = slug.trim().toLowerCase();
+    try {
+      const tRes = await pgPool.query('SELECT * FROM tenants WHERE LOWER(slug) = $1 LIMIT 1;', [cleanSlug]);
+      if (tRes.rows[0]) {
+        const row = tRes.rows[0];
+        const mappedTenant: InMemTenant = {
+          id: row.id,
+          name: row.name,
+          slug: row.slug,
+          phone: row.phone || '',
+          address: row.address || '',
+          primaryColor: row.primary_color || '#EA580C',
+          isOpen: row.is_open ?? true,
+          openingHoursText: row.opening_hours_text || 'Segunda a Domingo: 18:00 às 23:45',
+          deliveryFeeCents: Number(row.delivery_fee_cents) || 0,
+          minOrderCents: Number(row.min_order_cents) || 0,
+          deliveryZones: Array.isArray(row.delivery_zones) ? row.delivery_zones : [],
+          evolutionInstanceId: row.evolution_instance_id || `instancia_${row.slug}`,
+          evolutionStatus: (row.evolution_status as any) || 'disconnected',
+          subscriptionStatus: (row.subscription_status as any) || 'active',
+          trialEndsAt: row.trial_ends_at ? new Date(row.trial_ends_at).toISOString() : undefined,
+          statusNotificationTemplates: row.status_notification_templates || {},
+          pixKey: row.pix_config?.pixKey || undefined,
+          pixBeneficiaryName: row.pix_config?.beneficiaryName || row.pix_config?.merchantName || undefined,
+          pixConfig: row.pix_config || undefined,
+        };
+        const existingIdx = memoryTenants.findIndex((m) => m.slug.toLowerCase() === cleanSlug);
+        if (existingIdx >= 0) {
+          memoryTenants[existingIdx] = { ...memoryTenants[existingIdx], ...mappedTenant };
+        } else {
+          memoryTenants.push(mappedTenant);
+        }
+      }
+
+      const cRes = await pgPool.query(
+        'SELECT * FROM categories WHERE LOWER(tenant_slug) = $1 ORDER BY display_order ASC, created_at ASC;',
+        [cleanSlug]
+      );
+      if (cRes.rows.length > 0) {
+        for (let i = memoryCategories.length - 1; i >= 0; i--) {
+          if (memoryCategories[i].tenantSlug.toLowerCase() === cleanSlug) {
+            memoryCategories.splice(i, 1);
+          }
+        }
+        cRes.rows.forEach((row) => {
+          memoryCategories.push({
+            id: row.id,
+            tenantId: row.tenant_id,
+            tenantSlug: row.tenant_slug,
+            name: row.name,
+            order: Number(row.display_order) || 1,
+          });
+        });
+      }
+
+      const pRes = await pgPool.query(
+        'SELECT * FROM products WHERE LOWER(tenant_slug) = $1 ORDER BY created_at ASC;',
+        [cleanSlug]
+      );
+      if (pRes.rows.length > 0) {
+        for (let i = memoryProducts.length - 1; i >= 0; i--) {
+          if (memoryProducts[i].tenantSlug.toLowerCase() === cleanSlug) {
+            memoryProducts.splice(i, 1);
+          }
+        }
+        pRes.rows.forEach((row) => {
+          memoryProducts.push({
+            id: row.id,
+            tenantId: row.tenant_id,
+            tenantSlug: row.tenant_slug,
+            categoryId: row.category_id,
+            name: row.name,
+            description: row.description || '',
+            priceCents: Number(row.price_cents) || 0,
+            imageUrl: row.image_url || undefined,
+            isAvailable: row.is_available ?? true,
+            isFeatured: row.is_featured ?? false,
+            optionGroups: Array.isArray(row.option_groups) ? row.option_groups : [],
+          });
+        });
+      }
+    } catch {
+      // Ignore transient query errors
+    }
+  }
+
   // Get specific tenant (and public catalog snapshot)
-  app.get('/api/v1/tenants/:slug', (req: Request, res: Response) => {
+  app.get('/api/v1/tenants/:slug', async (req: Request, res: Response) => {
     const slug = String(req.params.slug || '').trim().toLowerCase();
+    await hydrateTenantCatalogFromDb(slug);
     const tenant = memoryTenants.find((t) => t.slug.toLowerCase() === slug);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
@@ -783,8 +953,9 @@ async function startServer() {
   });
 
   // Public Digital Menu Catalog Endpoint for Customers (?loja=:slug)
-  app.get('/api/v1/tenants/:slug/catalog', (req: Request, res: Response) => {
+  app.get('/api/v1/tenants/:slug/catalog', async (req: Request, res: Response) => {
     const slug = String(req.params.slug || '').trim().toLowerCase();
+    await hydrateTenantCatalogFromDb(slug);
     const tenant = memoryTenants.find((t) => t.slug.toLowerCase() === slug);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
@@ -803,8 +974,8 @@ async function startServer() {
     });
   });
 
-  // Sync Tenant + Catalog state from Admin Panel so public links (?loja=:slug) always reflect latest menu
-  app.post('/api/v1/tenants/:slug/catalog/sync', (req: Request, res: Response) => {
+  // Sync Tenant + Catalog state from Admin Panel so public links (?loja=:slug) and PostgreSQL always reflect latest menu
+  app.post('/api/v1/tenants/:slug/catalog/sync', async (req: Request, res: Response) => {
     const slug = String(req.params.slug || '').trim();
     if (!slug) {
       return res.status(400).json({ error: 'Slug inválido.' });
@@ -863,31 +1034,86 @@ async function startServer() {
       }
     }
 
+    const syncedCategories: any[] = [];
+    if (Array.isArray(categories)) {
+      for (let i = memoryCategories.length - 1; i >= 0; i--) {
+        if (memoryCategories[i].tenantSlug.toLowerCase() === slug.toLowerCase()) {
+          memoryCategories.splice(i, 1);
+        }
+      }
+      categories.forEach((cat: any, idx: number) => {
+        if (!cat || !cat.id) return;
+        const normalizedCat = {
+          id: String(cat.id),
+          tenantId: tenant?.id || `tenant_${slug}`,
+          tenantSlug: tenant?.slug || slug,
+          name: String(cat.name || 'Categoria').slice(0, 80),
+          order: Number(cat.order) || idx + 1,
+        };
+        memoryCategories.push(normalizedCat);
+        syncedCategories.push(normalizedCat);
+      });
+    }
+
+    const syncedProducts: any[] = [];
+    if (Array.isArray(products)) {
+      for (let i = memoryProducts.length - 1; i >= 0; i--) {
+        if (memoryProducts[i].tenantSlug.toLowerCase() === slug.toLowerCase()) {
+          memoryProducts.splice(i, 1);
+        }
+      }
+      products.forEach((prod: any) => {
+        if (!prod || !prod.id) return;
+        const normalizedProd = {
+          id: String(prod.id),
+          tenantId: tenant?.id || `tenant_${slug}`,
+          tenantSlug: tenant?.slug || slug,
+          categoryId: String(prod.categoryId || 'cat_geral'),
+          name: String(prod.name || 'Produto').slice(0, 120),
+          description: prod.description ? String(prod.description) : '',
+          priceCents: Math.max(0, parseInt(prod.priceCents, 10) || 0),
+          imageUrl: prod.imageUrl || undefined,
+          isAvailable: prod.isAvailable !== false,
+          isFeatured: Boolean(prod.isFeatured),
+          optionGroups: Array.isArray(prod.optionGroups) ? prod.optionGroups : [],
+        };
+        memoryProducts.push(normalizedProd);
+        syncedProducts.push(normalizedProd);
+      });
+    }
+
     if (pgPool && tenant) {
       const syncedTenant = tenant;
-      pgPool
-        .query(
-          `UPDATE tenants
-           SET name = $1,
-               phone = $2,
-               address = $3,
-               primary_color = $4,
-               is_open = $5,
-               opening_hours_text = $6,
-               delivery_fee_cents = $7,
-               min_order_cents = $8,
-               pix_config = $9::jsonb,
-               updated_at = NOW()
-           WHERE LOWER(slug) = LOWER($10);`,
+      try {
+        await pgPool.query(
+          `INSERT INTO tenants (id, name, slug, phone, address, primary_color, is_open, opening_hours_text, delivery_fee_cents, min_order_cents, delivery_zones, evolution_instance_id, evolution_status, pix_config, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb, NOW())
+           ON CONFLICT (slug) DO UPDATE SET
+             name = EXCLUDED.name,
+             phone = EXCLUDED.phone,
+             address = EXCLUDED.address,
+             primary_color = EXCLUDED.primary_color,
+             is_open = EXCLUDED.is_open,
+             opening_hours_text = EXCLUDED.opening_hours_text,
+             delivery_fee_cents = EXCLUDED.delivery_fee_cents,
+             min_order_cents = EXCLUDED.min_order_cents,
+             delivery_zones = EXCLUDED.delivery_zones,
+             pix_config = EXCLUDED.pix_config,
+             updated_at = NOW();`,
           [
+            syncedTenant.id,
             syncedTenant.name,
-            syncedTenant.phone,
+            syncedTenant.slug,
+            syncedTenant.phone || '',
             syncedTenant.address || '',
             syncedTenant.primaryColor || '#2563EB',
             syncedTenant.isOpen ?? true,
             syncedTenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45',
             syncedTenant.deliveryFeeCents || 0,
             syncedTenant.minOrderCents || 0,
+            JSON.stringify(syncedTenant.deliveryZones || []),
+            syncedTenant.evolutionInstanceId || `instancia_${syncedTenant.slug}`,
+            syncedTenant.evolutionStatus || 'disconnected',
             JSON.stringify(
               syncedTenant.pixConfig || {
                 provider: 'direct_bank',
@@ -899,54 +1125,84 @@ async function startServer() {
                 autoApproveWebhook: true,
               }
             ),
-            syncedTenant.slug,
           ]
-        )
-        .catch(() => {});
-    }
+        );
 
-    if (Array.isArray(categories)) {
-      // Remove old categories for this tenant and replace with latest list
-      for (let i = memoryCategories.length - 1; i >= 0; i--) {
-        if (memoryCategories[i].tenantSlug.toLowerCase() === slug.toLowerCase()) {
-          memoryCategories.splice(i, 1);
+        if (Array.isArray(categories)) {
+          const catIds = syncedCategories.map((c) => c.id);
+          if (catIds.length > 0) {
+            await pgPool.query(
+              'DELETE FROM categories WHERE LOWER(tenant_slug) = LOWER($1) AND NOT (id = ANY($2::text[]));',
+              [syncedTenant.slug, catIds]
+            );
+          }
+          for (const cat of syncedCategories) {
+            await pgPool.query(
+              `INSERT INTO categories (id, tenant_id, tenant_slug, name, display_order)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (id) DO UPDATE SET
+                 tenant_id = EXCLUDED.tenant_id,
+                 tenant_slug = EXCLUDED.tenant_slug,
+                 name = EXCLUDED.name,
+                 display_order = EXCLUDED.display_order;`,
+              [cat.id, syncedTenant.id, syncedTenant.slug, cat.name, cat.order]
+            );
+          }
         }
-      }
-      categories.forEach((cat: any, idx: number) => {
-        if (!cat || !cat.id) return;
-        memoryCategories.push({
-          id: String(cat.id),
-          tenantSlug: tenant?.slug || slug,
-          name: String(cat.name || 'Categoria').slice(0, 80),
-          order: Number(cat.order) || idx + 1,
-        });
-      });
-    }
 
-    if (Array.isArray(products)) {
-      for (let i = memoryProducts.length - 1; i >= 0; i--) {
-        if (memoryProducts[i].tenantSlug.toLowerCase() === slug.toLowerCase()) {
-          memoryProducts.splice(i, 1);
+        if (Array.isArray(products)) {
+          const prodIds = syncedProducts.map((p) => p.id);
+          if (prodIds.length > 0) {
+            await pgPool.query(
+              'DELETE FROM products WHERE LOWER(tenant_slug) = LOWER($1) AND NOT (id = ANY($2::text[]));',
+              [syncedTenant.slug, prodIds]
+            );
+          } else {
+            await pgPool.query('DELETE FROM products WHERE LOWER(tenant_slug) = LOWER($1);', [syncedTenant.slug]);
+          }
+          for (const prod of syncedProducts) {
+            await pgPool.query(
+              `INSERT INTO products (id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())
+               ON CONFLICT (id) DO UPDATE SET
+                 tenant_id = EXCLUDED.tenant_id,
+                 tenant_slug = EXCLUDED.tenant_slug,
+                 category_id = EXCLUDED.category_id,
+                 name = EXCLUDED.name,
+                 description = EXCLUDED.description,
+                 price_cents = EXCLUDED.price_cents,
+                 image_url = EXCLUDED.image_url,
+                 is_available = EXCLUDED.is_available,
+                 is_featured = EXCLUDED.is_featured,
+                 option_groups = EXCLUDED.option_groups,
+                 updated_at = NOW();`,
+              [
+                prod.id,
+                syncedTenant.id,
+                syncedTenant.slug,
+                prod.categoryId,
+                prod.name,
+                prod.description,
+                prod.priceCents,
+                prod.imageUrl || null,
+                prod.isAvailable,
+                prod.isFeatured,
+                JSON.stringify(prod.optionGroups || []),
+              ]
+            );
+          }
         }
+      } catch (err) {
+        console.warn('[PostgreSQL Catalog Sync] Erro ao sincronizar cardápio no PostgreSQL:', err);
       }
-      products.forEach((prod: any) => {
-        if (!prod || !prod.id) return;
-        memoryProducts.push({
-          id: String(prod.id),
-          tenantId: tenant?.id || `tenant_${slug}`,
-          tenantSlug: tenant?.slug || slug,
-          categoryId: String(prod.categoryId || 'cat_geral'),
-          name: String(prod.name || 'Produto').slice(0, 120),
-          description: prod.description ? String(prod.description) : '',
-          priceCents: Math.max(0, parseInt(prod.priceCents, 10) || 0),
-          imageUrl: prod.imageUrl || undefined,
-          isAvailable: prod.isAvailable !== false,
-          optionGroups: Array.isArray(prod.optionGroups) ? prod.optionGroups : [],
-        });
-      });
     }
 
-    res.json({ success: true, slug: tenant?.slug || slug });
+    res.json({
+      success: true,
+      slug: tenant?.slug || slug,
+      categoriesSynced: syncedCategories.length,
+      productsSynced: syncedProducts.length,
+    });
   });
 
   // Bulk Import / Sync Catalog (Categories & Products) from Spreadsheet per Tenant
@@ -1597,6 +1853,38 @@ async function startServer() {
       order.paymentMethod = 'Pix Direto Restaurante';
     }
 
+    if (pgPool) {
+      (async () => {
+        try {
+          await pgPool.query(
+            `INSERT INTO pix_transactions (txid, order_id, tenant_slug, amount_cents, pix_copia_e_cola, status, psp, customer_name, customer_phone, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (txid) DO NOTHING;`,
+            [
+              newCharge.txid,
+              newCharge.orderId,
+              newCharge.tenantSlug,
+              newCharge.amountCents,
+              newCharge.pixCopiaECola,
+              newCharge.status,
+              newCharge.psp,
+              newCharge.customerName,
+              newCharge.customerPhone,
+              newCharge.expiresAt,
+            ]
+          );
+          if (order) {
+            await pgPool.query(
+              `UPDATE orders SET pix_transaction = $1::jsonb, payment_method = $2, updated_at = NOW() WHERE id = $3;`,
+              [JSON.stringify(newCharge), order.paymentMethod, order.id]
+            );
+          }
+        } catch (err) {
+          console.warn('[PostgreSQL Pix Charge] Erro ao gravar cobrança Pix:', err);
+        }
+      })();
+    }
+
     res.status(201).json({
       success: true,
       message: 'Cobrança Pix Direta do Restaurante gerada com sucesso!',
@@ -1654,12 +1942,30 @@ async function startServer() {
     charge.paidAt = actualPaidTime;
     charge.endToEndId = actualEndToEndId;
 
+    if (pgPool) {
+      pgPool
+        .query(
+          `UPDATE pix_transactions SET status = 'PAID', paid_at = $1, end_to_end_id = $2 WHERE txid = $3;`,
+          [actualPaidTime, actualEndToEndId, charge.txid]
+        )
+        .catch(() => {});
+    }
+
     let tenant = memoryTenants[0];
     if (order) {
       tenant = memoryTenants.find((t) => t.slug === order.tenantSlug) || memoryTenants[0];
       order.paymentStatus = 'paid_online';
       order.status = 'confirmed';
       order.updatedAt = currentTime;
+
+      if (pgPool) {
+        pgPool
+          .query(
+            `UPDATE orders SET payment_status = 'paid_online', status = 'confirmed', updated_at = NOW() WHERE id = $1;`,
+            [order.id]
+          )
+          .catch(() => {});
+      }
 
       const totalFormatted = `R$ ${(order.totalCents / 100).toFixed(2).replace('.', ',')}`;
       const customerFirstName = (order.customerName || 'Cliente').split(' ')[0];
@@ -2221,9 +2527,63 @@ async function startServer() {
     });
   });
 
+  // Helper to hydrate a specific order from PostgreSQL by ID if not yet in memory
+  async function hydrateOrderFromDbById(orderId: string) {
+    if (!pgPool || !orderId) return null;
+    try {
+      const dbRes = await pgPool.query('SELECT * FROM orders WHERE id = $1 LIMIT 1;', [orderId]);
+      if (dbRes.rows.length > 0) {
+        const r = dbRes.rows[0];
+        const loadedOrd = {
+          id: r.id,
+          orderNumber: Number(r.order_number) || 1000,
+          tenantId: r.tenant_id,
+          tenantSlug: r.tenant_slug,
+          customerName: r.customer_name,
+          customerPhone: r.customer_phone,
+          type: r.order_type || 'delivery',
+          tableNumber: r.table_number || undefined,
+          deliveryAddress: r.delivery_address || undefined,
+          deliveryZoneName: r.delivery_zone_name || undefined,
+          estimatedMinutes: Number(r.estimated_minutes) || 35,
+          items: Array.isArray(r.items) ? r.items : [],
+          subtotalCents: Number(r.subtotal_cents) || 0,
+          deliveryFeeCents: Number(r.delivery_fee_cents) || 0,
+          totalCents: Number(r.total_cents) || 0,
+          status: r.status || 'received',
+          paymentStatus: r.payment_status || 'pending',
+          paymentMethod: r.payment_method || 'Pix',
+          whatsAppStatus: r.whatsapp_status || 'delivered',
+          idempotencyKey: r.idempotency_key || undefined,
+          pixTransaction: r.pix_transaction || undefined,
+          whatsAppLogs: Array.isArray(r.whatsapp_logs) ? r.whatsapp_logs : [],
+          createdAt: r.created_at
+            ? new Date(r.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+            : '19:00',
+          updatedAt: r.updated_at
+            ? new Date(r.updated_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+            : '19:00',
+        };
+        const existingIdx = memoryOrders.findIndex((o) => o.id === loadedOrd.id);
+        if (existingIdx >= 0) {
+          memoryOrders[existingIdx] = loadedOrd;
+        } else {
+          memoryOrders.unshift(loadedOrd);
+        }
+        return loadedOrd;
+      }
+    } catch {
+      // Ignore transient DB error
+    }
+    return null;
+  }
+
   // Get specific order details
-  app.get('/api/v1/orders/:id', (req: Request, res: Response) => {
-    const order = memoryOrders.find((o) => o.id === req.params.id);
+  app.get('/api/v1/orders/:id', async (req: Request, res: Response) => {
+    let order = memoryOrders.find((o) => o.id === req.params.id);
+    if (!order) {
+      order = (await hydrateOrderFromDbById(req.params.id)) || undefined;
+    }
     if (!order) {
       return res.status(404).json({ error: 'Pedido não encontrado.' });
     }
@@ -2232,8 +2592,11 @@ async function startServer() {
   });
 
   // Public Order Tracking Endpoint (Real-time customer view)
-  app.get('/api/v1/orders/:id/tracking', (req: Request, res: Response) => {
-    const order = memoryOrders.find((o) => o.id === req.params.id);
+  app.get('/api/v1/orders/:id/tracking', async (req: Request, res: Response) => {
+    let order = memoryOrders.find((o) => o.id === req.params.id);
+    if (!order) {
+      order = (await hydrateOrderFromDbById(req.params.id)) || undefined;
+    }
     if (!order) {
       return res.status(404).json({ error: 'Pedido não encontrado para rastreamento.' });
     }
@@ -3483,15 +3846,20 @@ async function startServer() {
   });
 
   // 2. GET /api/v1/n8n/agent-context/:slug & GET /api/v1/n8n/agent-context (HTTP Tool for the n8n Restaurant Atendimento AI Agent)
-  const handleGetN8nAgentContext = (req: Request, res: Response) => {
+  const handleGetN8nAgentContext = async (req: Request, res: Response) => {
     const slugOrInstance = String(req.params.slug || req.query.slug || req.query.loja || req.query.tenantSlug || '').trim();
     const queryInstance = String(req.query.instance || '').trim();
     const customerPhone = String(req.query.phone || req.query.customerPhone || '').trim();
+
+    if (slugOrInstance) {
+      await hydrateTenantCatalogFromDb(slugOrInstance.replace(/^instancia_/i, ''));
+    }
 
     const tenant = resolveTenantForAgent(slugOrInstance, queryInstance);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
     }
+    await hydrateTenantCatalogFromDb(tenant.slug);
 
     const baseAppUrl = (process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '');
     const ctx = buildRestaurantCatalogContext(tenant, baseAppUrl, customerPhone);
@@ -3536,12 +3904,16 @@ async function startServer() {
   app.get('/api/v1/n8n/agent-context', handleGetN8nAgentContext);
 
   // 2B. POST /api/v1/n8n/restaurant-auto-reply (Direct intelligent reply generator for n8n workflows)
-  app.post('/api/v1/n8n/restaurant-auto-reply', (req: Request, res: Response) => {
+  app.post('/api/v1/n8n/restaurant-auto-reply', async (req: Request, res: Response) => {
     const { tenantSlug, instance, customerName, customerPhone, messageText } = req.body || {};
+    if (tenantSlug || instance) {
+      await hydrateTenantCatalogFromDb(String(tenantSlug || instance).replace(/^instancia_/i, ''));
+    }
     const tenant = resolveTenantForAgent(tenantSlug, instance);
     if (!tenant) {
       return res.status(404).json({ error: 'Restaurante não encontrado.' });
     }
+    await hydrateTenantCatalogFromDb(tenant.slug);
     const baseAppUrl = (process.env.APP_URL || 'https://aladay.com.br').replace(/\/$/, '');
     const generated = generateRestaurantCustomerReply({
       tenant,
