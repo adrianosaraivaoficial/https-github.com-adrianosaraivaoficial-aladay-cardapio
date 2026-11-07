@@ -5958,6 +5958,8 @@ async function startServer() {
     billingType: 'PIX' | 'CREDIT_CARD' | 'BOLETO';
     invoiceUrl: string;
     bankSlipUrl?: string;
+    boletoBarcode?: string;
+    boletoUrl?: string;
     pixCopiaECola?: string;
     pixQrCodeBase64?: string;
     description: string;
@@ -6476,10 +6478,54 @@ async function startServer() {
           }
         }
       }
+
+      // 4. Handle BOLETO with real Asaas boleto generation
+      else if (safeBillingType === 'BOLETO') {
+        const subRes = await callAsaasApi('/subscriptions', {
+          method: 'POST',
+          body: {
+            customer: asaasCustomerId,
+            billingType: 'BOLETO',
+            value: planMonthlyPrice,
+            nextDueDate,
+            cycle: 'MONTHLY',
+            description: resolvedDescription,
+          },
+        });
+
+        if (!subRes.ok || !subRes.data?.id) {
+          const asaasErrors =
+            subRes.data?.errors?.map((e: any) => e.description).join('; ') ||
+            subRes.error ||
+            'Erro ao gerar assinatura por Boleto no Asaas.';
+          return res.status(400).json({
+            error: `Falha ao criar assinatura por Boleto no Asaas: ${asaasErrors}`,
+          });
+        }
+
+        realAsaasSubscriptionId = subRes.data.id;
+
+        const paymentsRes = await callAsaasApi(`/subscriptions/${realAsaasSubscriptionId}/payments`);
+        const firstPayment = paymentsRes.data?.data?.[0];
+        if (firstPayment?.id) {
+          realInvoiceId = firstPayment.id;
+          if (firstPayment.bankSlipUrl || firstPayment.invoiceUrl) {
+            realInvoiceUrl = firstPayment.bankSlipUrl || firstPayment.invoiceUrl;
+          }
+        }
+      }
     } else {
       console.log(`[Asaas] Aviso: Gateway sem chave de API configurada (Modo de Demonstração / Testes).`);
       if (safeBillingType === 'CREDIT_CARD' && hasCreditCardDetails) {
         isRealGatewayCharged = true;
+      }
+    }
+
+    let realBoletoBarcode = '03399.70428 53000.000000 00000.000000 1 98880000012990';
+    if (safeBillingType === 'BOLETO' && asaasGatewayConfig.apiKey && realInvoiceId.startsWith('pay_')) {
+      const idFieldRes = await callAsaasApi(`/payments/${realInvoiceId}/identificationField`);
+      if (idFieldRes.ok && idFieldRes.data?.identificationField) {
+        realBoletoBarcode = idFieldRes.data.identificationField;
       }
     }
 
@@ -6549,6 +6595,8 @@ async function startServer() {
         description: resolvedDescription,
         pixCopiaECola: realPixPayload,
         pixQrCodeBase64: realPixBase64,
+        boletoBarcode: safeBillingType === 'BOLETO' ? realBoletoBarcode : undefined,
+        boletoUrl: safeBillingType === 'BOLETO' ? realInvoiceUrl : undefined,
       };
       subscription.invoices.unshift(pendingInvoice);
     } else {
@@ -6560,6 +6608,10 @@ async function startServer() {
       pendingInvoice.pixCopiaECola = realPixPayload;
       pendingInvoice.pixQrCodeBase64 = realPixBase64;
       pendingInvoice.invoiceUrl = realInvoiceUrl;
+      if (safeBillingType === 'BOLETO') {
+        pendingInvoice.boletoBarcode = realBoletoBarcode;
+        pendingInvoice.boletoUrl = realInvoiceUrl;
+      }
       if (isRealGatewayCharged) {
         pendingInvoice.status = 'RECEIVED';
       }

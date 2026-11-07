@@ -1212,14 +1212,6 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
                 ))}
               </div>
 
-              {/* Zero-Trust Notice */}
-              <div className="bg-neutral-50 border border-neutral-200 rounded p-2.5 text-[11px] text-neutral-600 flex items-start gap-2">
-                <Sparkles className="w-3.5 h-3.5 text-neutral-600 mt-0.5 shrink-0" />
-                <span>
-                  <strong>Validação Zero-Trust:</strong> Todos os preços e a taxa de entrega são recalculados diretamente no servidor antes da gravação final.
-                </span>
-              </div>
-
               {/* Customer Inputs */}
               <div className="space-y-3 pt-1">
                 <div>

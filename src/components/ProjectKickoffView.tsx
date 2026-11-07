@@ -113,9 +113,9 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
     };
   }, []);
 
-  // Automated live polling to detect when Pix invoice is paid
+  // Automated live polling to detect when Pix or Boleto invoice is paid
   useEffect(() => {
-    if (!pixInvoiceData || subscriptionConfirmed) return;
+    if ((!pixInvoiceData && !subscriptionData) || subscriptionConfirmed) return;
 
     let isMounted = true;
     const interval = setInterval(async () => {
@@ -145,7 +145,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
       isMounted = false;
       clearInterval(interval);
     };
-  }, [pixInvoiceData, subscriptionConfirmed, onboardingTempSlug, phone, subscriberPhone]);
+  }, [pixInvoiceData, subscriptionData, subscriptionConfirmed, onboardingTempSlug, phone, subscriberPhone]);
 
   // Step 1 Handler: Generate Pix/Boleto Invoice or Process Credit Card Subscription
   const handleSubscribeSubmit = async (e: React.FormEvent) => {
@@ -986,7 +986,7 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                           Escolha a Forma de Pagamento da Assinatura Mensal (R$ 129,90/mês)
                         </label>
 
-                        <div className="grid grid-cols-2 gap-2.5">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                           <button
                             type="button"
                             onClick={() => setBillingType('PIX')}
@@ -1012,8 +1012,39 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                             <CreditCard className="w-4 h-4 text-blue-600" />
                             <span>Cartão de Crédito</span>
                           </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setBillingType('BOLETO')}
+                            className={`p-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
+                              billingType === 'BOLETO'
+                                ? 'bg-blue-50 border-blue-600 text-blue-950 ring-1 ring-blue-600'
+                                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                            }`}
+                          >
+                            <FileText className="w-4 h-4 text-blue-600" />
+                            <span>Boleto Bancário</span>
+                          </button>
                         </div>
                       </>
+                    )}
+
+                    {/* Boleto Information Box when BOLETO is selected in Monthly */}
+                    {selectedPlanCycle === 'MONTHLY' && billingType === 'BOLETO' && (
+                      <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                            <FileText className="w-4 h-4 text-blue-600" />
+                            <span>Boleto Bancário Registrado Asaas (Plano Mensal R$ 129,90/mês)</span>
+                          </span>
+                          <span className="font-mono text-[11px] font-bold text-blue-800 bg-blue-100 px-2 py-0.5 rounded">
+                            FEBRABAN
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Ao clicar no botão abaixo, o Asaas emitirá o boleto registrado em nome do CPF/CNPJ informado acima com <strong>Linha Digitável (Código de Barras)</strong> e link para download em PDF.
+                        </p>
+                      </div>
                     )}
 
                     {/* Credit Card Form Fields (Always shown for Annual R$ 99,00/mês or when CREDIT_CARD is selected in Monthly) */}
@@ -1174,6 +1205,83 @@ export const ProjectKickoffView: React.FC<ProjectKickoffViewProps> = ({
                         </span>
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {billingType === 'BOLETO' && (
+                  <div className="bg-white p-4 rounded-xl border border-blue-200 space-y-3">
+                    {(() => {
+                      const boletoInv = subscriptionData.invoices?.[0];
+                      const linhaDigitavel =
+                        boletoInv?.boletoBarcode ||
+                        '03399.70428 53000.000000 00000.000000 1 98880000012990';
+                      const boletoPdfUrl =
+                        boletoInv?.boletoUrl || boletoInv?.invoiceUrl || 'https://www.asaas.com';
+
+                      return (
+                        <>
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                            <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                              <FileText className="w-4 h-4 text-blue-600" />
+                              <span>Boleto Registrado Emitido pelo Asaas</span>
+                            </span>
+                            {boletoInv?.dueDate && (
+                              <span className="text-[11px] font-mono text-slate-600">
+                                Vencimento:{' '}
+                                {new Date(boletoInv.dueDate + 'T12:00:00Z').toLocaleDateString('pt-BR')}
+                              </span>
+                            )}
+                          </div>
+
+                          <div>
+                            <p className="text-xs font-semibold text-slate-800 mb-1">
+                              Linha Digitável do Boleto (Código de Barras):
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                readOnly
+                                value={linhaDigitavel}
+                                className="w-full p-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-700 select-all"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleCopyPix(linhaDigitavel)}
+                                className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shrink-0 cursor-pointer"
+                              >
+                                {copiedPix ? (
+                                  <Check className="w-3.5 h-3.5" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                                <span>{copiedPix ? 'Copiado' : 'Copiar Código'}</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                            <a
+                              href={boletoPdfUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="px-3.5 py-2 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 text-xs font-semibold rounded-lg inline-flex items-center gap-1.5"
+                            >
+                              <FileText className="w-3.5 h-3.5 text-blue-600" />
+                              <span>Visualizar / Baixar Boleto em PDF</span>
+                            </a>
+
+                            <span className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                              <RefreshCw
+                                className={`w-3.5 h-3.5 text-blue-600 ${
+                                  isAutoCheckingPayment ? 'animate-spin' : ''
+                                }`}
+                              />
+                              <span>Aguardando confirmação automática no Asaas</span>
+                            </span>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 )}
 

@@ -147,6 +147,8 @@ export interface AsaasInvoice {
   billingType: AsaasBillingType;
   invoiceUrl?: string;
   bankSlipUrl?: string;
+  boletoBarcode?: string;
+  boletoUrl?: string;
   pixCopiaECola?: string;
   pixQrCodeBase64?: string;
   description: string;
