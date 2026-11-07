@@ -740,13 +740,16 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
         ? {
             parameters: {
               name: 'consultar_base_conhecimento_aladay',
+              descriptionType: 'manual',
+              toolDescription:
+                'Consulta a Base de Conhecimento Oficial v4.0 da Aladay Cardapios Digitais, incluindo planos (Anual R$ 99/mes no cartao e Mensal R$ 129,90/mes com 15 dias gratis), Modulo de Salao/Mesas/Garcom, Integracao Oficial iFood no KDS, Relatorios Analiticos e FAQ.',
               description:
-                'Consulta a Base de Conhecimento Oficial v4.0 da Aladay Cardápios Digitais, incluindo planos (Anual R$ 99/mês no cartão e Mensal R$ 129,90/mês com 15 dias grátis), Módulo de Salão/Mesas/Garçom, Integração Oficial iFood no KDS, Relatórios Analíticos Recharts, Configurador de Horário e FAQ.',
+                'Consulta a Base de Conhecimento Oficial v4.0 da Aladay Cardapios Digitais, incluindo planos (Anual R$ 99/mes no cartao e Mensal R$ 129,90/mes com 15 dias gratis), Modulo de Salao/Mesas/Garcom, Integracao Oficial iFood no KDS, Relatorios Analiticos e FAQ.',
               method: 'GET',
-              url: `${appOriginUrl}/api/v1/n8n/knowledge-base`,
+              url: `=${appOriginUrl}/api/v1/n8n/knowledge-base?topico={{ $fromAI("topico", "Assunto ou duvida comercial do lead sobre a Aladay", "string", "planos") }}`,
             },
             id: 'node-http-tool-kb',
-            name: 'Tool: Base de Conhecimento Aladay v4.0',
+            name: 'consultar_base_conhecimento_aladay',
             type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
             typeVersion: 1.1,
             position: [960, 560],
@@ -754,13 +757,16 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
         : {
             parameters: {
               name: 'consultar_cardapio_e_loja',
+              descriptionType: 'manual',
+              toolDescription:
+                'Consulta dinamicamente em tempo real os dados do restaurante que recebeu a mensagem (pela instancia da Evolution API), incluindo se esta aberto, horario na barra superior, produtos com precos, taxa de entrega e link direto do cardapio digital.',
               description:
-                'Consulta dinamicamente em tempo real os dados do restaurante que recebeu a mensagem (pela instância da Evolution API), incluindo se está aberto, horário na barra superior, produtos com preços, taxa de entrega e link direto do cardápio digital.',
+                'Consulta dinamicamente em tempo real os dados do restaurante que recebeu a mensagem (pela instancia da Evolution API), incluindo se esta aberto, horario na barra superior, produtos com precos, taxa de entrega e link direto do cardapio digital.',
               method: 'GET',
-              url: `=${appOriginUrl}/api/v1/n8n/agent-context?instance={{ $("Tratar Payload & Anti-Loop").item.json.instance }}&slug={{ $("Tratar Payload & Anti-Loop").item.json.tenantSlug }}&phone={{ $("Tratar Payload & Anti-Loop").item.json.customerPhone }}`,
+              url: `=${appOriginUrl}/api/v1/n8n/agent-context?instance={{ $("Tratar Payload & Anti-Loop").item.json.instance }}&slug={{ $("Tratar Payload & Anti-Loop").item.json.tenantSlug }}&phone={{ $("Tratar Payload & Anti-Loop").item.json.customerPhone }}&busca={{ $fromAI("busca", "Produto, categoria ou informacao do restaurante consultada pelo cliente", "string", "cardapio") }}`,
             },
             id: 'node-http-tool-catalog',
-            name: 'Tool: Consultar Cardápio ao Vivo (Multi-Tenant)',
+            name: 'consultar_cardapio_e_loja',
             type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
             typeVersion: 1.1,
             position: [960, 560],
@@ -771,12 +777,16 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
         ? {
             parameters: {
               name: 'consultar_status_pedido',
-              description: 'Consulta o status em tempo real dos pedidos recentes do cliente na cozinha daquele restaurante pelo número de WhatsApp.',
+              descriptionType: 'manual',
+              toolDescription:
+                'Consulta o status em tempo real dos pedidos recentes do cliente na cozinha daquele restaurante pelo numero de WhatsApp.',
+              description:
+                'Consulta o status em tempo real dos pedidos recentes do cliente na cozinha daquele restaurante pelo numero de WhatsApp.',
               method: 'GET',
-              url: `=${appOriginUrl}/api/v1/n8n/order-status?phone={{ $("Tratar Payload & Anti-Loop").item.json.customerPhone }}&tenantSlug={{ $("Carregar Cardápio e Horário ao Vivo").item.json.restaurant.slug }}`,
+              url: `=${appOriginUrl}/api/v1/n8n/order-status?phone={{ $("Tratar Payload & Anti-Loop").item.json.customerPhone }}&tenantSlug={{ $("Carregar Cardápio e Horário ao Vivo").item.json.restaurant.slug }}&consulta={{ $fromAI("consulta", "Numero do pedido ou duvida sobre status de entrega", "string", "status") }}`,
             },
             id: 'node-http-tool-orders',
-            name: 'Tool: Consultar Status do Pedido',
+            name: 'consultar_status_pedido',
             type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
             typeVersion: 1.1,
             position: [1140, 560],
