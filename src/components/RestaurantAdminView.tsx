@@ -1999,28 +1999,17 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
           <>
             <button
               onClick={() => setActiveTab('menu')}
-              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
-                activeTab === 'menu'
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'menu' || activeTab === 'categories'
                   ? 'border-blue-600 text-blue-600 font-semibold'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
               <Utensils className="w-4 h-4 shrink-0" />
-              <span>Cardápio &amp; Produtos</span>
+              <span>Cardápio, Produtos &amp; Categorias</span>
               <span className="bg-blue-50 text-blue-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">
                 {products.length}
               </span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('categories')}
-              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
-                activeTab === 'categories'
-                  ? 'border-blue-600 text-blue-600 font-semibold'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <span>Categorias &amp; Grupos</span>
             </button>
 
             <button
@@ -2142,9 +2131,9 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       {/* Main Content Body */}
       <div className="p-6 flex-1 overflow-y-auto">
         {/* ============================================================== */}
-        {/* TAB 1: MENU & PRODUCTS CRUD                                    */}
+        {/* TAB 1: UNIFIED MENU, PRODUCTS & CATEGORIES CRUD                */}
         {/* ============================================================== */}
-        {activeTab === 'menu' && (
+        {(activeTab === 'menu' || activeTab === 'categories') && (
           <div className="space-y-5">
             {/* Split Screen Container (if toggled) */}
             <div className={`grid gap-6 ${showLivePreviewSplit ? 'grid-cols-1 xl:grid-cols-12' : 'grid-cols-1'}`}>
@@ -2354,7 +2343,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                               type="button"
                               disabled={catIndex === 0}
                               onClick={() => handleMoveCategoryOrder(cat.id, 'up')}
-                              className="p-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                              className="p-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
                               title="Subir posição desta categoria"
                             >
                               <ChevronUp className="w-3.5 h-3.5" />
@@ -2363,7 +2352,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                               type="button"
                               disabled={catIndex === sortedCategories.length - 1}
                               onClick={() => handleMoveCategoryOrder(cat.id, 'down')}
-                              className="p-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                              className="p-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
                               title="Descer posição desta categoria"
                             >
                               <ChevronDown className="w-3.5 h-3.5" />
@@ -2374,15 +2363,25 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                                 setEditingCategoryId(cat.id);
                                 setEditingCategoryName(cat.name);
                               }}
-                              className="p-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors"
+                              className="p-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors cursor-pointer"
                               title="Renomear categoria"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
+                            {sortedCategories.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteCategoryItem(cat)}
+                                className="p-1.5 rounded bg-neutral-800 hover:bg-rose-600 text-neutral-300 hover:text-white transition-colors cursor-pointer"
+                                title="Remover categoria"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => handleOpenAddProduct(cat.id)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition-colors ml-1"
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition-colors ml-1 cursor-pointer"
                             >
                               <Plus className="w-3 h-3" />
                               <span>Adicionar Item</span>
@@ -2509,6 +2508,150 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                     );
                   })}
                 </div>
+
+                {/* Unified Categories Overview & Order Card (Integrated into the same tab) */}
+                <div className="bg-white border border-neutral-200 rounded-xl p-5 space-y-4 shadow-2xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-neutral-200">
+                    <div>
+                      <h3 className="text-sm font-bold text-neutral-900">Categorias do Cardápio</h3>
+                      <p className="text-xs text-neutral-500">
+                        Organize a ordem de exibição das categorias no cardápio digital ou crie novas categorias.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsImportMenuModalOpen(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-800 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-neutral-600" />
+                        <span>Importar Cardápio</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSpreadsheetModalTab('export')}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Exportar (.CSV)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsCategoryModalOpen(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Nova Categoria</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    {sortedCategories.map((cat, idx) => {
+                      const catProducts = products.filter((p) => p.categoryId === cat.id);
+                      return (
+                        <div
+                          key={cat.id}
+                          className="p-3.5 border border-neutral-200 rounded-xl flex flex-col gap-2 text-xs hover:border-neutral-300 transition-colors bg-neutral-50/40"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="w-6 h-6 rounded-lg bg-neutral-900 text-white font-mono text-[11px] font-bold flex items-center justify-center shrink-0">
+                                {idx + 1}º
+                              </span>
+                              {editingCategoryId === cat.id ? (
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="text"
+                                    value={editingCategoryName}
+                                    onChange={(e) => setEditingCategoryName(e.target.value)}
+                                    className="px-2 py-1 text-xs border border-neutral-300 rounded bg-white text-neutral-900 font-bold"
+                                    autoFocus
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveCategoryRename(cat.id)}
+                                    className="px-2 py-1 bg-emerald-600 text-white rounded text-[11px] font-bold cursor-pointer"
+                                  >
+                                    Salvar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingCategoryId(null)}
+                                    className="px-2 py-1 bg-neutral-200 text-neutral-700 rounded text-[11px] cursor-pointer"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="font-bold text-neutral-900 break-words">{cat.name}</span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0 ml-auto">
+                              <span className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-mono font-semibold mr-1">
+                                {catProducts.length} {catProducts.length === 1 ? 'item' : 'itens'}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={idx === 0}
+                                onClick={() => handleMoveCategoryOrder(cat.id, 'up')}
+                                className="p-1 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/70 rounded disabled:opacity-30 cursor-pointer"
+                                title="Subir posição"
+                              >
+                                <ChevronUp className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={idx === sortedCategories.length - 1}
+                                onClick={() => handleMoveCategoryOrder(cat.id, 'down')}
+                                className="p-1 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/70 rounded disabled:opacity-30 cursor-pointer"
+                                title="Descer posição"
+                              >
+                                <ChevronDown className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingCategoryId(cat.id);
+                                  setEditingCategoryName(cat.name);
+                                }}
+                                className="p-1 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/70 rounded cursor-pointer"
+                                title="Renomear categoria"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              {sortedCategories.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteCategoryItem(cat)}
+                                  className="p-1 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded cursor-pointer"
+                                  title="Remover categoria"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {catProducts.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-1 border-t border-neutral-200/70">
+                              {catProducts.map((p) => (
+                                <span
+                                  key={p.id}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-neutral-200 text-[10px] text-neutral-700"
+                                >
+                                  <span className="font-medium">{p.name}</span>
+                                  <span className="font-mono text-neutral-400">{formatBRL(p.priceCents)}</span>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
 
               {/* Right Column: Split Live Phone Preview (when enabled) */}
@@ -2622,177 +2765,6 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                 </div>
               </div>
             )}
-          </div>
-        )}
-
-        {/* ============================================================== */}
-        {/* TAB 2: CATEGORIES & OPTION GROUPS                              */}
-        {/* ============================================================== */}
-        {activeTab === 'categories' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-6 bg-white border border-neutral-200 rounded-lg p-5 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-neutral-200">
-                <div>
-                  <h3 className="text-sm font-bold text-neutral-900">Categorias do Cardápio</h3>
-                  <p className="text-xs text-neutral-500">Organize como os itens aparecem no cardápio web ou exporte/importe por planilha.</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsImportMenuModalOpen(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-800 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 rounded-lg transition-colors"
-                  >
-                    <Upload className="w-3.5 h-3.5 text-neutral-600" />
-                    <span>Importar Cardápio</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSpreadsheetModalTab('export')}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors"
-                  >
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
-                    <span>Exportar (.CSV)</span>
-                  </button>
-                  <button
-                    onClick={() => setIsCategoryModalOpen(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Nova Categoria</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-2.5">
-                {sortedCategories.map((cat, idx) => {
-                  const catProducts = products.filter((p) => p.categoryId === cat.id);
-                  return (
-                    <div
-                      key={cat.id}
-                      className="p-3.5 border border-neutral-200 rounded-xl flex flex-col gap-2 text-xs hover:border-neutral-300 transition-colors bg-neutral-50/40"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <span className="w-6 h-6 rounded-lg bg-neutral-900 text-white font-mono text-[11px] font-bold flex items-center justify-center shrink-0">
-                            {idx + 1}º
-                          </span>
-                          {editingCategoryId === cat.id ? (
-                            <div className="flex items-center gap-1.5">
-                              <input
-                                type="text"
-                                value={editingCategoryName}
-                                onChange={(e) => setEditingCategoryName(e.target.value)}
-                                className="px-2 py-1 text-xs border border-neutral-300 rounded bg-white text-neutral-900 font-bold"
-                                autoFocus
-                              />
-                              <button
-                                type="button"
-                                onClick={() => handleSaveCategoryRename(cat.id)}
-                                className="px-2 py-1 bg-emerald-600 text-white rounded text-[11px] font-bold"
-                              >
-                                Salvar
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setEditingCategoryId(null)}
-                                className="px-2 py-1 bg-neutral-200 text-neutral-700 rounded text-[11px]"
-                              >
-                                Cancelar
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="font-bold text-neutral-900 truncate">{cat.name}</span>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-1 shrink-0">
-                          <span className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-mono font-semibold mr-1">
-                            {catProducts.length} {catProducts.length === 1 ? 'item' : 'itens'}
-                          </span>
-                          <button
-                            type="button"
-                            disabled={idx === 0}
-                            onClick={() => handleMoveCategoryOrder(cat.id, 'up')}
-                            className="p-1 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/70 rounded disabled:opacity-30"
-                            title="Subir posição"
-                          >
-                            <ChevronUp className="w-4 h-4" />
-                          </button>
-                          <button
-                            type="button"
-                            disabled={idx === sortedCategories.length - 1}
-                            onClick={() => handleMoveCategoryOrder(cat.id, 'down')}
-                            className="p-1 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/70 rounded disabled:opacity-30"
-                            title="Descer posição"
-                          >
-                            <ChevronDown className="w-4 h-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingCategoryId(cat.id);
-                              setEditingCategoryName(cat.name);
-                            }}
-                            className="p-1 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/70 rounded"
-                            title="Renomear categoria"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          {sortedCategories.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteCategoryItem(cat)}
-                              className="p-1 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded"
-                              title="Remover categoria"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {catProducts.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 pt-1 border-t border-neutral-200/70">
-                          {catProducts.map((p) => (
-                            <span
-                              key={p.id}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-neutral-200 text-[10px] text-neutral-700"
-                            >
-                              <span className="font-medium">{p.name}</span>
-                              <span className="font-mono text-neutral-400">{formatBRL(p.priceCents)}</span>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="lg:col-span-6 bg-white border border-neutral-200 rounded-lg p-5 space-y-4">
-              <div className="pb-3 border-b border-neutral-200">
-                <h3 className="text-sm font-bold text-neutral-900">Como Atualizar Adicionais &amp; Variações</h3>
-                <p className="text-xs text-neutral-500">
-                  Os adicionais são associados aos produtos (ex: &quot;Ponto da Carne&quot;, &quot;Molho Extra&quot;, &quot;Borda Recheada&quot;).
-                </p>
-              </div>
-
-              <div className="p-4 bg-neutral-50 rounded-lg text-xs space-y-2 text-neutral-700 leading-relaxed border border-neutral-200">
-                <p className="font-semibold text-neutral-900">Regras de negócio suportadas:</p>
-                <p>&bull; <strong>Seleção Obrigatória (Ex: Ponto da Carne):</strong> Mínimo 1, Máximo 1.</p>
-                <p>&bull; <strong>Adicionais Pagos Opcionais (Ex: Fatias de Bacon):</strong> Mínimo 0, Máximo 3 com valor unitário adicional em centavos.</p>
-                <p>&bull; <strong>Recálculo no Servidor:</strong> O carrinho valida rigorosamente cada adicional no backend para evitar adulteração de preço.</p>
-              </div>
-
-              <button
-                onClick={() => handleOpenAddProduct()}
-                className="w-full py-2.5 px-3 text-xs font-semibold text-neutral-800 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors flex items-center justify-center gap-2"
-              >
-                <span>Criar Prato com Grupos de Adicionais</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
           </div>
         )}
 
