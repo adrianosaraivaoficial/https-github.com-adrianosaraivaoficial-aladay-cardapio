@@ -86,7 +86,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   );
   const [evolutionApiKey, setEvolutionApiKey] = useState('');
   const [n8nWebhookUrl, setN8nWebhookUrl] = useState(
-    tenant.n8nWebhookUrl || ''
+    () => `https://agencia-n8n.2eoc7n.easypanel.host/webhook/cardapio-${tenant.slug}`
   );
   const [isAutoReplyActive, setIsAutoReplyActive] = useState(tenant.botAutoReplyEnabled ?? true);
 
@@ -415,7 +415,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const [n8nLlmProvider, setN8nLlmProvider] = useState<'openai' | 'gemini'>('openai');
   const [n8nLlmModel, setN8nLlmModel] = useState<string>('gpt-4o-mini');
   const [n8nMemoryWindow, setN8nMemoryWindow] = useState<number>(12);
-  const [n8nWebhookPath, setN8nWebhookPath] = useState<string>('saas');
+  const [n8nWebhookPath, setN8nWebhookPath] = useState<string>(`cardapio-${tenant.slug}`);
   const [isBindingWebhook, setIsBindingWebhook] = useState(false);
   const [webhookBindFeedback, setWebhookBindFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -536,24 +536,49 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
   const [isDelayCountingDown, setIsDelayCountingDown] = useState<boolean>(false);
   const [delayCountdownSeconds, setDelayCountdownSeconds] = useState<number>(5);
 
-  // Sync restaurant prompt automatically when switching the active restaurant
+  const syncWebhookPathAndUrl = useCallback(
+    (rawPath: string) => {
+      const clean = rawPath.replace(/^\/+|\/+$/g, '').trim() || `cardapio-${tenant.slug}`;
+      setN8nWebhookPath(clean);
+      setN8nWebhookUrl((prev) => {
+        const base = (prev || 'https://agencia-n8n.2eoc7n.easypanel.host/webhook/saas')
+          .trim()
+          .replace(/\/webhook(-test)?\/.*$/, '')
+          .replace(/\/+$/, '');
+        return `${base || 'https://agencia-n8n.2eoc7n.easypanel.host'}/webhook/${clean}`;
+      });
+    },
+    [tenant.slug]
+  );
+
+  // Sync restaurant prompt and unique webhook path automatically when switching the active restaurant
   useEffect(() => {
     if (n8nAgentMode === 'restaurante_ia') {
       setAgentSystemPrompt(defaultRestaurantSystemPrompt);
+      syncWebhookPathAndUrl(`cardapio-${tenant.slug}`);
+    } else if (n8nAgentMode === 'deterministico') {
+      syncWebhookPathAndUrl(`auto-${tenant.slug}`);
     }
-  }, [tenant.slug, tenant.name, tenant.isOpen, tenant.openingHoursText, n8nAgentMode, defaultRestaurantSystemPrompt]);
+  }, [tenant.slug, tenant.name, tenant.isOpen, tenant.openingHoursText, n8nAgentMode, defaultRestaurantSystemPrompt, syncWebhookPathAndUrl]);
 
-  // Switch default system prompt when user switches agent mode
+  // Switch default system prompt and non-conflicting webhook path when user switches agent mode
   const handleSelectAgentMode = (mode: 'sdr_aladay' | 'restaurante_ia' | 'deterministico') => {
     setN8nAgentMode(mode);
     if (mode === 'sdr_aladay') {
       setAgentSystemPrompt(defaultSdrSystemPrompt);
       setAgentTestCustomerName('Carlos Mendes (Dono de Hamburgueria)');
       setAgentTestMessage('Olá! Gostaria de saber quanto custa o sistema da Aladay e se vocês cobram comissão por pedido.');
+      syncWebhookPathAndUrl('sdr-aladay');
+    } else if (mode === 'restaurante_ia') {
+      setAgentSystemPrompt(defaultRestaurantSystemPrompt);
+      setAgentTestCustomerName('Adriano Saraiva (Cliente do Restaurante)');
+      setAgentTestMessage('Boa noite! Vocês estão abertos? Quero ver o cardápio digital e os preços de hoje.');
+      syncWebhookPathAndUrl(`cardapio-${tenant.slug}`);
     } else {
       setAgentSystemPrompt(defaultRestaurantSystemPrompt);
       setAgentTestCustomerName('Adriano Saraiva (Cliente do Restaurante)');
       setAgentTestMessage('Boa noite! Vocês estão abertos? Quero ver o cardápio digital e os preços de hoje.');
+      syncWebhookPathAndUrl(`auto-${tenant.slug}`);
     }
   };
 
@@ -569,12 +594,13 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
   const n8nWorkflowJSON = React.useMemo(() => {
     const cleanEvoUrl = (evolutionUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host').replace(/\/$/, '');
     const cleanInstance = tenant.evolutionInstanceId || 'aladay';
-    const cleanPath = (n8nWebhookPath || 'saas').replace(/^\//, '');
+    const cleanPath = (n8nWebhookPath || `cardapio-${tenant.slug}`).replace(/^\//, '');
+    const safeIdSuffix = cleanPath.replace(/[^a-zA-Z0-9_-]/g, '-');
 
     if (n8nAgentMode === 'deterministico') {
       return JSON.stringify(
         {
-          name: `Aladay Multi-Tenant - Auto-Resposta Cardapio Digital (Todos os Restaurantes)`,
+          name: `Aladay Multi-Tenant - Auto-Resposta Cardapio Digital [${cleanPath}]`,
           nodes: [
             {
               parameters: {
@@ -589,7 +615,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
               type: 'n8n-nodes-base.webhook',
               typeVersion: 2,
               position: [120, 300],
-              webhookId: 'evolution-saas-webhook',
+              webhookId: `aladay-webhook-det-${safeIdSuffix}`,
             },
             {
               parameters: {
@@ -631,7 +657,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
               type: 'n8n-nodes-base.wait',
               typeVersion: 1.1,
               position: [880, 300],
-              webhookId: 'wait-delay-deterministic',
+              webhookId: `aladay-wait-det-${safeIdSuffix}`,
             },
             {
               parameters: {
@@ -794,7 +820,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
       type: 'n8n-nodes-base.wait',
       typeVersion: 1.1,
       position: [1040, 300],
-      webhookId: 'wait-evolution-delay',
+      webhookId: `aladay-wait-${n8nAgentMode}-${safeIdSuffix}`,
     };
 
     const nodesList: any[] = [
@@ -811,7 +837,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
         type: 'n8n-nodes-base.webhook',
         typeVersion: 2,
         position: [100, 300],
-        webhookId: 'evolution-saas-ai-agent-webhook',
+        webhookId: `aladay-webhook-${n8nAgentMode}-${safeIdSuffix}`,
       },
       {
         parameters: {
@@ -2495,22 +2521,89 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                     <input
                       type="text"
                       value={n8nWebhookUrl}
-                      onChange={(e) => setN8nWebhookUrl(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setN8nWebhookUrl(val);
+                        const match = val.match(/\/webhook(?:-test)?\/([^/?#]+)/);
+                        if (match && match[1]) {
+                          setN8nWebhookPath(match[1]);
+                        }
+                      }}
                       className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-[11px]"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Path do Nó Webhook no n8n
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                      <span>Path do Nó Webhook no n8n</span>
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
+                        Sem Conflito de URL
+                      </span>
                     </label>
                     <input
                       type="text"
                       value={n8nWebhookPath}
-                      onChange={(e) => setN8nWebhookPath(e.target.value)}
-                      placeholder="saas"
+                      onChange={(e) => syncWebhookPathAndUrl(e.target.value)}
+                      placeholder={`cardapio-${tenant.slug}`}
                       className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-[11px]"
                     />
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                      <span className="text-[10px] text-slate-500">Atalhos sem conflito:</span>
+                      <button
+                        type="button"
+                        onClick={() => syncWebhookPathAndUrl(`cardapio-${tenant.slug}`)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-colors cursor-pointer ${
+                          n8nWebhookPath === `cardapio-${tenant.slug}`
+                            ? 'bg-blue-600 text-white border-blue-600 font-bold'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                        }`}
+                      >
+                        cardapio-{tenant.slug}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => syncWebhookPathAndUrl('cardapio-digital')}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-colors cursor-pointer ${
+                          n8nWebhookPath === 'cardapio-digital'
+                            ? 'bg-blue-600 text-white border-blue-600 font-bold'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                        }`}
+                      >
+                        cardapio-digital
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => syncWebhookPathAndUrl('sdr-aladay')}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-colors cursor-pointer ${
+                          n8nWebhookPath === 'sdr-aladay'
+                            ? 'bg-blue-600 text-white border-blue-600 font-bold'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                        }`}
+                      >
+                        sdr-aladay
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => syncWebhookPathAndUrl('saas')}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-colors cursor-pointer ${
+                          n8nWebhookPath === 'saas'
+                            ? 'bg-blue-600 text-white border-blue-600 font-bold'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                        }`}
+                      >
+                        saas
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="sm:col-span-2 p-3 bg-amber-50/90 border border-amber-200 rounded-xl text-[11px] text-amber-950 space-y-1">
+                    <div className="font-bold flex items-center gap-1.5 text-amber-900">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Como evitar o erro &ldquo;uses a conflicting URL path&rdquo; no n8n:</span>
+                    </div>
+                    <p className="leading-relaxed text-amber-900/90">
+                      O n8n não permite 2 workflows ativos ao mesmo tempo com o mesmo caminho (ex: <code className="bg-amber-100 px-1 py-0.5 rounded font-mono">/webhook/saas</code>). Agora este workflow já usa automaticamente o caminho exclusivo <code className="bg-amber-100 px-1 py-0.5 rounded font-mono font-bold">/webhook/{n8nWebhookPath}</code> e um ID único! Basta clicar em <strong>Copiar JSON (Ctrl+V)</strong> ao lado, ativar no n8n e clicar em <strong>Vincular Webhook na Evolution API (1 Clique)</strong> abaixo.
+                    </p>
                   </div>
 
                   {n8nAgentMode !== 'deterministico' && (
