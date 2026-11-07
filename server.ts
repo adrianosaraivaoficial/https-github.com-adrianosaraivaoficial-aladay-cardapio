@@ -69,32 +69,103 @@ interface InMemTenant {
 
 const memoryTenants: InMemTenant[] = [
   {
-    id: 'tenant_aladay_01',
-    name: 'Meu Restaurante',
-    slug: 'aladay',
-    phone: '',
-    address: '',
-    primaryColor: '#EA580C',
+    id: 'tenant_1793902255731',
+    name: 'Churrasco da Oda',
+    slug: 'churrasco-da-oda',
+    phone: '91980711540',
+    address: 'Belém - PA',
+    primaryColor: '#2563EB',
     isOpen: true,
+    openingHoursText: 'Terça a Domingo: 18:00 às 23:30',
     deliveryFeeCents: 0,
     minOrderCents: 0,
     deliveryZones: [],
-    evolutionInstanceId: 'aladay',
+    evolutionInstanceId: 'instancia_churrasco-da-oda',
     evolutionStatus: 'disconnected',
+    subscriptionStatus: 'active',
+    pixKey: '91980711540',
+    pixBeneficiaryName: 'CHURRASCO DA ODA',
     pixConfig: {
       provider: 'direct_bank',
-      pixKey: '',
-      pixKeyType: 'cnpj',
-      merchantName: 'MEU RESTAURANTE',
-      merchantCity: 'SAO PAULO',
+      pixKey: '91980711540',
+      pixKeyType: 'phone',
+      beneficiaryName: 'CHURRASCO DA ODA',
+      merchantName: 'CHURRASCO DA ODA',
+      merchantCity: 'BELEM',
       bankName: '',
       autoApproveWebhook: true,
     },
   },
 ];
 
-const memoryCategories: any[] = [];
-const memoryProducts: any[] = [];
+const memoryCategories: any[] = [
+  { id: 'cat_principal', tenantId: 'tenant_1793902255731', tenantSlug: 'churrasco-da-oda', name: 'Pratos Principais', order: 1 },
+  { id: 'cat_bebidas', tenantId: 'tenant_1793902255731', tenantSlug: 'churrasco-da-oda', name: 'Bebidas', order: 2 },
+  { id: 'cat_churrascos', tenantId: 'tenant_1793902255731', tenantSlug: 'churrasco-da-oda', name: 'Churrascos Completos', order: 3 },
+];
+
+const memoryProducts: any[] = [
+  {
+    id: 'prod_oda_charque',
+    tenantId: 'tenant_1793902255731',
+    tenantSlug: 'churrasco-da-oda',
+    categoryId: 'cat_principal',
+    name: 'Espetinho de Charque',
+    description: 'Espetinho de charque assado na brasa.',
+    priceCents: 500,
+    isAvailable: true,
+    isFeatured: false,
+    optionGroups: [],
+  },
+  {
+    id: 'prod_oda_coracao',
+    tenantId: 'tenant_1793902255731',
+    tenantSlug: 'churrasco-da-oda',
+    categoryId: 'cat_principal',
+    name: 'Espetinho de coração bovino',
+    description: 'Espetinho de coração bovino macio e temperado na brasa.',
+    priceCents: 500,
+    isAvailable: true,
+    isFeatured: false,
+    optionGroups: [],
+  },
+  {
+    id: 'prod_oda_frango',
+    tenantId: 'tenant_1793902255731',
+    tenantSlug: 'churrasco-da-oda',
+    categoryId: 'cat_principal',
+    name: 'Espetinho de frango',
+    description: 'Espetinho de frango suculento assado na brasa.',
+    priceCents: 500,
+    isAvailable: true,
+    isFeatured: false,
+    optionGroups: [],
+  },
+  {
+    id: 'prod_oda_carne',
+    tenantId: 'tenant_1793902255731',
+    tenantSlug: 'churrasco-da-oda',
+    categoryId: 'cat_principal',
+    name: 'Espetinho de carne',
+    description: 'Espetinho de carne bovina selecionada na brasa.',
+    priceCents: 500,
+    isAvailable: true,
+    isFeatured: false,
+    optionGroups: [],
+  },
+  {
+    id: 'prod_oda_completo',
+    tenantId: 'tenant_1793902255731',
+    tenantSlug: 'churrasco-da-oda',
+    categoryId: 'cat_churrascos',
+    name: 'Churrasco completo',
+    description: 'Porção completa de churrasco na brasa com acompanhamentos.',
+    priceCents: 1200,
+    isAvailable: true,
+    isFeatured: true,
+    optionGroups: [],
+  },
+];
 const memoryOrders: any[] = [];
 const memoryOutboxEvents: any[] = [];
 const memoryPixTransactions: any[] = [];
@@ -349,7 +420,7 @@ async function initializePostgresConnection(connectionString: string, runMigrati
         const ddl = getInitSqlScript();
         await client.query(ddl);
 
-        // Always run idempotent column migrations so existing production databases never miss newer columns
+        // Always run idempotent column migrations AND purge placeholder 'aladay' (559131976334) restaurant from DB
         await client.query(`
           ALTER TABLE tenants ADD COLUMN IF NOT EXISTS opening_hours_text VARCHAR(200) DEFAULT 'Ter a Dom • 18h às 23h30';
           ALTER TABLE tenants ADD COLUMN IF NOT EXISTS delivery_zones JSONB NOT NULL DEFAULT '[]'::jsonb;
@@ -367,10 +438,18 @@ async function initializePostgresConnection(connectionString: string, runMigrati
           ALTER TABLE orders ADD COLUMN IF NOT EXISTS whatsapp_status VARCHAR(40) DEFAULT 'delivered';
           ALTER TABLE orders ADD COLUMN IF NOT EXISTS pix_transaction JSONB;
           ALTER TABLE orders ADD COLUMN IF NOT EXISTS whatsapp_logs JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+          DELETE FROM products WHERE LOWER(tenant_slug) = 'aladay';
+          DELETE FROM categories WHERE LOWER(tenant_slug) = 'aladay';
+          DELETE FROM orders WHERE LOWER(tenant_slug) = 'aladay';
+          DELETE FROM pix_transactions WHERE LOWER(tenant_slug) = 'aladay';
+          DELETE FROM asaas_subscriptions WHERE LOWER(tenant_slug) = 'aladay';
+          DELETE FROM subscriber_users WHERE LOWER(tenant_slug) = 'aladay' AND role != 'SUPER_ADMIN';
+          DELETE FROM tenants WHERE LOWER(slug) = 'aladay' OR id = 'tenant_aladay_01' OR phone LIKE '%9131976334%';
         `);
 
         // 1. Load saved tenants from PostgreSQL FIRST so real DB records take precedence over default seeds
-        const dbTenants = await client.query('SELECT * FROM tenants ORDER BY created_at ASC;');
+        const dbTenants = await client.query("SELECT * FROM tenants WHERE LOWER(slug) != 'aladay' ORDER BY created_at ASC;");
         dbTenants.rows.forEach((row) => {
           const existingIdx = memoryTenants.findIndex((m) => m.slug.toLowerCase() === String(row.slug || '').toLowerCase());
           const mappedTenant: InMemTenant = {
@@ -401,8 +480,9 @@ async function initializePostgresConnection(connectionString: string, runMigrati
           }
         });
 
-        // 2. Seed any missing default tenants without overwriting existing PostgreSQL rows
+        // 2. Seed any missing default tenants (excluding 'aladay') without overwriting existing PostgreSQL rows
         for (const t of memoryTenants) {
+          if (t.slug.toLowerCase() === 'aladay') continue;
           await client.query(
             `INSERT INTO tenants (id, name, slug, phone, address, primary_color, is_open, opening_hours_text, delivery_fee_cents, min_order_cents, delivery_zones, evolution_instance_id, evolution_status, pix_config)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb)
@@ -413,60 +493,96 @@ async function initializePostgresConnection(connectionString: string, runMigrati
               t.slug,
               t.phone || '',
               t.address || '',
-              t.primaryColor || '#EA580C',
+              t.primaryColor || '#2563EB',
               t.isOpen ?? true,
               t.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45',
               t.deliveryFeeCents || 0,
               t.minOrderCents || 0,
               JSON.stringify(t.deliveryZones || []),
-              t.evolutionInstanceId || 'aladay',
+              t.evolutionInstanceId || `instancia_${t.slug}`,
               t.evolutionStatus || 'disconnected',
               JSON.stringify(t.pixConfig || {}),
             ]
           );
         }
 
-        // 3. Load saved categories from PostgreSQL into memoryCategories
-        const dbCategories = await client.query('SELECT * FROM categories ORDER BY display_order ASC, created_at ASC;');
-        dbCategories.rows.forEach((row) => {
-          const existingIdx = memoryCategories.findIndex((c) => c.id === row.id);
-          const mappedCat = {
-            id: row.id,
-            tenantId: row.tenant_id,
-            tenantSlug: row.tenant_slug,
-            name: row.name,
-            order: Number(row.display_order) || 1,
-          };
-          if (existingIdx >= 0) {
-            memoryCategories[existingIdx] = mappedCat;
-          } else {
-            memoryCategories.push(mappedCat);
+        // 3. Load saved categories from PostgreSQL into memoryCategories (and seed default categories if DB is empty)
+        const dbCategories = await client.query("SELECT * FROM categories WHERE LOWER(tenant_slug) != 'aladay' ORDER BY display_order ASC, created_at ASC;");
+        if (dbCategories.rows.length > 0) {
+          dbCategories.rows.forEach((row) => {
+            const existingIdx = memoryCategories.findIndex((c) => c.id === row.id);
+            const mappedCat = {
+              id: row.id,
+              tenantId: row.tenant_id,
+              tenantSlug: row.tenant_slug,
+              name: row.name,
+              order: Number(row.display_order) || 1,
+            };
+            if (existingIdx >= 0) {
+              memoryCategories[existingIdx] = mappedCat;
+            } else {
+              memoryCategories.push(mappedCat);
+            }
+          });
+        } else {
+          for (const cat of memoryCategories) {
+            if (cat.tenantSlug?.toLowerCase() === 'aladay') continue;
+            await client.query(
+              `INSERT INTO categories (id, tenant_id, tenant_slug, name, display_order)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (id) DO NOTHING;`,
+              [cat.id, cat.tenantId || `tenant_${cat.tenantSlug}`, cat.tenantSlug, cat.name, cat.order || 1]
+            );
           }
-        });
+        }
 
-        // 4. Load saved products from PostgreSQL into memoryProducts
-        const dbProducts = await client.query('SELECT * FROM products ORDER BY created_at DESC;');
-        dbProducts.rows.forEach((row) => {
-          const existingIdx = memoryProducts.findIndex((p) => p.id === row.id);
-          const mappedProd = {
-            id: row.id,
-            tenantId: row.tenant_id,
-            tenantSlug: row.tenant_slug,
-            categoryId: row.category_id,
-            name: row.name,
-            description: row.description || '',
-            priceCents: Number(row.price_cents) || 0,
-            imageUrl: row.image_url || undefined,
-            isAvailable: row.is_available ?? true,
-            isFeatured: row.is_featured ?? false,
-            optionGroups: Array.isArray(row.option_groups) ? row.option_groups : [],
-          };
-          if (existingIdx >= 0) {
-            memoryProducts[existingIdx] = mappedProd;
-          } else {
-            memoryProducts.push(mappedProd);
+        // 4. Load saved products from PostgreSQL into memoryProducts (and seed default products if DB is empty)
+        const dbProducts = await client.query("SELECT * FROM products WHERE LOWER(tenant_slug) != 'aladay' ORDER BY created_at DESC;");
+        if (dbProducts.rows.length > 0) {
+          dbProducts.rows.forEach((row) => {
+            const existingIdx = memoryProducts.findIndex((p) => p.id === row.id);
+            const mappedProd = {
+              id: row.id,
+              tenantId: row.tenant_id,
+              tenantSlug: row.tenant_slug,
+              categoryId: row.category_id,
+              name: row.name,
+              description: row.description || '',
+              priceCents: Number(row.price_cents) || 0,
+              imageUrl: row.image_url || undefined,
+              isAvailable: row.is_available ?? true,
+              isFeatured: row.is_featured ?? false,
+              optionGroups: Array.isArray(row.option_groups) ? row.option_groups : [],
+            };
+            if (existingIdx >= 0) {
+              memoryProducts[existingIdx] = mappedProd;
+            } else {
+              memoryProducts.push(mappedProd);
+            }
+          });
+        } else {
+          for (const prod of memoryProducts) {
+            if (prod.tenantSlug?.toLowerCase() === 'aladay') continue;
+            await client.query(
+              `INSERT INTO products (id, tenant_id, tenant_slug, category_id, name, description, price_cents, image_url, is_available, is_featured, option_groups, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())
+               ON CONFLICT (id) DO NOTHING;`,
+              [
+                prod.id,
+                prod.tenantId || `tenant_${prod.tenantSlug}`,
+                prod.tenantSlug,
+                prod.categoryId,
+                prod.name,
+                prod.description || '',
+                prod.priceCents,
+                prod.imageUrl || null,
+                prod.isAvailable ?? true,
+                prod.isFeatured ?? false,
+                JSON.stringify(prod.optionGroups || []),
+              ]
+            );
           }
-        });
+        }
 
         // 5. Load saved orders from PostgreSQL into memoryOrders
         const dbOrders = await client.query('SELECT * FROM orders ORDER BY created_at DESC LIMIT 200;');
@@ -705,9 +821,56 @@ async function startServer() {
     });
   });
 
-  // Get list of tenants
-  app.get('/api/v1/tenants', (_req: Request, res: Response) => {
-    res.json({ data: memoryTenants });
+  // Get list of tenants (Always synced with PostgreSQL so Computer and Cell Phone show identical data)
+  app.get('/api/v1/tenants', async (_req: Request, res: Response) => {
+    if (pgPool) {
+      try {
+        const dbRes = await pgPool.query("SELECT * FROM tenants WHERE LOWER(slug) != 'aladay' ORDER BY created_at ASC;");
+        if (dbRes.rows.length > 0) {
+          for (let i = memoryTenants.length - 1; i >= 0; i--) {
+            if (memoryTenants[i].slug.toLowerCase() === 'aladay' || memoryTenants[i].phone?.includes('9131976334')) {
+              memoryTenants.splice(i, 1);
+            }
+          }
+          dbRes.rows.forEach((row: any) => {
+            if (String(row.slug || '').toLowerCase() === 'aladay') return;
+            const mappedTenant: InMemTenant = {
+              id: row.id,
+              name: row.name,
+              slug: row.slug,
+              phone: row.phone || '',
+              address: row.address || '',
+              primaryColor: row.primary_color || '#2563EB',
+              isOpen: row.is_open ?? true,
+              openingHoursText: row.opening_hours_text || 'Segunda a Domingo: 18:00 às 23:45',
+              deliveryFeeCents: Number(row.delivery_fee_cents) || 0,
+              minOrderCents: Number(row.min_order_cents) || 0,
+              deliveryZones: Array.isArray(row.delivery_zones) ? row.delivery_zones : [],
+              evolutionInstanceId: row.evolution_instance_id || `instancia_${row.slug}`,
+              evolutionStatus: (row.evolution_status as any) || 'disconnected',
+              subscriptionStatus: (row.subscription_status as any) || 'active',
+              trialEndsAt: row.trial_ends_at ? new Date(row.trial_ends_at).toISOString() : undefined,
+              statusNotificationTemplates: row.status_notification_templates || {},
+              pixKey: row.pix_config?.pixKey || undefined,
+              pixBeneficiaryName: row.pix_config?.beneficiaryName || row.pix_config?.merchantName || undefined,
+              pixConfig: row.pix_config || undefined,
+            };
+            const existingIdx = memoryTenants.findIndex((m) => m.slug.toLowerCase() === mappedTenant.slug.toLowerCase());
+            if (existingIdx >= 0) {
+              memoryTenants[existingIdx] = { ...memoryTenants[existingIdx], ...mappedTenant };
+            } else {
+              memoryTenants.push(mappedTenant);
+            }
+          });
+        }
+      } catch {
+        // Ignore transient DB error
+      }
+    }
+    const cleanTenants = memoryTenants.filter(
+      (t) => t.slug.toLowerCase() !== 'aladay' && !String(t.phone || '').includes('9131976334')
+    );
+    res.json({ data: cleanTenants });
   });
 
   // Create new tenant (Onboarding Step 1 & 2)
@@ -718,12 +881,20 @@ async function startServer() {
     }
 
     const cleanSlug = String(slug).toLowerCase().trim().replace(/[^a-z0-9-]/g, '-');
+    if (cleanSlug === 'aladay') {
+      return res.status(400).json({ error: 'O identificador "aladay" é reservado exclusivamente para a plataforma.' });
+    }
+
+    const rawPhoneDigits = String(phone).replace(/\D/g, '').replace(/^0+/, '');
+    if (rawPhoneDigits.includes('9131976334')) {
+      return res.status(400).json({ error: 'Este número de WhatsApp é exclusivo do suporte comercial da plataforma Aladay.' });
+    }
+
     const existing = memoryTenants.find((t) => t.slug === cleanSlug);
     if (existing) {
       return res.status(409).json({ error: `O slug "${cleanSlug}" já está em uso por outro restaurante.` });
     }
 
-    const rawPhoneDigits = String(phone).replace(/\D/g, '').replace(/^0+/, '');
     const normalizedPhone =
       rawPhoneDigits.length === 10 || rawPhoneDigits.length === 11
         ? `55${rawPhoneDigits}`
@@ -769,6 +940,50 @@ async function startServer() {
     }
 
     res.status(201).json({ message: 'Restaurante criado com sucesso!', data: newTenant });
+  });
+
+  // Delete a tenant and all its associated records from memory and PostgreSQL (Super Admin)
+  app.delete('/api/v1/tenants/:slug', requireSuperAdmin, async (req: Request, res: Response) => {
+    const slug = String(req.params.slug || '').trim().toLowerCase();
+    if (!slug) {
+      return res.status(400).json({ error: 'Slug do restaurante inválido.' });
+    }
+
+    for (let i = memoryTenants.length - 1; i >= 0; i--) {
+      if (memoryTenants[i].slug.toLowerCase() === slug) memoryTenants.splice(i, 1);
+    }
+    for (let i = memoryCategories.length - 1; i >= 0; i--) {
+      if (String(memoryCategories[i].tenantSlug || '').toLowerCase() === slug) memoryCategories.splice(i, 1);
+    }
+    for (let i = memoryProducts.length - 1; i >= 0; i--) {
+      if (String(memoryProducts[i].tenantSlug || '').toLowerCase() === slug) memoryProducts.splice(i, 1);
+    }
+    for (let i = memoryOrders.length - 1; i >= 0; i--) {
+      if (String(memoryOrders[i].tenantSlug || '').toLowerCase() === slug) memoryOrders.splice(i, 1);
+    }
+    for (let i = memoryPixTransactions.length - 1; i >= 0; i--) {
+      if (String(memoryPixTransactions[i].tenantSlug || '').toLowerCase() === slug) memoryPixTransactions.splice(i, 1);
+    }
+
+    if (pgPool) {
+      try {
+        await pgPool.query('DELETE FROM products WHERE LOWER(tenant_slug) = $1;', [slug]);
+        await pgPool.query('DELETE FROM categories WHERE LOWER(tenant_slug) = $1;', [slug]);
+        await pgPool.query('DELETE FROM orders WHERE LOWER(tenant_slug) = $1;', [slug]);
+        await pgPool.query('DELETE FROM pix_transactions WHERE LOWER(tenant_slug) = $1;', [slug]);
+        await pgPool.query('DELETE FROM asaas_subscriptions WHERE LOWER(tenant_slug) = $1;', [slug]);
+        await pgPool.query("DELETE FROM subscriber_users WHERE LOWER(tenant_slug) = $1 AND role != 'SUPER_ADMIN';", [slug]);
+        await pgPool.query('DELETE FROM tenants WHERE LOWER(slug) = $1;', [slug]);
+      } catch (err: any) {
+        console.warn('[PostgreSQL Delete Tenant] Erro ao excluir restaurante:', err?.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Restaurante "${slug}" e todos os seus dados foram excluídos do banco de dados com sucesso.`,
+      remainingTenants: memoryTenants,
+    });
   });
 
   // ============================================================================
@@ -980,15 +1195,20 @@ async function startServer() {
     if (!slug) {
       return res.status(400).json({ error: 'Slug inválido.' });
     }
-    const { tenant: incomingTenant, categories, products } = req.body || {};
+    if (slug.toLowerCase() === 'aladay') {
+      return res.json({ success: true, ignored: true, reason: 'reserved_platform_slug' });
+    }
+
+    const { tenant: incomingTenant, categories, products, allowEmptyOverwrite } = req.body || {};
 
     let tenant = memoryTenants.find((t) => t.slug.toLowerCase() === slug.toLowerCase());
     if (!tenant && incomingTenant) {
+      const cleanIncomingPhone = String(incomingTenant.phone || '').replace(/\D/g, '');
       tenant = {
         id: incomingTenant.id || `tenant_${Date.now()}`,
         name: String(incomingTenant.name || slug),
         slug,
-        phone: String(incomingTenant.phone || '').replace(/\D/g, ''),
+        phone: cleanIncomingPhone.includes('9131976334') ? '' : cleanIncomingPhone,
         address: String(incomingTenant.address || ''),
         primaryColor: incomingTenant.primaryColor || '#2563EB',
         isOpen: incomingTenant.isOpen ?? true,
@@ -996,7 +1216,10 @@ async function startServer() {
         deliveryFeeCents: Number(incomingTenant.deliveryFeeCents) || 0,
         minOrderCents: Number(incomingTenant.minOrderCents) || 0,
         deliveryZones: Array.isArray(incomingTenant.deliveryZones) ? incomingTenant.deliveryZones : [],
-        evolutionInstanceId: incomingTenant.evolutionInstanceId || `instancia_${slug}`,
+        evolutionInstanceId:
+          incomingTenant.evolutionInstanceId && incomingTenant.evolutionInstanceId !== 'aladay'
+            ? incomingTenant.evolutionInstanceId
+            : `instancia_${slug}`,
         evolutionStatus: incomingTenant.evolutionStatus || 'disconnected',
         pixKey: incomingTenant.pixKey || incomingTenant.pixConfig?.pixKey || undefined,
         pixBeneficiaryName:
@@ -1009,7 +1232,12 @@ async function startServer() {
       memoryTenants.push(tenant);
     } else if (tenant && incomingTenant) {
       if (incomingTenant.name) tenant.name = String(incomingTenant.name).trim();
-      if (incomingTenant.phone !== undefined) tenant.phone = String(incomingTenant.phone).replace(/\D/g, '');
+      if (incomingTenant.phone !== undefined) {
+        const cleanIncomingPhone = String(incomingTenant.phone).replace(/\D/g, '');
+        if (!cleanIncomingPhone.includes('9131976334')) {
+          tenant.phone = cleanIncomingPhone;
+        }
+      }
       if (incomingTenant.address !== undefined) tenant.address = String(incomingTenant.address).trim();
       if (incomingTenant.primaryColor) tenant.primaryColor = incomingTenant.primaryColor;
       if (typeof incomingTenant.isOpen === 'boolean') tenant.isOpen = incomingTenant.isOpen;
@@ -1035,7 +1263,7 @@ async function startServer() {
     }
 
     const syncedCategories: any[] = [];
-    if (Array.isArray(categories)) {
+    if (Array.isArray(categories) && categories.length > 0) {
       for (let i = memoryCategories.length - 1; i >= 0; i--) {
         if (memoryCategories[i].tenantSlug.toLowerCase() === slug.toLowerCase()) {
           memoryCategories.splice(i, 1);
@@ -1056,7 +1284,8 @@ async function startServer() {
     }
 
     const syncedProducts: any[] = [];
-    if (Array.isArray(products)) {
+    const shouldSyncProducts = Array.isArray(products) && (products.length > 0 || allowEmptyOverwrite === true);
+    if (shouldSyncProducts) {
       for (let i = memoryProducts.length - 1; i >= 0; i--) {
         if (memoryProducts[i].tenantSlug.toLowerCase() === slug.toLowerCase()) {
           memoryProducts.splice(i, 1);
@@ -1128,14 +1357,12 @@ async function startServer() {
           ]
         );
 
-        if (Array.isArray(categories)) {
+        if (syncedCategories.length > 0) {
           const catIds = syncedCategories.map((c) => c.id);
-          if (catIds.length > 0) {
-            await pgPool.query(
-              'DELETE FROM categories WHERE LOWER(tenant_slug) = LOWER($1) AND NOT (id = ANY($2::text[]));',
-              [syncedTenant.slug, catIds]
-            );
-          }
+          await pgPool.query(
+            'DELETE FROM categories WHERE LOWER(tenant_slug) = LOWER($1) AND NOT (id = ANY($2::text[]));',
+            [syncedTenant.slug, catIds]
+          );
           for (const cat of syncedCategories) {
             await pgPool.query(
               `INSERT INTO categories (id, tenant_id, tenant_slug, name, display_order)
@@ -1150,14 +1377,14 @@ async function startServer() {
           }
         }
 
-        if (Array.isArray(products)) {
+        if (shouldSyncProducts) {
           const prodIds = syncedProducts.map((p) => p.id);
           if (prodIds.length > 0) {
             await pgPool.query(
               'DELETE FROM products WHERE LOWER(tenant_slug) = LOWER($1) AND NOT (id = ANY($2::text[]));',
               [syncedTenant.slug, prodIds]
             );
-          } else {
+          } else if (allowEmptyOverwrite === true) {
             await pgPool.query('DELETE FROM products WHERE LOWER(tenant_slug) = LOWER($1);', [syncedTenant.slug]);
           }
           for (const prod of syncedProducts) {
@@ -4093,8 +4320,8 @@ async function startServer() {
     const evolutionPayload = {
       event: 'messages.upsert',
       instance: tenant?.evolutionInstanceId || 'aladay',
-      server_url: 'https://agencia-evolution-api.2eoc7n.easypanel.host',
-      apikey: '21C3D49F3F00-48FA-BFA2-2CD290850405',
+      server_url: process.env.EVOLUTION_API_URL || '',
+      apikey: process.env.EVOLUTION_API_KEY || '',
       data: {
         key: {
           remoteJid: `${String(customerPhone).replace(/\D/g, '')}@s.whatsapp.net`,
@@ -4438,101 +4665,7 @@ async function startServer() {
       }
     }
 
-    // 2. If container restarted without DB and a legitimate tenant owner is logging in, restore their account seamlessly
-    const isAdminEmail =
-      cleanEmail === (process.env.ADMIN_EMAIL || 'admin@aladay.com.br').toLowerCase() ||
-      cleanEmail === 'adm@aladay.com.br';
-
-    if (!user && !isAdminEmail && cleanEmail.includes('@') && password && String(password).length >= 4) {
-      const fallbackSlug =
-        (clientSessionUser?.email?.toLowerCase() === cleanEmail && clientSessionUser?.tenantSlug) ||
-        clientTenant?.slug ||
-        memoryTenants[0]?.slug ||
-        'aladay';
-      const fallbackTenantName =
-        (clientSessionUser?.email?.toLowerCase() === cleanEmail && clientSessionUser?.tenantName) ||
-        clientTenant?.name ||
-        memoryTenants.find((t) => t.slug === fallbackSlug)?.name ||
-        'Meu Restaurante';
-      const fallbackUserName =
-        (clientSessionUser?.email?.toLowerCase() === cleanEmail && clientSessionUser?.name) ||
-        cleanEmail.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
-
-      user = {
-        id: clientSessionUser?.id || `usr_owner_${Date.now()}`,
-        name: fallbackUserName,
-        email: cleanEmail,
-        passwordHash: hashPassword(String(password)),
-        phone: clientSessionUser?.phone || clientTenant?.phone || '',
-        role: 'TENANT_OWNER',
-        tenantId: clientSessionUser?.tenantId || clientTenant?.id || `tenant_${fallbackSlug}`,
-        tenantSlug: fallbackSlug,
-        tenantName: fallbackTenantName,
-        permissions: ['tenant:full_access', 'kds:manage_orders'],
-      };
-      memoryUsers.push(user);
-
-      // Ensure tenant exists in memoryTenants
-      if (!memoryTenants.some((t) => t.slug === fallbackSlug)) {
-        const rawPhoneDigits = String(user.phone || '').replace(/\D/g, '').replace(/^0+/, '');
-        const normalizedPhone =
-          rawPhoneDigits.length === 10 || rawPhoneDigits.length === 11
-            ? `55${rawPhoneDigits}`
-            : rawPhoneDigits;
-        memoryTenants.push({
-          id: user.tenantId,
-          name: fallbackTenantName,
-          slug: fallbackSlug,
-          phone: normalizedPhone,
-          address: clientTenant?.address || '',
-          primaryColor: clientTenant?.primaryColor || '#2563EB',
-          isOpen: true,
-          deliveryFeeCents: clientTenant?.deliveryFeeCents || 0,
-          minOrderCents: clientTenant?.minOrderCents || 0,
-          evolutionInstanceId: `instancia_${fallbackSlug}`,
-          evolutionStatus: 'disconnected',
-          subscriptionStatus: 'active',
-        });
-      }
-
-      if (pgPool) {
-        pgPool
-          .query(
-            `INSERT INTO subscriber_users (id, name, email, password_hash, phone, role, tenant_id, tenant_slug, tenant_name, permissions)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
-             ON CONFLICT (email) DO NOTHING;`,
-            [
-              user.id,
-              user.name,
-              user.email,
-              user.passwordHash,
-              user.phone || '',
-              user.role,
-              user.tenantId,
-              user.tenantSlug,
-              user.tenantName,
-              JSON.stringify(user.permissions),
-            ]
-          )
-          .catch(() => {});
-      }
-    }
-
-    let passwordMatches = Boolean(user && password && verifyPassword(String(password), user.passwordHash));
-
-    // If the user is already authenticated in their browser as this exact TENANT_OWNER and re-authenticating, update hash
-    if (
-      user &&
-      !passwordMatches &&
-      user.role !== 'SUPER_ADMIN' &&
-      clientSessionUser &&
-      String(clientSessionUser.email || '').toLowerCase() === cleanEmail &&
-      password &&
-      String(password).length >= 4
-    ) {
-      user.passwordHash = hashPassword(String(password));
-      passwordMatches = true;
-    }
+    const passwordMatches = Boolean(user && password && verifyPassword(String(password), user.passwordHash));
 
     if (!user || !passwordMatches) {
       memoryAuthAuditLogs.unshift({
@@ -4977,8 +5110,7 @@ async function startServer() {
     serverUrl?: string;
   }
 
-  let runtimeGlobalEvolutionApiKey =
-    process.env.EVOLUTION_API_KEY || '21C3D49F3F00-48FA-BFA2-2CD290850405';
+  let runtimeGlobalEvolutionApiKey = process.env.EVOLUTION_API_KEY || '';
 
   // Normalizes Brazilian phone numbers so 10 or 11 digits (e.g. 91981214188) always get DDI 55 (5591981214188).
   // Without 55, DDD 91 (Pará) is misinterpreted by WhatsApp Baileys as country code +91 (India).
@@ -5005,7 +5137,7 @@ async function startServer() {
       instanceName: 'aladay',
       state: 'close',
       qrCount: 0,
-      serverUrl: process.env.EVOLUTION_API_URL || 'https://agencia-evolution-api.2eoc7n.easypanel.host',
+      serverUrl: process.env.EVOLUTION_API_URL || '',
     },
   };
 
@@ -5019,24 +5151,17 @@ async function startServer() {
           `instancia_${String(t.slug || '').toLowerCase()}` === cleanTarget
       ) || memoryTenants[0];
 
-    if (overrideApiKey && overrideApiKey.trim()) {
-      runtimeGlobalEvolutionApiKey = overrideApiKey.trim();
-      if (tenant) (tenant as any).evolutionApiKey = overrideApiKey.trim();
-    }
-    if (overrideApiUrl && overrideApiUrl.trim() && tenant) {
-      (tenant as any).evolutionApiUrl = overrideApiUrl.trim();
-    }
-
     const apiUrl =
       overrideApiUrl?.trim() ||
-      (tenant as any)?.evolutionApiUrl ||
       process.env.EVOLUTION_API_URL ||
-      'https://agencia-evolution-api.2eoc7n.easypanel.host';
+      (tenant as any)?.evolutionApiUrl ||
+      '';
     const apiKey =
       overrideApiKey?.trim() ||
-      (tenant as any)?.evolutionApiKey ||
+      process.env.EVOLUTION_API_KEY ||
       runtimeGlobalEvolutionApiKey ||
-      '21C3D49F3F00-48FA-BFA2-2CD290850405';
+      (tenant as any)?.evolutionApiKey ||
+      '';
     return { tenant, apiUrl: apiUrl.replace(/\/$/, ''), apiKey: apiKey.trim() };
   };
 
@@ -5282,7 +5407,7 @@ async function startServer() {
           }
         } else if (createRes.status === 401 || createRes.status === 403) {
           remoteErrorReason = 'GLOBAL_API_KEY_REQUIRED';
-          remoteErrorMessage = `A instância "${instanceName}" ainda não existe na Evolution API e a chave configurada (${apiKey.slice(0, 8)}...) é o Token individual da instância "aladay", sem permissão para criar novas instâncias. Informe a Global API Key (AUTHENTICATION_API_KEY do EasyPanel) abaixo para criar "${instanceName}" automaticamente, ou crie a instância "${instanceName}" no painel /manager da Evolution API.`;
+          remoteErrorMessage = `A instância "${instanceName}" ainda não existe na Evolution API e a chave configurada no .env (EVOLUTION_API_KEY) não possui permissão global para criar novas instâncias.`;
         } else {
           const errText = await createRes.text().catch(() => '');
           remoteErrorReason = 'CREATE_INSTANCE_FAILED';
@@ -5293,7 +5418,7 @@ async function startServer() {
         remoteResult = extractQrAndPairing(data);
       } else if (response.status === 401 || response.status === 403) {
         remoteErrorReason = 'UNAUTHORIZED_API_KEY';
-        remoteErrorMessage = `A chave da Evolution API (${apiKey.slice(0, 8)}...) não tem permissão para acessar a instância "${instanceName}". Verifique a Global API Key (AUTHENTICATION_API_KEY).`;
+        remoteErrorMessage = `A chave configurada em EVOLUTION_API_KEY no arquivo .env não tem permissão para acessar a instância "${instanceName}".`;
       } else {
         remoteErrorReason = `HTTP_${response.status}`;
         remoteErrorMessage = `A Evolution API respondeu com status HTTP ${response.status} ao conectar a instância "${instanceName}".`;
@@ -5565,25 +5690,42 @@ async function startServer() {
     const tenant = memoryTenants.find((t) => t.slug === req.params.slug);
     if (!tenant) return res.status(404).json({ error: 'Restaurante não encontrado.' });
 
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    const claims = token ? verifyJwtToken(token) : null;
+    const isSuperAdminCaller = Boolean(claims && claims.role === 'SUPER_ADMIN');
+
     const { evolutionApiUrl, evolutionApiKey, evolutionInstanceId, n8nWebhookUrl, phone } = req.body;
-    if (evolutionApiUrl) (tenant as any).evolutionApiUrl = String(evolutionApiUrl).trim();
-    if (evolutionApiKey) {
-      (tenant as any).evolutionApiKey = String(evolutionApiKey).trim();
-      runtimeGlobalEvolutionApiKey = String(evolutionApiKey).trim();
+
+    // Only SUPER_ADMIN can update global Evolution API URL, API Key, or n8n Webhook URL (persisted in .env)
+    if (isSuperAdminCaller) {
+      if (evolutionApiUrl && String(evolutionApiUrl).trim()) {
+        process.env.EVOLUTION_API_URL = String(evolutionApiUrl).trim();
+        persistEnvConfig('EVOLUTION_API_URL', process.env.EVOLUTION_API_URL);
+      }
+      if (evolutionApiKey && String(evolutionApiKey).trim()) {
+        const cleanKey = String(evolutionApiKey).trim();
+        runtimeGlobalEvolutionApiKey = cleanKey;
+        process.env.EVOLUTION_API_KEY = cleanKey;
+        persistEnvConfig('EVOLUTION_API_KEY', cleanKey);
+      }
+      if (n8nWebhookUrl && String(n8nWebhookUrl).trim()) {
+        process.env.N8N_WEBHOOK_URL = String(n8nWebhookUrl).trim();
+        persistEnvConfig('N8N_WEBHOOK_URL', process.env.N8N_WEBHOOK_URL);
+      }
     }
+
     if (evolutionInstanceId) tenant.evolutionInstanceId = String(evolutionInstanceId).trim();
-    if (n8nWebhookUrl) (tenant as any).n8nWebhookUrl = String(n8nWebhookUrl).trim();
     if (phone) tenant.phone = normalizeBrazilWhatsAppNumber(phone);
 
     res.json({
       success: true,
-      message: 'Credenciais da Evolution API atualizadas com sucesso!',
+      message: 'Configurações de conexão atualizadas com segurança no servidor (.env)!',
       tenant: {
         slug: tenant.slug,
         phone: tenant.phone,
         evolutionInstanceId: tenant.evolutionInstanceId,
-        evolutionApiUrl: (tenant as any).evolutionApiUrl,
-        evolutionApiKeyConfigured: Boolean((tenant as any).evolutionApiKey),
+        evolutionApiKeyConfigured: Boolean(process.env.EVOLUTION_API_KEY || runtimeGlobalEvolutionApiKey),
       },
     });
   });
@@ -5658,6 +5800,9 @@ async function startServer() {
       'ASAAS_PIX_KEY',
       'ASAAS_PIX_BENEFICIARY',
       'ASAAS_PIX_CITY',
+      'EVOLUTION_API_URL',
+      'EVOLUTION_API_KEY',
+      'N8N_WEBHOOK_URL',
     ];
     if (!allowedKeys.includes(key)) return;
     const safeValue = String(value).replace(/[\r\n]/g, '').trim();

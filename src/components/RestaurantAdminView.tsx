@@ -71,6 +71,7 @@ interface RestaurantAdminViewProps {
   catalogsByTenant?: Record<string, NormalizedTenantCatalog>;
   onCreateTenant?: (newTenant: RestaurantTenant) => void;
   onSelectTenant?: (tenant: RestaurantTenant) => void;
+  onDeleteTenant?: (slug: string) => void;
   onUpdateTenant: (updatedTenant: RestaurantTenant) => void;
   onUpdateOrderStatus: (orderId: string, nextStatus: OrderStatus) => void;
   onAddOrder?: (newOrder: Order) => void;
@@ -96,6 +97,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   catalogsByTenant = {},
   onCreateTenant,
   onSelectTenant,
+  onDeleteTenant,
   onUpdateTenant,
   onUpdateOrderStatus,
   onAddOrder,
@@ -3695,7 +3697,13 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
             {/* Global SaaS KPIs */}
             {(() => {
-              const tenantsToInspect = allTenants.length > 0 ? allTenants : [tenant];
+              const rawTenantsToInspect = allTenants.length > 0 ? allTenants : [tenant];
+              const tenantsToInspect = rawTenantsToInspect.filter(
+                (t) =>
+                  t.slug.toLowerCase() !== 'aladay' &&
+                  t.id !== 'tenant_aladay_01' &&
+                  !(t.phone || '').replace(/\D/g, '').includes('9131976334')
+              );
               const activeCount = tenantsToInspect.filter(
                 (t) =>
                   t.subscriptionStatus === 'active' ||
@@ -4139,6 +4147,23 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                                       <CreditCard className="w-3.5 h-3.5" />
                                       <span>Asaas</span>
                                     </button>
+
+                                    {onDeleteTenant && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          onDeleteTenant(itemTenant.slug);
+                                          setSuperAdminActionNotice(
+                                            `Restaurante "${itemTenant.name}" (slug: ${itemTenant.slug}) excluído da plataforma e do banco de dados PostgreSQL.`
+                                          );
+                                        }}
+                                        title={`Excluir restaurante ${itemTenant.name} e apagar dados do banco`}
+                                        className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                        <span>Excluir</span>
+                                      </button>
+                                    )}
                                   </div>
                                 </td>
                               </tr>

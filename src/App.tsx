@@ -422,26 +422,39 @@ export default function App() {
     }
   });
 
-  const normalizeTenantVisualIdentity = (t: RestaurantTenant): RestaurantTenant => {
-    if (
-      t.slug === 'aladay' &&
-      (t.primaryColor === '#EA580C' || t.primaryColor === '#059669' || !t.primaryColor)
-    ) {
-      return {
-        ...t,
-        primaryColor: '#2563EB',
-        backgroundColor: '#F8FAFC',
-      };
-    }
-    return t;
+  const isExcludedPlatformPlaceholderTenant = (t: Partial<RestaurantTenant> | null | undefined): boolean => {
+    if (!t || !t.slug) return true;
+    const cleanSlug = t.slug.toLowerCase().trim();
+    const cleanPhone = String(t.phone || '').replace(/\D/g, '');
+    return (
+      cleanSlug === 'aladay' ||
+      cleanSlug === 'pizzaria-napoli' ||
+      t.id === 'tenant_aladay_01' ||
+      cleanPhone.includes('9131976334')
+    );
   };
 
-  // Shared state between consumer cardápio and restaurant admin (persisted in localStorage)
+  const normalizeTenantVisualIdentity = (t: RestaurantTenant): RestaurantTenant => {
+    const cleanPhone = String(t.phone || '').replace(/\D/g, '');
+    return {
+      ...t,
+      phone: cleanPhone.includes('9131976334') ? '' : t.phone,
+      evolutionInstanceId:
+        !t.evolutionInstanceId || t.evolutionInstanceId === 'aladay'
+          ? `instancia_${t.slug}`
+          : t.evolutionInstanceId,
+    };
+  };
+
+  // Shared state between consumer cardápio and restaurant admin (synced with server + cached in localStorage)
   const [tenantsList, setTenantsList] = useState<RestaurantTenant[]>(() => {
     try {
       const saved = localStorage.getItem('aladay_prod_tenants_list_v2');
-      const list: RestaurantTenant[] = saved ? JSON.parse(saved) : INITIAL_TENANTS_LIST;
-      return list.map(normalizeTenantVisualIdentity);
+      const rawList: RestaurantTenant[] = saved ? JSON.parse(saved) : INITIAL_TENANTS_LIST;
+      const filtered = (Array.isArray(rawList) ? rawList : [])
+        .filter((t) => !isExcludedPlatformPlaceholderTenant(t))
+        .map(normalizeTenantVisualIdentity);
+      return filtered.length > 0 ? filtered : INITIAL_TENANTS_LIST;
     } catch {
       return INITIAL_TENANTS_LIST;
     }
@@ -449,16 +462,21 @@ export default function App() {
 
   const [tenant, setTenant] = useState<RestaurantTenant>(() => {
     try {
-      const savedList: RestaurantTenant[] = (
+      const rawSavedList: RestaurantTenant[] =
         JSON.parse(localStorage.getItem('aladay_prod_tenants_list_v2') || 'null') ||
-        INITIAL_TENANTS_LIST
-      ).map(normalizeTenantVisualIdentity);
-      const savedSingleRaw = localStorage.getItem('aladay_prod_tenant_v2');
-      const savedSingle: RestaurantTenant | null = savedSingleRaw
-        ? normalizeTenantVisualIdentity(JSON.parse(savedSingleRaw))
-        : null;
+        INITIAL_TENANTS_LIST;
+      const savedList = (Array.isArray(rawSavedList) ? rawSavedList : [])
+        .filter((t) => !isExcludedPlatformPlaceholderTenant(t))
+        .map(normalizeTenantVisualIdentity);
 
-      if (sharedLojaParam) {
+      const savedSingleRaw = localStorage.getItem('aladay_prod_tenant_v2');
+      const parsedSingle: RestaurantTenant | null = savedSingleRaw ? JSON.parse(savedSingleRaw) : null;
+      const savedSingle: RestaurantTenant | null =
+        parsedSingle && !isExcludedPlatformPlaceholderTenant(parsedSingle)
+          ? normalizeTenantVisualIdentity(parsedSingle)
+          : null;
+
+      if (sharedLojaParam && sharedLojaParam.toLowerCase() !== 'aladay') {
         const matchedBySlug = savedList.find(
           (t) => t.slug.toLowerCase() === sharedLojaParam.toLowerCase()
         );
@@ -473,10 +491,11 @@ export default function App() {
           name: sharedLojaParam
             .replace(/-/g, ' ')
             .replace(/\b\w/g, (char) => char.toUpperCase()),
+          evolutionInstanceId: `instancia_${sharedLojaParam}`,
           subscriptionStatus: 'active',
         };
       }
-      return savedSingle || INITIAL_TENANT;
+      return savedSingle || savedList[0] || INITIAL_TENANT;
     } catch {
       return INITIAL_TENANT;
     }
@@ -484,9 +503,12 @@ export default function App() {
 
   // Tracks which tenant slugs have pending catalog mutations for incremental persistence
   const dirtyTenantSlugsRef = React.useRef<Set<string>>(new Set());
+  // Tracks which tenant slugs have been hydrated from the server in this session so stale localStorage never overwrites DB
+  const hydratedSlugsFromServerRef = React.useRef<Set<string>>(new Set());
+  const allowEmptyOverwriteRef = React.useRef<boolean>(false);
 
   const markTenantCatalogDirty = React.useCallback((slug: string) => {
-    if (slug) {
+    if (slug && slug.toLowerCase() !== 'aladay') {
       dirtyTenantSlugsRef.current.add(slug);
     }
   }, []);
@@ -499,6 +521,10 @@ export default function App() {
     const hydrated: Record<string, NormalizedTenantCatalog> = {};
 
     try {
+      // Remove legacy 'aladay' and 'pizzaria-napoli' partitions from localStorage
+      localStorage.removeItem(`${CATALOG_PARTITION_PREFIX}aladay`);
+      localStorage.removeItem(`${CATALOG_PARTITION_PREFIX}pizzaria-napoli`);
+
       // 1. Load from v3 per-tenant partitions if index exists
       const rawIndex = localStorage.getItem(CATALOG_INDEX_KEY);
       if (rawIndex) {
@@ -506,6 +532,9 @@ export default function App() {
         if (Array.isArray(indexedSlugs)) {
           for (let i = 0; i < indexedSlugs.length; i++) {
             const slug = indexedSlugs[i];
+            if (!slug || slug.toLowerCase() === 'aladay' || slug.toLowerCase() === 'pizzaria-napoli') {
+              continue;
+            }
             const partition = hydrateSingleTenantCatalogPartition(slug);
             if (partition) {
               hydrated[slug] = partition;
@@ -519,6 +548,7 @@ export default function App() {
       if (legacySaved) {
         const sanitizedLegacy = sanitizeCatalogData(JSON.parse(legacySaved));
         Object.entries(sanitizedLegacy).forEach(([slug, normalizedCat]) => {
+          if (slug.toLowerCase() === 'aladay' || slug.toLowerCase() === 'pizzaria-napoli') return;
           if (!hydrated[slug]) {
             hydrated[slug] = normalizedCat;
             persistSingleTenantCatalogPartition(slug, normalizedCat);
@@ -529,8 +559,8 @@ export default function App() {
       // ignore storage read errors
     }
 
-    // 3. Ensure default initial tenants are always seeded
-    if (!hydrated[INITIAL_TENANT.slug]) {
+    // 3. Ensure default initial tenant (Churrasco da Oda) is seeded if empty
+    if (!hydrated[INITIAL_TENANT.slug] || hydrated[INITIAL_TENANT.slug].productIds.length === 0) {
       const defaultInitial = sanitizeTenantCatalog(
         {
           categories: INITIAL_CATEGORIES,
@@ -541,19 +571,6 @@ export default function App() {
       );
       hydrated[INITIAL_TENANT.slug] = defaultInitial;
       persistSingleTenantCatalogPartition(INITIAL_TENANT.slug, defaultInitial);
-    }
-
-    if (!hydrated['pizzaria-napoli']) {
-      const defaultPizzaria = sanitizeTenantCatalog(
-        {
-          categories: PIZZARIA_CATEGORIES,
-          products: PIZZARIA_PRODUCTS,
-          orders: [],
-        },
-        normCache
-      );
-      hydrated['pizzaria-napoli'] = defaultPizzaria;
-      persistSingleTenantCatalogPartition('pizzaria-napoli', defaultPizzaria);
     }
 
     return hydrated;
@@ -918,54 +935,34 @@ export default function App() {
     };
   }, []);
 
-  // Hidrata dados do restaurante e cardápio do servidor quando um cliente abre o link público (?loja=slug)
+  // Sincroniza a lista oficial de restaurantes do PostgreSQL (garante que Computador e Celular mostrem exatamente os mesmos restaurantes)
   React.useEffect(() => {
-    const slugToLoad = sharedLojaParam || (currentView === 'consumer' ? tenant.slug : null);
-    if (!slugToLoad) return;
-
     let cancelled = false;
-    fetch(`/api/v1/tenants/${encodeURIComponent(slugToLoad)}/catalog`)
+    fetch('/api/v1/tenants')
       .then((res) => (res.ok ? res.json() : null))
       .then((payload) => {
-        if (cancelled || !payload?.data?.tenant) return;
-        const serverTenant = payload.data.tenant as RestaurantTenant;
-        const serverCategories = Array.isArray(payload.data.categories) ? payload.data.categories : [];
-        const serverProducts = Array.isArray(payload.data.products) ? payload.data.products : [];
+        if (cancelled || !Array.isArray(payload?.data)) return;
+        const remoteTenants = (payload.data as RestaurantTenant[])
+          .filter((t) => !isExcludedPlatformPlaceholderTenant(t))
+          .map((srv) =>
+            normalizeTenantVisualIdentity({
+              ...INITIAL_TENANT,
+              ...srv,
+              pixKey: srv.pixKey || srv.pixConfig?.pixKey,
+              pixBeneficiaryName: srv.pixBeneficiaryName || srv.pixConfig?.beneficiaryName,
+              subscriptionStatus: srv.subscriptionStatus || 'active',
+            })
+          );
 
-        setTenant((prev) => {
-          if (prev.slug.toLowerCase() !== serverTenant.slug.toLowerCase() && !sharedLojaParam) {
-            return prev;
-          }
-          return normalizeTenantVisualIdentity({
-            ...INITIAL_TENANT,
-            ...prev,
-            ...serverTenant,
-            pixKey: serverTenant.pixKey || serverTenant.pixConfig?.pixKey || prev.pixKey,
-            pixBeneficiaryName:
-              serverTenant.pixBeneficiaryName ||
-              serverTenant.pixConfig?.beneficiaryName ||
-              prev.pixBeneficiaryName,
-            pixConfig: serverTenant.pixConfig || prev.pixConfig,
-            subscriptionStatus: serverTenant.subscriptionStatus || prev.subscriptionStatus || 'active',
-          });
-        });
-
-        if (serverCategories.length > 0 || serverProducts.length > 0) {
-          setCatalogsByTenant((prev) => {
-            const existing = prev[serverTenant.slug];
-            // Para clientes no link público (?loja=...) ou sem catálogo local, usa sempre o cardápio oficial do servidor
-            if (Boolean(sharedLojaParam) || !authSession || !existing || existing.productIds.length === 0) {
-              return {
-                ...prev,
-                [serverTenant.slug]: sanitizeTenantCatalog({
-                  categories: serverCategories.length > 0 ? serverCategories : INITIAL_CATEGORIES,
-                  products: serverProducts,
-                  orders: existing
-                    ? existing.orderIds.map((id) => existing.ordersById[id]).filter(Boolean)
-                    : [],
-                  updatedAt: Date.now(),
-                }),
-              };
+        if (remoteTenants.length > 0) {
+          setTenantsList(remoteTenants);
+          setTenant((prev) => {
+            if (isExcludedPlatformPlaceholderTenant(prev)) {
+              return remoteTenants[0];
+            }
+            const matched = remoteTenants.find((r) => r.slug.toLowerCase() === prev.slug.toLowerCase());
+            if (matched) {
+              return { ...prev, ...matched };
             }
             return prev;
           });
@@ -976,7 +973,86 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [sharedLojaParam, currentView, tenant.slug, authSession]);
+  }, [currentView, authSession?.token]);
+
+  // Hidrata dados do restaurante e cardápio do servidor em TODAS as telas (Computador e Celular sempre sincronizados com o PostgreSQL)
+  React.useEffect(() => {
+    const slugToLoad = (sharedLojaParam || tenant.slug || '').trim();
+    if (!slugToLoad || slugToLoad.toLowerCase() === 'aladay') return;
+
+    let cancelled = false;
+    fetch(`/api/v1/tenants/${encodeURIComponent(slugToLoad)}/catalog`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        if (cancelled || !payload?.data?.tenant) return;
+        const serverTenant = payload.data.tenant as RestaurantTenant;
+        if (isExcludedPlatformPlaceholderTenant(serverTenant)) return;
+
+        const serverCategories = Array.isArray(payload.data.categories) ? payload.data.categories : [];
+        const serverProducts = Array.isArray(payload.data.products) ? payload.data.products : [];
+
+        const normalizedSrvTenant = normalizeTenantVisualIdentity({
+          ...INITIAL_TENANT,
+          ...serverTenant,
+          pixKey: serverTenant.pixKey || serverTenant.pixConfig?.pixKey || undefined,
+          pixBeneficiaryName:
+            serverTenant.pixBeneficiaryName ||
+            serverTenant.pixConfig?.beneficiaryName ||
+            undefined,
+          pixConfig: serverTenant.pixConfig || undefined,
+          subscriptionStatus: serverTenant.subscriptionStatus || 'active',
+        });
+
+        setTenant((prev) => {
+          if (prev.slug.toLowerCase() !== serverTenant.slug.toLowerCase() && !sharedLojaParam) {
+            return prev;
+          }
+          return {
+            ...prev,
+            ...normalizedSrvTenant,
+          };
+        });
+
+        setTenantsList((prevList) => {
+          const filtered = prevList.filter((t) => !isExcludedPlatformPlaceholderTenant(t));
+          const idx = filtered.findIndex((t) => t.slug.toLowerCase() === normalizedSrvTenant.slug.toLowerCase());
+          if (idx >= 0) {
+            const next = [...filtered];
+            next[idx] = { ...next[idx], ...normalizedSrvTenant };
+            return next;
+          }
+          return [...filtered, normalizedSrvTenant];
+        });
+
+        if (serverCategories.length > 0 || serverProducts.length > 0) {
+          setCatalogsByTenant((prev) => {
+            const existing = prev[serverTenant.slug];
+            const sanitizedFromServer = sanitizeTenantCatalog({
+              categories: serverCategories.length > 0 ? serverCategories : INITIAL_CATEGORIES,
+              products: serverProducts,
+              orders: existing
+                ? existing.orderIds.map((id) => existing.ordersById[id]).filter(Boolean)
+                : [],
+              updatedAt: Date.now(),
+            });
+            persistSingleTenantCatalogPartition(serverTenant.slug, sanitizedFromServer);
+            return {
+              ...prev,
+              [serverTenant.slug]: sanitizedFromServer,
+            };
+          });
+        }
+
+        hydratedSlugsFromServerRef.current.add(serverTenant.slug);
+      })
+      .catch(() => {
+        hydratedSlugsFromServerRef.current.add(slugToLoad);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sharedLojaParam, currentView, tenant.slug, authSession?.token]);
 
   React.useEffect(() => {
     if (isSuperAdmin) return;
@@ -1064,11 +1140,14 @@ export default function App() {
     [currentCatalog.orderIds, currentCatalog.ordersById]
   );
 
-  // Sincroniza automaticamente o restaurante e seu cardápio com o backend apenas quando o lojista/admin está autenticado (evitando que clientes públicos sobrescrevam dados)
+  // Sincroniza automaticamente o restaurante e seu cardápio com o backend apenas quando o lojista/admin está autenticado e após hidratar do servidor
   React.useEffect(() => {
-    if (!tenant?.slug) return;
+    if (!tenant?.slug || tenant.slug.toLowerCase() === 'aladay') return;
     if (!authSession && Boolean(sharedLojaParam)) return;
+    if (!hydratedSlugsFromServerRef.current.has(tenant.slug)) return;
     const timeoutId = setTimeout(() => {
+      const allowEmpty = allowEmptyOverwriteRef.current;
+      allowEmptyOverwriteRef.current = false;
       fetch(`/api/v1/tenants/${encodeURIComponent(tenant.slug)}/catalog/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1076,6 +1155,7 @@ export default function App() {
           tenant,
           categories,
           products,
+          allowEmptyOverwrite: allowEmpty,
         }),
       }).catch(() => {});
     }, 350);
@@ -1154,6 +1234,7 @@ export default function App() {
 
   // Tenant Handlers
   const handleTenantCreated = (newTenant: RestaurantTenant) => {
+    if (isExcludedPlatformPlaceholderTenant(newTenant)) return;
     const initialNormalized = sanitizeTenantCatalog({
       categories: [
         { id: `cat_${Date.now()}_1`, name: 'Pratos Principais', order: 1 },
@@ -1163,7 +1244,8 @@ export default function App() {
       orders: [],
     });
 
-    setTenantsList((prev) => [...prev, newTenant]);
+    hydratedSlugsFromServerRef.current.add(newTenant.slug);
+    setTenantsList((prev) => [...prev.filter((t) => t.slug !== newTenant.slug), newTenant]);
     markTenantCatalogDirty(newTenant.slug);
     setCatalogsByTenant((prev) => ({
       ...prev,
@@ -1173,13 +1255,51 @@ export default function App() {
   };
 
   const handleUpdateTenant = (updatedTenant: RestaurantTenant) => {
+    if (isExcludedPlatformPlaceholderTenant(updatedTenant)) return;
+    hydratedSlugsFromServerRef.current.add(updatedTenant.slug);
     setTenant(updatedTenant);
     setTenantsList((prev) =>
       prev.map((t) => (t.slug === updatedTenant.slug ? updatedTenant : t))
     );
   };
 
+  const handleDeleteTenant = (slugToDelete: string) => {
+    const cleanSlug = (slugToDelete || '').trim().toLowerCase();
+    if (!cleanSlug) return;
+
+    const headers: Record<string, string> = {};
+    if (authSession?.token) {
+      headers['Authorization'] = `Bearer ${authSession.token}`;
+    }
+    fetch(`/api/v1/tenants/${encodeURIComponent(cleanSlug)}`, {
+      method: 'DELETE',
+      headers,
+    }).catch(() => {});
+
+    try {
+      localStorage.removeItem(`${CATALOG_PARTITION_PREFIX}${cleanSlug}`);
+    } catch {
+      // ignore
+    }
+
+    setCatalogsByTenant((prev) => {
+      const next = { ...prev };
+      delete next[cleanSlug];
+      return next;
+    });
+
+    setTenantsList((prev) => {
+      const remaining = prev.filter((t) => t.slug.toLowerCase() !== cleanSlug);
+      const nextList = remaining.length > 0 ? remaining : INITIAL_TENANTS_LIST;
+      if (tenant.slug.toLowerCase() === cleanSlug) {
+        setTenant(nextList[0]);
+      }
+      return nextList;
+    });
+  };
+
   const handleSelectTenant = (selected: RestaurantTenant) => {
+    if (isExcludedPlatformPlaceholderTenant(selected)) return;
     // Lazy on-demand partition hydration if tenant catalog is not yet in memory
     setCatalogsByTenant((prev) => {
       if (prev[selected.slug]) return prev;
@@ -1204,7 +1324,11 @@ export default function App() {
       setCurrentView('admin');
       return;
     }
-    if (newSession.user.tenantSlug && newSession.user.tenantSlug !== '*') {
+    if (
+      newSession.user.tenantSlug &&
+      newSession.user.tenantSlug !== '*' &&
+      newSession.user.tenantSlug.toLowerCase() !== 'aladay'
+    ) {
       const matched = tenantsList.find((t) => t.slug === newSession.user.tenantSlug);
       if (matched) {
         const ensuredTenant: RestaurantTenant = {
@@ -1217,7 +1341,7 @@ export default function App() {
         const hydratedTenant: RestaurantTenant = {
           ...INITIAL_TENANT,
           id: newSession.user.tenantId || `tenant_${Date.now()}`,
-          name: newSession.user.tenantName || 'Meu Restaurante',
+          name: newSession.user.tenantName || 'Restaurante',
           slug: newSession.user.tenantSlug,
           phone: newSession.user.phone || '',
           evolutionInstanceId: `instancia_${newSession.user.tenantSlug}`,
@@ -1315,6 +1439,8 @@ export default function App() {
   };
 
   const handleDeleteProduct = (productId: string) => {
+    allowEmptyOverwriteRef.current = true;
+    hydratedSlugsFromServerRef.current.add(tenant.slug);
     markTenantCatalogDirty(tenant.slug);
     setCatalogsByTenant((prev) => {
       const existing = prev[tenant.slug] || defaultNormalizedCatalog;
@@ -2262,6 +2388,7 @@ export default function App() {
             onCreateTenant={handleTenantCreated}
             onSelectTenant={handleSelectTenant}
             onUpdateTenant={handleUpdateTenant}
+            onDeleteTenant={handleDeleteTenant}
             onUpdateOrderStatus={handleUpdateOrderStatus}
             onAddOrder={handleOrderCreated}
             onToggleProductAvailability={handleToggleProductAvailability}

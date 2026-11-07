@@ -73,13 +73,11 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
     }
   }, [tenant.phone, normalizeBrPhone]);
 
-  // VPS Evolution API Config State
+  // VPS Evolution API Config State (Keys are stored in server .env)
   const [vpsUrl, setVpsUrl] = useState(
-    tenant.evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host'
+    tenant.evolutionApiUrl || ''
   );
-  const [vpsApiKey, setVpsApiKey] = useState(
-    tenant.evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405'
-  );
+  const [vpsApiKey, setVpsApiKey] = useState('');
   const [instanceName, setInstanceName] = useState(
     tenant.evolutionInstanceId || 'aladay'
   );
@@ -252,24 +250,35 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
     e.preventDefault();
     setSavingConfig(true);
     try {
+      const token = (() => {
+        try {
+          const raw = localStorage.getItem('aladay_auth_session_v1');
+          return raw ? JSON.parse(raw)?.token : null;
+        } catch {
+          return null;
+        }
+      })();
       const res = await fetch(`/api/v1/tenants/${tenant.slug}/evolution-config`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
-          evolutionApiUrl: vpsUrl.trim(),
-          evolutionApiKey: vpsApiKey.trim(),
+          evolutionApiUrl: vpsUrl.trim() || undefined,
+          evolutionApiKey: vpsApiKey.trim() || undefined,
           evolutionInstanceId: instanceName.trim(),
         }),
       });
       if (res.ok) {
         const updated: RestaurantTenant = {
           ...tenant,
-          evolutionApiUrl: vpsUrl.trim(),
-          evolutionApiKey: vpsApiKey.trim(),
           evolutionInstanceId: instanceName.trim(),
+          evolutionApiKeyConfigured: true,
         };
+        setVpsApiKey('');
         onTenantUpdated(updated);
-        setSuccessToast('Configurações da Evolution API salvas com sucesso!');
+        setSuccessToast('Configurações da Evolution API salvas de forma segura no servidor (.env)!');
         setTimeout(() => setSuccessToast(null), 3500);
         setActiveTab('qrcode');
         fetchQrCode(true);
@@ -732,28 +741,26 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
 
               <div>
                 <label className="font-bold text-neutral-800 block">
-                  URL da Evolution API (VPS / Easypanel):
+                  URL da Evolution API (Lida de EVOLUTION_API_URL no .env):
                 </label>
                 <input
                   type="url"
-                  required
                   value={vpsUrl}
                   onChange={(e) => setVpsUrl(e.target.value)}
-                  placeholder="https://agencia-evolution-api.2eoc7n.easypanel.host"
+                  placeholder="Configurado no arquivo .env do servidor"
                   className="mt-1 w-full p-2.5 bg-white border border-neutral-300 rounded-lg font-mono text-neutral-900"
                 />
               </div>
 
               <div>
                 <label className="font-bold text-neutral-800 block">
-                  Global API Key (Chave Global de Autenticação):
+                  Global API Key (Lida de EVOLUTION_API_KEY no .env):
                 </label>
                 <input
-                  type="text"
-                  required
+                  type="password"
                   value={vpsApiKey}
                   onChange={(e) => setVpsApiKey(e.target.value)}
-                  placeholder="21C3D49F3F00-48FA-BFA2-2CD290850405"
+                  placeholder="•••••••••••••••••••••••••••••••• (Definida no .env)"
                   className="mt-1 w-full p-2.5 bg-white border border-neutral-300 rounded-lg font-mono text-neutral-900"
                 />
               </div>

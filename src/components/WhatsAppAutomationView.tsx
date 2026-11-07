@@ -80,15 +80,13 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
 
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
 
-  // Form settings state (defaults populated from user's Easypanel setup)
+  // Form settings state (Secrets are stored strictly in backend .env)
   const [evolutionUrl, setEvolutionUrl] = useState(
-    tenant.evolutionApiUrl || 'https://agencia-evolution-api.2eoc7n.easypanel.host'
+    tenant.evolutionApiUrl || ''
   );
-  const [evolutionApiKey, setEvolutionApiKey] = useState(
-    tenant.evolutionApiKey || '21C3D49F3F00-48FA-BFA2-2CD290850405'
-  );
+  const [evolutionApiKey, setEvolutionApiKey] = useState('');
   const [n8nWebhookUrl, setN8nWebhookUrl] = useState(
-    tenant.n8nWebhookUrl || 'https://agencia-n8n.2eoc7n.easypanel.host/webhook/saas'
+    tenant.n8nWebhookUrl || ''
   );
   const [isAutoReplyActive, setIsAutoReplyActive] = useState(tenant.botAutoReplyEnabled ?? true);
 
@@ -3360,8 +3358,8 @@ N8N_WEBHOOK_URL=${n8nWebhookUrl}`}
                 <span className="font-bold text-neutral-900">Variáveis de Ambiente da Evolution API no Easypanel:</span>
               </div>
               <pre className="bg-neutral-900 text-neutral-200 p-3 rounded font-mono text-[11px] overflow-x-auto">
-{`SERVER_URL=https://agencia-evolution-api.2eoc7n.easypanel.host
-AUTHENTICATION_API_KEY=21C3D49F3F00-48FA-BFA2-2CD290850405
+{`SERVER_URL=https://sua-evolution-api.easypanel.host
+AUTHENTICATION_API_KEY=SUA_GLOBAL_API_KEY_EVOLUTION_AQUI
 DATABASE_ENABLED=true
 DATABASE_CONNECTION_URI=postgresql://postgres:senha@postgres:5432/evolution
 REDIS_ENABLED=true

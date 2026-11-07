@@ -320,7 +320,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
       'Cardápio digital interativo para delivery, retirada e QR Code de mesa',
       'Controle de salão e mesas para garçons com comanda digital, divisão de conta e taxa de 10%',
       'Integração oficial iFood Partner API centralizada no painel KDS da cozinha',
-      'Automação de pedidos e status no WhatsApp via Evolution API',
+      'Automação de pedidos e status no WhatsApp',
       'Pagamento Pix dinâmico com repasse 100% direto na conta da loja',
       'Importação rápida de produtos e categorias via planilha CSV/Excel',
       'Zero taxa de comissão sobre vendas diretas',
@@ -420,15 +420,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 <Smartphone className="w-4 h-4 text-blue-600" />
                 <span>Testar Demonstração no Celular</span>
               </button>
-
-              <button
-                type="button"
-                onClick={() => handleTrackedLogin('hero_login')}
-                className="px-4 py-4 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-sm font-medium rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
-              >
-                <LogIn className="w-4 h-4 text-slate-500" />
-                <span>Fazer Login</span>
-              </button>
+            
             </div>
 
             {/* Trust Metrics Pill Bar */}
@@ -733,7 +725,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 2. KDS &amp; WhatsApp Automático
               </h3>
               <p className="text-xs text-slate-600 leading-relaxed">
-                O cliente acompanha cada etapa sem sobrecarregar sua equipe: quando o pedido é confirmado, entra em preparo ou sai para entrega com o motoboy, o WhatsApp dele recebe avisos automáticos via Evolution API.
+                O cliente acompanha cada etapa sem sobrecarregar sua equipe: quando o pedido é confirmado, entra em preparo ou sai para entrega com o motoboy, o WhatsApp dele recebe avisos automáticos.
               </p>
             </div>
             <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-mono">
@@ -752,7 +744,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 3. Sem Download &amp; Sem Login Chato
               </h3>
               <p className="text-xs text-slate-600 leading-relaxed">
-                O cliente acessa pelo link na bio do Instagram ou pelo QR Code da mesa sem precisar baixar nenhum aplicativo da App Store. Carregamento instantâneo via Cloudflare com experiência moderna e intuitiva.
+                O cliente acessa pelo link na bio do Instagram ou pelo QR Code da mesa sem precisar baixar nenhum aplicativo da App Store. Carregamento instantâneo, com experiência moderna e intuitiva.
               </p>
             </div>
             <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-mono">

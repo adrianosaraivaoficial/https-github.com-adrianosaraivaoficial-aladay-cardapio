@@ -37,14 +37,6 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
     setLoading(true);
     setFeedback(null);
 
-    let savedTenant: any = null;
-    try {
-      const rawTenant = localStorage.getItem('aladay_prod_tenant_v2');
-      if (rawTenant) savedTenant = JSON.parse(rawTenant);
-    } catch {
-      // ignore
-    }
-
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 12000);
 
@@ -56,8 +48,6 @@ export const AuthPortalView: React.FC<AuthPortalViewProps> = ({
         body: JSON.stringify({
           email,
           password,
-          clientSessionUser: currentSession?.user || null,
-          clientTenant: savedTenant,
         }),
       });
       clearTimeout(timeoutId);

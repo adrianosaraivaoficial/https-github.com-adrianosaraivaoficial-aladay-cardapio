@@ -188,3 +188,14 @@ CREATE TABLE IF NOT EXISTS asaas_subscriptions (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 9. HIGIENIZAÇÃO AUTOMÁTICA: REMOVE O PLACEHOLDER 'Meu Restaurante (aladay / 559131976334)'
+-- (O número 559131976334 e a instância 'aladay' são exclusivos do suporte da plataforma SaaS)
+DELETE FROM products WHERE LOWER(tenant_slug) = 'aladay';
+DELETE FROM categories WHERE LOWER(tenant_slug) = 'aladay';
+DELETE FROM orders WHERE LOWER(tenant_slug) = 'aladay';
+DELETE FROM pix_transactions WHERE LOWER(tenant_slug) = 'aladay';
+DELETE FROM asaas_subscriptions WHERE LOWER(tenant_slug) = 'aladay';
+DELETE FROM subscriber_users WHERE LOWER(tenant_slug) = 'aladay' AND role != 'SUPER_ADMIN';
+DELETE FROM tenants WHERE LOWER(slug) = 'aladay' OR id = 'tenant_aladay_01' OR phone LIKE '%9131976334%';
+
+
