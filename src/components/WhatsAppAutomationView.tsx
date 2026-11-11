@@ -504,10 +504,11 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const defaultSdrSystemPrompt = `Você é o Consultor Comercial Especialista (SDR / Closer) da Aladay Cardápios Digitais (${appOriginUrl}) — Base de Conhecimento v4.0.
 WhatsApp Oficial de Suporte e Vendas: +55 (91) 3197-6334 (https://wa.me/559131976334).
 
-⚡ DIRETRIZES MANDATÓRIAS DE RESPOSTA NO WHATSAPP (MUITO IMPORTANTE):
-1. RESPOSTA EM BLOCO ÚNICO: Envie SEMPRE toda a sua resposta em UM ÚNICO BLOCO de mensagem (um único balão). Nunca envie múltiplas mensagens ou parágrafos longos.
-2. MENSAGEM CURTA E CONCISA (ANTI-TEXTÃO): Seja extremamente breve e direto ao ponto (máximo de 2 a 4 frases curtas, até 50 a 60 palavras).
-3. PAUSA HUMANIZADA (5s): O n8n aguarda automaticamente alguns segundos (ex: 5s) com indicador 'digitando...' para uma comunicação profissional e humana.
+⚡ DIRETRIZES DE NATURALIDADE, ÁUDIO E ANTI-REPETIÇÃO NO WHATSAPP:
+1. RESPOSTA EM BLOCO ÚNICO E CURTO: Envie toda a sua resposta em UM ÚNICO BLOCO de mensagem (2 a 4 frases curtas, máx. 60 palavras).
+2. PROIBIDO REPETIR SAUDAÇÕES OU DESPEDIDAS: Cumprimente pelo nome APENAS na 1ª mensagem da conversa. A partir da 2ª mensagem, NUNCA repita "Olá [Nome]!" nem se despeça com "Até logo!" / "Até mais!". Continue a conversa de forma fluida e natural.
+3. INTERPRETAÇÃO DE ÁUDIOS: Quando o lead enviar áudio de voz (transcrito automaticamente), responda naturalmente ao que ele falou no áudio.
+4. PAUSA HUMANIZADA (5s): O n8n aguarda automaticamente 5 segundos com indicador 'digitando...'.
 
 PLANOS E PREÇOS OFICIAIS (0% DE COMISSÃO SEMPRE):
 - PLANO ANUAL: 12x de R$ 99,00 no cartão de crédito (economia de R$ 370,80/ano).
@@ -515,21 +516,24 @@ PLANOS E PREÇOS OFICIAIS (0% DE COMISSÃO SEMPRE):
 - Link oficial para cadastro: ${appOriginUrl}
 - Atendente humano / Opção 2: direcione para o WhatsApp oficial https://wa.me/559131976334`;
 
-  const defaultRestaurantSystemPrompt = `Você é o Assistente Virtual Oficial de Atendimento e Cardápio Digital do restaurante identificado no contexto em tempo real abaixo (ex: *${tenant.name}*).
-Este workflow no n8n é MULTI-TENANT (Único para todos os restaurantes da plataforma): você identifica automaticamente qual restaurante recebeu a mensagem através dos dados em "CONTEXTO EM TEMPO REAL DA LOJA" e responde exclusivamente em nome daquele restaurante.
+  const defaultRestaurantSystemPrompt = `Você é o Atendente Virtual Inteligente do restaurante identificado no contexto em tempo real abaixo (ex: *${tenant.name}*).
+Este workflow no n8n é MULTI-TENANT: você identifica automaticamente qual restaurante recebeu a mensagem através de "CONTEXTO EM TEMPO REAL DA LOJA" e atende exclusivamente em nome dele.
 
-⚡ DIRETRIZES MANDATÓRIAS DE RESPOSTA NO WHATSAPP (MUITO IMPORTANTE):
-1. RESPOSTA EM BLOCO ÚNICO: Responda SEMPRE em um ÚNICO bloco de mensagem (um único balão). Jamais envie múltiplas mensagens soltas nem divida em vários blocos.
-2. MENSAGEM CURTA E CONCISA (ANTI-TEXTÃO): Máximo de 2 a 4 frases curtas (máximo 50 a 60 palavras). Seja acolhedor, rápido e objetivo. Responda a dúvida e direcione sempre para o Link Oficial do Cardápio Digital.
-3. PAUSA HUMANIZADA (5s): O workflow no n8n aguarda automaticamente 5 segundos simulando 'digitando...' no WhatsApp antes de disparar.
-
-REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
-1. IDENTIDADE E LINK DIRETO DA LOJA: Cumprimente pelo nome, fale em nome do restaurante e SEMPRE envie o link do Cardápio Digital: ${appOriginUrl}/?loja=${tenant.slug}
-2. STATUS E HORÁRIO: Informe o status (🟢 Aberto ou 🔴 Fechado) e horário oficial em uma frase curta.
-3. PRODUTOS E PREÇOS: Nunca invente itens. Diga que o cardápio completo com fotos e adicionais está no link oficial ${appOriginUrl}/?loja=${tenant.slug}
-4. MODALIDADES: O cliente pode pedir para Delivery, Retirada ou Mesa com Pix na hora.
-5. STATUS DO PEDIDO: Se o cliente perguntar do pedido, informe o status em 1 frase e envie o link de rastreamento.
-6. ATENDENTE HUMANO (OPÇÃO 2): Se digitar "2" ou pedir atendente, avise em 1 frase que o robô foi pausado e que a equipe já vai atendê-lo.`;
+⚡ REGRAS DE OURO PARA UM ATENDIMENTO HUMANO, NATURAL E SEM REPETIÇÃO:
+1. ANTI-REPETIÇÃO (MUITO IMPORTANTE):
+   - Na 1ª mensagem da conversa (Turno #1): cumprimente o cliente pelo nome com simpatia e fale em nome do restaurante.
+   - Da 2ª mensagem em diante (Turno #2+): NUNCA repita "Olá, [Nome]! Aqui é do [Restaurante]" no início! NUNCA termine mensagens com "Até logo!", "Até mais!" ou frases robóticas repetidas. Continue o papo exatamente de onde parou, como um atendente humano conversando no WhatsApp.
+2. INTERPRETAÇÃO DE ÁUDIOS DE VOZ:
+   - Se a mensagem vier marcada como [🎙️ ÁUDIO DE VOZ TRANSCRITO], o cliente enviou um áudio no WhatsApp. Responda com naturalidade (ex: "Ouvi seu áudio! ...") atendendo exatamente ao que ele pediu.
+3. PEDIDOS ANTERIORES ("QUERO AQUELE DE ONTEM" / "O MESMO DA ÚLTIMA VEZ"):
+   - Quando o cliente disser "quero aquele de ontem", "o mesmo da última vez", "repetir meu pedido" ou "o de sempre", consulte a seção "=== HISTÓRICO E PEDIDO DE ONTEM DESTE CLIENTE ===".
+   - Cite os itens exatos e o valor do pedido anterior dele e envie o "Link Direto p/ Repetir na Sacola em 1 Clique" (?loja=...&repetir=...), explicando que ao clicar a sacola já abre pronta com esses itens!
+4. MANUTENÇÃO DO CONTEXTO DA CONVERSA:
+   - Use o histórico da conversa para entender referências como "quero 2 desse", "e quanto fica com entrega?", "tem de frango?", calculando o valor com base na tabela de preços ao vivo.
+5. BLOCO ÚNICO E CONCISO:
+   - Responda SEMPRE em um único balão de mensagem (2 a 4 frases curtas, máx. 55 palavras).
+6. ATENDENTE HUMANO (OPÇÃO 2):
+   - Se o cliente digitar "2" ou pedir atendente humano, avise em 1 frase que pausou o atendimento automático e chamou a equipe.`;
 
   const [agentSystemPrompt, setAgentSystemPrompt] = useState<string>(defaultRestaurantSystemPrompt);
   const [n8nResponseDelaySeconds, setN8nResponseDelaySeconds] = useState<number>(5);
@@ -571,13 +575,13 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
       syncWebhookPathAndUrl('sdr-aladay');
     } else if (mode === 'restaurante_ia') {
       setAgentSystemPrompt(defaultRestaurantSystemPrompt);
-      setAgentTestCustomerName('Adriano Saraiva (Cliente do Restaurante)');
-      setAgentTestMessage('Boa noite! Vocês estão abertos? Quero ver o cardápio digital e os preços de hoje.');
+      setAgentTestCustomerName('Izabel Saraiva');
+      setAgentTestMessage('Oi! Quero pedir aquele mesmo de ontem, por favor!');
       syncWebhookPathAndUrl(`cardapio-${tenant.slug}`);
     } else {
       setAgentSystemPrompt(defaultRestaurantSystemPrompt);
-      setAgentTestCustomerName('Adriano Saraiva (Cliente do Restaurante)');
-      setAgentTestMessage('Boa noite! Vocês estão abertos? Quero ver o cardápio digital e os preços de hoje.');
+      setAgentTestCustomerName('Izabel Saraiva');
+      setAgentTestMessage('Oi! Quero pedir aquele mesmo de ontem, por favor!');
       syncWebhookPathAndUrl(`auto-${tenant.slug}`);
     }
   };
@@ -619,7 +623,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
             },
             {
               parameters: {
-                jsCode: `// =========================================================================\n// 1. Roteador Multi-Tenant & Anti-Loop Evolution API v2 (Todos os Restaurantes)\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // Ignorar mensagens de grupos e status/canais\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/') ||\n                      String(body.destination || '').includes('/webhook-test/');\n\n  // Ignorar mensagens enviadas pelo proprio restaurante (fromMe)\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    ''\n  ).trim();\n\n  if (!messageText) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  // Identifica automaticamente qual restaurante recebeu a mensagem pela instancia da Evolution API\n  const instance = body.instance || '${cleanInstance}';\n  const dynamicSlug = String(instance).replace(/^instancia_/i, '').replace(/_/g, '-');\n\n  results.push({\n    json: {\n      tenantSlug: dynamicSlug || '${tenant.slug}',\n      customerPhone,\n      customerName,\n      messageText,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n    },\n  });\n}\n\nreturn results;`,
+                jsCode: `// =========================================================================\n// 1. Roteador Multi-Tenant + Captura de Áudio & Anti-Loop Evolution API v2\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // Ignorar mensagens de grupos e status/canais\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/') ||\n                      String(body.destination || '').includes('/webhook-test/');\n\n  // Ignorar mensagens enviadas pelo proprio restaurante (fromMe)\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n\n  // Detecta se o cliente enviou Áudio de Voz (PTT / audioMessage) ou Texto\n  const isAudio = Boolean(\n    data.message?.audioMessage ||\n    data.message?.pttMessage ||\n    data.messageType === 'audioMessage'\n  );\n  const audioBase64 = data.message?.base64 || body.data?.base64 || '';\n  const audioMimeType = data.message?.audioMessage?.mimetype || 'audio/ogg';\n  const audioTranscription = (\n    data.message?.speechToText ||\n    data.message?.audioMessage?.transcription ||\n    ''\n  ).trim();\n\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    audioTranscription ||\n    ''\n  ).trim();\n\n  if (!messageText && !isAudio) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  const instance = body.instance || '${cleanInstance}';\n  const dynamicSlug = String(instance).replace(/^instancia_/i, '').replace(/_/g, '-');\n\n  results.push({\n    json: {\n      tenantSlug: dynamicSlug || '${tenant.slug}',\n      customerPhone,\n      customerName,\n      messageText,\n      isAudio,\n      audioBase64,\n      audioMimeType,\n      audioTranscription,\n      messageKey: key,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n    },\n  });\n}\n\nreturn results;`,
               },
               id: 'node-code-process',
               name: 'Tratar Payload Evolution API',
@@ -638,7 +642,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                 sendBody: true,
                 specifyBody: 'json',
                 jsonBody:
-                  '={{ JSON.stringify({ tenantSlug: $json.tenantSlug, instance: $json.instance, customerName: $json.customerName, customerPhone: $json.customerPhone, messageText: $json.messageText }) }}',
+                  '={{ JSON.stringify({ tenantSlug: $json.tenantSlug, instance: $json.instance, customerName: $json.customerName, customerPhone: $json.customerPhone, messageText: $json.messageText, isAudio: $json.isAudio, audioBase64: $json.audioBase64, audioMimeType: $json.audioMimeType, audioTranscription: $json.audioTranscription, messageKey: $json.messageKey, serverUrl: $json.serverUrl, apiKey: $json.apiKey }) }}',
                 options: {},
               },
               id: 'node-fetch-menu-reply',
@@ -705,19 +709,19 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
       );
     }
 
-    // AI Agent Workflow (Single Multi-Tenant LangChain n8n Agent + Chat Model + Window Buffer Memory + Live Catalog Context + HTTP Tools)
+    // AI Agent Workflow (Single Multi-Tenant LangChain n8n Agent + Chat Model + Window Buffer Memory + Audio Transcription + Anti-Repetition Context)
     const llmNode =
       n8nLlmProvider === 'gemini'
         ? {
             parameters: {
               modelName: 'models/gemini-2.5-flash',
-              options: { temperature: 0.25 },
+              options: { temperature: 0.35 },
             },
             id: 'node-llm-model',
             name: 'Google Gemini Chat Model',
             type: '@n8n/n8n-nodes-langchain.lmChatGoogleGemini',
             typeVersion: 1,
-            position: [640, 560],
+            position: [680, 560],
           }
         : {
             parameters: {
@@ -726,93 +730,54 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                 value: n8nLlmModel || 'gpt-4o-mini',
                 mode: 'list',
               },
-              options: { temperature: 0.25 },
+              options: { temperature: 0.35 },
             },
             id: 'node-llm-model',
             name: 'OpenAI Chat Model',
             type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
             typeVersion: 1.2,
-            position: [640, 560],
+            position: [680, 560],
           };
-
-    const toolNode =
-      n8nAgentMode === 'sdr_aladay'
-        ? {
-            parameters: {
-              name: 'consultar_base_conhecimento_aladay',
-              descriptionType: 'manual',
-              toolDescription:
-                'Consulta a Base de Conhecimento Oficial v4.0 da Aladay Cardapios Digitais, incluindo planos (Anual R$ 99/mes no cartao e Mensal R$ 129,90/mes com 15 dias gratis), Modulo de Salao/Mesas/Garcom, Integracao Oficial iFood no KDS, Relatorios Analiticos e FAQ.',
-              description:
-                'Consulta a Base de Conhecimento Oficial v4.0 da Aladay Cardapios Digitais, incluindo planos (Anual R$ 99/mes no cartao e Mensal R$ 129,90/mes com 15 dias gratis), Modulo de Salao/Mesas/Garcom, Integracao Oficial iFood no KDS, Relatorios Analiticos e FAQ.',
-              method: 'GET',
-              url: `=${appOriginUrl}/api/v1/n8n/knowledge-base?topico={{ $fromAI("topico", "Assunto ou duvida comercial do lead sobre a Aladay", "string", "planos") }}`,
-            },
-            id: 'node-http-tool-kb',
-            name: 'consultar_base_conhecimento_aladay',
-            type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
-            typeVersion: 1.1,
-            position: [960, 560],
-          }
-        : {
-            parameters: {
-              name: 'consultar_cardapio_e_loja',
-              descriptionType: 'manual',
-              toolDescription:
-                'Consulta dinamicamente em tempo real os dados do restaurante que recebeu a mensagem (pela instancia da Evolution API), incluindo se esta aberto, horario na barra superior, produtos com precos, taxa de entrega e link direto do cardapio digital.',
-              description:
-                'Consulta dinamicamente em tempo real os dados do restaurante que recebeu a mensagem (pela instancia da Evolution API), incluindo se esta aberto, horario na barra superior, produtos com precos, taxa de entrega e link direto do cardapio digital.',
-              method: 'GET',
-              url: `=${appOriginUrl}/api/v1/n8n/agent-context?instance={{ $("Tratar Payload & Anti-Loop").item.json.instance }}&slug={{ $("Tratar Payload & Anti-Loop").item.json.tenantSlug }}&phone={{ $("Tratar Payload & Anti-Loop").item.json.customerPhone }}&busca={{ $fromAI("busca", "Produto, categoria ou informacao do restaurante consultada pelo cliente", "string", "cardapio") }}`,
-            },
-            id: 'node-http-tool-catalog',
-            name: 'consultar_cardapio_e_loja',
-            type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
-            typeVersion: 1.1,
-            position: [960, 560],
-          };
-
-    const orderToolNode =
-      n8nAgentMode === 'restaurante_ia'
-        ? {
-            parameters: {
-              name: 'consultar_status_pedido',
-              descriptionType: 'manual',
-              toolDescription:
-                'Consulta o status em tempo real dos pedidos recentes do cliente na cozinha daquele restaurante pelo numero de WhatsApp.',
-              description:
-                'Consulta o status em tempo real dos pedidos recentes do cliente na cozinha daquele restaurante pelo numero de WhatsApp.',
-              method: 'GET',
-              url: `=${appOriginUrl}/api/v1/n8n/order-status?phone={{ $("Tratar Payload & Anti-Loop").item.json.customerPhone }}&tenantSlug={{ $("Carregar Cardápio e Horário ao Vivo").item.json.restaurant.slug }}&consulta={{ $fromAI("consulta", "Numero do pedido ou duvida sobre status de entrega", "string", "status") }}`,
-            },
-            id: 'node-http-tool-orders',
-            name: 'consultar_status_pedido',
-            type: '@n8n/n8n-nodes-langchain.toolHttpRequest',
-            typeVersion: 1.1,
-            position: [1140, 560],
-          }
-        : null;
 
     const preloadContextNode =
       n8nAgentMode === 'restaurante_ia'
         ? {
             parameters: {
-              method: 'GET',
-              url: `=${appOriginUrl}/api/v1/n8n/agent-context?instance={{ $json.instance }}&slug={{ $json.tenantSlug }}&phone={{ $json.customerPhone }}`,
+              method: 'POST',
+              url: `${appOriginUrl}/api/v1/n8n/agent-context`,
+              sendHeaders: true,
+              headerParameters: {
+                parameters: [{ name: 'Content-Type', value: 'application/json' }],
+              },
+              sendBody: true,
+              specifyBody: 'json',
+              jsonBody:
+                '={{ JSON.stringify({ instance: $json.instance, tenantSlug: $json.tenantSlug, customerPhone: $json.customerPhone, customerName: $json.customerName, messageText: $json.messageText, isAudio: $json.isAudio, audioBase64: $json.audioBase64, audioMimeType: $json.audioMimeType, audioTranscription: $json.audioTranscription, messageKey: $json.messageKey, serverUrl: $json.serverUrl, endpointUrl: $json.endpointUrl, apiKey: $json.apiKey }) }}',
               options: {},
             },
             id: 'node-preload-catalog-context',
-            name: 'Carregar Cardápio e Horário ao Vivo',
+            name: 'Carregar Cardápio, Áudio e Histórico ao Vivo',
             type: 'n8n-nodes-base.httpRequest',
             typeVersion: 4.2,
             position: [560, 300],
           }
-        : null;
+        : {
+            parameters: {
+              method: 'GET',
+              url: `${appOriginUrl}/api/v1/n8n/knowledge-base`,
+              options: {},
+            },
+            id: 'node-preload-kb-context',
+            name: 'Carregar Base de Conhecimento Aladay',
+            type: 'n8n-nodes-base.httpRequest',
+            typeVersion: 4.2,
+            position: [560, 300],
+          };
 
     const agentPromptText =
       n8nAgentMode === 'restaurante_ia'
-        ? `={{ "MENSAGEM DO CLIENTE (" + $("Tratar Payload & Anti-Loop").item.json.customerName + " - WhatsApp " + $("Tratar Payload & Anti-Loop").item.json.customerPhone + "): " + $("Tratar Payload & Anti-Loop").item.json.messageText + "\\n\\n=== CONTEXTO EM TEMPO REAL DA LOJA (" + $json.restaurant.name + ") ===\\nStatus Atual: " + $json.restaurant.statusLabel + "\\nHorário Configurado na Barra Superior: " + $json.restaurant.openingHoursText + "\\nLink Direto do Cardápio Digital: " + $json.restaurant.digitalMenuUrl + "\\nLink QR Code de Mesa: " + $json.restaurant.tableQrCodeUrlExample + "\\nTaxa de Entrega: " + $json.restaurant.deliveryFeeFormatted + " | Pedido Mínimo: " + $json.restaurant.minOrderFormatted + "\\n\\n=== PRODUTOS E PREÇOS DISPONÍVEIS NO CARDÁPIO ===\\n" + ($json.catalogTextFormatted || $json.topItemsText || "Cardápio disponível no link oficial.") + ($json.customerRecentOrders && $json.customerRecentOrders.length > 0 ? "\\n\\n=== PEDIDOS RECENTES DESTE CLIENTE ===\\nPedido #" + $json.customerRecentOrders[0].orderNumber + " - Status: " + $json.customerRecentOrders[0].statusLabel + " - Itens: " + $json.customerRecentOrders[0].itemsSummary + " - Total: " + $json.customerRecentOrders[0].totalFormatted : "") }}`
-        : '={{ $json.chatInput }}';
+        ? `={{ ($json.inbound?.isAudio ? "🎙️ [ÁUDIO DE VOZ TRANSCRITO DO CLIENTE] (" : "💬 MENSAGEM DO CLIENTE (") + ($json.inbound?.customerName || $("Tratar Payload & Anti-Loop").item.json.customerName) + " - WhatsApp " + ($json.inbound?.customerPhone || $("Tratar Payload & Anti-Loop").item.json.customerPhone) + "): " + ($json.inbound?.messageText || $("Tratar Payload & Anti-Loop").item.json.messageText) + "\\n\\n=== DIRETRIZ DE CONTINUIDADE E ANTI-REPETIÇÃO (TURNO #" + ($json.conversationMemory?.turnCount || 1) + ") ===\\n" + ($json.conversationMemory?.antiRepetitionDirective || "Responda de forma natural e objetiva.") + "\\n\\n=== HISTÓRICO RECENTE DESTA CONVERSA ===\\n" + ($json.conversationMemory?.historyTranscript || "Primeira mensagem.") + "\\n\\n=== HISTÓRICO E PEDIDO DE ONTEM DESTE CLIENTE (PARA 'QUERO AQUELE DE ONTEM') ===\\n" + ($json.lastOrderContextText || "Sem pedidos anteriores.") + "\\n\\n=== CONTEXTO EM TEMPO REAL DA LOJA (" + $json.restaurant.name + ") ===\\nStatus Atual: " + $json.restaurant.statusLabel + "\\nHorário Configurado na Barra Superior: " + $json.restaurant.openingHoursText + "\\nLink Direto do Cardápio Digital: " + $json.restaurant.digitalMenuUrl + "\\nLink QR Code de Mesa: " + $json.restaurant.tableQrCodeUrlExample + "\\nTaxa de Entrega: " + $json.restaurant.deliveryFeeFormatted + " | Pedido Mínimo: " + $json.restaurant.minOrderFormatted + "\\n\\n=== PRODUTOS E PREÇOS DISPONÍVEIS NO CARDÁPIO ===\\n" + ($json.catalogTextFormatted || $json.topItemsText || "Cardápio disponível no link oficial.") }}`
+        : `={{ $("Tratar Payload & Anti-Loop").item.json.chatInput + "\\n\\n=== BASE DE CONHECIMENTO OFICIAL ALADAY ===\\n" + ($json.knowledgeBaseText || "") }}`;
 
     const agentNodeName =
       n8nAgentMode === 'sdr_aladay'
@@ -851,7 +816,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
       },
       {
         parameters: {
-          jsCode: `// =========================================================================\n// Roteador Multi-Tenant & Filtro Anti-Loop Evolution API v2 -> Agente IA n8n\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // 1. Ignorar grupos e canais\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  // 2. Ignorar mensagens enviadas pelo proprio bot (fromMe), exceto em Teste no n8n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/');\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    ''\n  ).trim();\n\n  if (!messageText) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  // Identifica automaticamente qual restaurante recebeu a mensagem pela instancia da Evolution API\n  const instance = body.instance || '${cleanInstance}';\n  const dynamicSlug = String(instance).replace(/^instancia_/i, '').replace(/_/g, '-');\n\n  results.push({\n    json: {\n      tenantSlug: dynamicSlug || '${tenant.slug}',\n      customerPhone,\n      customerName,\n      messageText,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n      chatInput: \`Cliente (\${customerName} - WhatsApp \${customerPhone}): \${messageText}\`,\n    },\n  });\n}\n\nreturn results;`,
+          jsCode: `// =========================================================================\n// Roteador Multi-Tenant + Suporte a Áudio & Anti-Loop Evolution API v2\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // 1. Ignorar grupos e canais\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  // 2. Ignorar mensagens enviadas pelo proprio bot (fromMe), exceto em Teste no n8n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/');\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n\n  // 3. Suporte nativo a Áudios de Voz (audioMessage / PTT) e Texto\n  const isAudio = Boolean(\n    data.message?.audioMessage ||\n    data.message?.pttMessage ||\n    data.messageType === 'audioMessage'\n  );\n  const audioBase64 = data.message?.base64 || body.data?.base64 || '';\n  const audioMimeType = data.message?.audioMessage?.mimetype || 'audio/ogg';\n  const audioTranscription = (\n    data.message?.speechToText ||\n    data.message?.audioMessage?.transcription ||\n    ''\n  ).trim();\n\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    audioTranscription ||\n    ''\n  ).trim();\n\n  if (!messageText && !isAudio) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  const instance = body.instance || '${cleanInstance}';\n  const dynamicSlug = String(instance).replace(/^instancia_/i, '').replace(/_/g, '-');\n\n  results.push({\n    json: {\n      tenantSlug: dynamicSlug || '${tenant.slug}',\n      customerPhone,\n      customerName,\n      messageText,\n      isAudio,\n      audioBase64,\n      audioMimeType,\n      audioTranscription,\n      messageKey: key,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n      chatInput: \`Cliente (\${customerName} - WhatsApp \${customerPhone}): \${messageText || '[Áudio de voz]'}\`,\n    },\n  });\n}\n\nreturn results;`,
         },
         id: 'node-code-sanitize',
         name: 'Tratar Payload & Anti-Loop',
@@ -859,7 +824,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
         typeVersion: 2,
         position: [320, 300],
       },
-      ...(preloadContextNode ? [preloadContextNode] : []),
+      preloadContextNode,
       {
         parameters: {
           promptType: 'define',
@@ -878,16 +843,15 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
       {
         parameters: {
           sessionIdType: 'customKey',
-          sessionKey: '={{ $("Tratar Payload & Anti-Loop").item.json.instance + "_" + $("Tratar Payload & Anti-Loop").item.json.customerPhone }}',
-          contextWindowLength: n8nMemoryWindow,
+          sessionKey: '={{ ($json.inbound?.instance || $("Tratar Payload & Anti-Loop").item.json.instance) + "_" + ($json.inbound?.customerPhone || $("Tratar Payload & Anti-Loop").item.json.customerPhone) }}',
+          contextWindowLength: Math.max(10, n8nMemoryWindow),
         },
         id: 'node-memory-window',
         name: 'Memória por WhatsApp (Window Buffer)',
         type: '@n8n/n8n-nodes-langchain.memoryBufferWindow',
         typeVersion: 1.3,
-        position: [800, 560],
+        position: [920, 560],
       },
-      toolNode,
       waitDelayNode,
       {
         parameters: {
@@ -920,40 +884,21 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
       },
     ];
 
-    if (orderToolNode) {
-      nodesList.push(orderToolNode);
-    }
-
     const connectionsObj: Record<string, any> = {
       'Webhook Evolution API': {
         main: [[{ node: 'Tratar Payload & Anti-Loop', type: 'main', index: 0 }]],
       },
       'Tratar Payload & Anti-Loop': {
-        main: [
-          [
-            {
-              node: preloadContextNode ? preloadContextNode.name : agentNodeName,
-              type: 'main',
-              index: 0,
-            },
-          ],
-        ],
+        main: [[{ node: preloadContextNode.name, type: 'main', index: 0 }]],
       },
-      ...(preloadContextNode
-        ? {
-            [preloadContextNode.name]: {
-              main: [[{ node: agentNodeName, type: 'main', index: 0 }]],
-            },
-          }
-        : {}),
+      [preloadContextNode.name]: {
+        main: [[{ node: agentNodeName, type: 'main', index: 0 }]],
+      },
       [llmNode.name]: {
         ai_languageModel: [[{ node: agentNodeName, type: 'ai_languageModel', index: 0 }]],
       },
       'Memória por WhatsApp (Window Buffer)': {
         ai_memory: [[{ node: agentNodeName, type: 'ai_memory', index: 0 }]],
-      },
-      [toolNode.name]: {
-        ai_tool: [[{ node: agentNodeName, type: 'ai_tool', index: 0 }]],
       },
       [agentNodeName]: {
         main: [[{ node: waitDelayNodeName, type: 'main', index: 0 }]],
@@ -962,12 +907,6 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
         main: [[{ node: 'Responder Cliente no WhatsApp (Evolution API)', type: 'main', index: 0 }]],
       },
     };
-
-    if (orderToolNode) {
-      connectionsObj[orderToolNode.name] = {
-        ai_tool: [[{ node: agentNodeName, type: 'ai_tool', index: 0 }]],
-      };
-    }
 
     return JSON.stringify(
       {
@@ -1065,7 +1004,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
     }
   };
 
-  const handleRunAgentLiveTest = async (overrideMessage?: string) => {
+  const handleRunAgentLiveTest = async (overrideMessage?: string, asAudio?: boolean) => {
     const msgToTest = overrideMessage ?? agentTestMessage;
     if (!msgToTest.trim() || isTestingN8nAgent) return;
     if (overrideMessage) setAgentTestMessage(overrideMessage);
@@ -1080,6 +1019,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
     }, 1000);
 
     try {
+      const isSimulatedAudio = Boolean(asAudio || msgToTest.startsWith('🎙️'));
       const fetchPromise = fetch('/api/v1/n8n/test-agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1089,6 +1029,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
           customerName: agentTestCustomerName,
           customerPhone: agentTestPhone,
           messageText: msgToTest,
+          isAudio: isSimulatedAudio,
           n8nWebhookUrl,
           dispatchToRemoteN8n,
           delaySeconds: n8nResponseDelaySeconds,
@@ -1109,6 +1050,24 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
     } finally {
       setIsDelayCountingDown(false);
       setIsTestingN8nAgent(false);
+    }
+  };
+
+  const handleClearConversationMemory = async () => {
+    try {
+      await fetch('/api/v1/n8n/conversation-memory/clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantSlug: n8nAgentMode === 'sdr_aladay' ? 'sdr_aladay' : tenant.slug,
+          customerPhone: agentTestPhone,
+        }),
+      });
+      setAgentTestResult(null);
+      setSaveNotice('Memória da conversa reiniciada! A próxima mensagem será tratada como Turno #1 (1ª mensagem).');
+      setTimeout(() => setSaveNotice(null), 4000);
+    } catch {
+      // ignore error
     }
   };
 
@@ -2891,22 +2850,34 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                 <div>
                   <h5 className="text-xs font-bold text-slate-900 flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-blue-600" />
-                    <span>4. Testar Resposta do Agente IA &amp; Disparar Payload Real para o n8n</span>
+                    <span>4. Testar Resposta do Agente IA (Áudio, &ldquo;Aquele de Ontem&rdquo; &amp; Memória sem Repetição)</span>
                   </h5>
                   <p className="text-[11px] text-slate-600 mt-0.5">
-                    Simule perguntas reais de Leads ou clientes para validar o comportamento do Agente IA e a estrutura do webhook da Evolution API v2.
+                    Simule áudios de voz, pedidos anteriores (&ldquo;quero aquele de ontem&rdquo;) e múltiplos turnos seguidos sem repetir saudações robóticas.
                   </p>
                 </div>
 
-                <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 bg-white px-3 py-1.5 rounded-lg border border-slate-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={dispatchToRemoteN8n}
-                    onChange={(e) => setDispatchToRemoteN8n(e.target.checked)}
-                    className="accent-blue-600"
-                  />
-                  <span>Enviar também POST real p/ URL do n8n</span>
-                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleClearConversationMemory}
+                    className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-300 cursor-pointer transition-colors"
+                    title="Limpa o histórico de turnos deste número para testar a 1ª mensagem novamente"
+                  >
+                    <RefreshCw className="w-3 h-3 text-slate-500" />
+                    <span>Reiniciar Memória da Conversa</span>
+                  </button>
+
+                  <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 bg-white px-3 py-1.5 rounded-lg border border-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={dispatchToRemoteN8n}
+                      onChange={(e) => setDispatchToRemoteN8n(e.target.checked)}
+                      className="accent-blue-600"
+                    />
+                    <span>Enviar também POST real p/ URL do n8n</span>
+                  </label>
+                </div>
               </div>
 
               {/* Quick Preset Questions */}
@@ -2914,7 +2885,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                 <span className="font-semibold text-slate-600">
                   {n8nAgentMode === 'sdr_aladay'
                     ? 'Perguntas de Teste (SDR Comercial Aladay v4.0):'
-                    : `Perguntas de Teste de Clientes (${tenant.name}):`}
+                    : `Cenários de Teste Naturais (${tenant.name}):`}
                 </span>
                 {n8nAgentMode === 'sdr_aladay' ? (
                   <>
@@ -2933,12 +2904,13 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                       type="button"
                       onClick={() =>
                         handleRunAgentLiveTest(
-                          'Como funciona o controle de mesas e comanda digital para os garçons no salão?'
+                          '🎙️ [Áudio]: Oi! Tenho uma churrascaria, como funciona o controle de mesas e garçons?',
+                          true
                         )
                       }
-                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 rounded-lg font-semibold transition-colors cursor-pointer"
                     >
-                      🍽️ &ldquo;Mesas, Comanda & Garçom&rdquo;
+                      🎙️ Simular Áudio de Voz
                     </button>
                     <button
                       type="button"
@@ -2950,17 +2922,6 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                       className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
                     >
                       🛵 &ldquo;Integração Oficial iFood&rdquo;
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleRunAgentLiveTest(
-                          'Como funcionam os relatórios financeiros e o configurador de horário do cardápio?'
-                        )
-                      }
-                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
-                    >
-                      📈 &ldquo;Relatórios & Horário&rdquo;
                     </button>
                     <button
                       type="button"
@@ -2985,42 +2946,57 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                   <>
                     <button
                       type="button"
-                      onClick={() => handleRunAgentLiveTest('Boa noite! Quero ver o cardápio digital para fazer um pedido.')}
-                      className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                      onClick={() =>
+                        handleRunAgentLiveTest('Oi! Quero pedir aquele mesmo de ontem, por favor!')
+                      }
+                      className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-lg font-semibold transition-colors cursor-pointer"
                     >
-                      🍔 &ldquo;Quero o link do cardápio digital&rdquo;
+                      🔄 &ldquo;Quero aquele de ontem&rdquo;
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleRunAgentLiveTest('Quais são as opções e preços do cardápio completo de hoje?')}
+                      onClick={() =>
+                        handleRunAgentLiveTest(
+                          '🎙️ [Áudio]: Oi! Manda aquele mesmo pedido da última vez para entrega?',
+                          true
+                        )
+                      }
+                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-300 rounded-lg font-semibold transition-colors cursor-pointer"
+                    >
+                      🎙️ Simular Áudio (&ldquo;Manda o da última vez&rdquo;)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest('Quais são as opções e preços do cardápio de hoje?')
+                      }
                       className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
                     >
                       🍽️ &ldquo;Ver produtos e preços&rdquo;
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleRunAgentLiveTest('Vocês estão abertos agora? Qual o horário de funcionamento?')}
-                      className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                      onClick={() =>
+                        handleRunAgentLiveTest('E quanto fica se eu pedir 2 desse no total?')
+                      }
+                      className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-lg font-semibold transition-colors cursor-pointer"
                     >
-                      🕒 &ldquo;Horário de atendimento&rdquo;
+                      💬 Continuar papo: &ldquo;Quanto fica 2 desse?&rdquo;
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleRunAgentLiveTest('Qual o valor da taxa de entrega e tem opção de retirada ou mesa?')}
+                      onClick={() =>
+                        handleRunAgentLiveTest('Vocês estão abertos agora? Qual o horário de funcionamento?')
+                      }
                       className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
                     >
-                      🛵 &ldquo;Taxa de entrega e modalidades&rdquo;
+                      🕒 &ldquo;Vocês estão abertos?&rdquo;
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleRunAgentLiveTest('Quais formas de pagamento vocês aceitam? Tem Pix?')}
-                      className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
-                    >
-                      💠 &ldquo;Formas de pagamento / Pix&rdquo;
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleRunAgentLiveTest('Onde está meu pedido? Qual o status na cozinha?')}
+                      onClick={() =>
+                        handleRunAgentLiveTest('Onde está meu pedido? Qual o status na cozinha?')
+                      }
                       className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
                     >
                       📦 &ldquo;Onde está meu pedido?&rdquo;
@@ -3061,7 +3037,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                 </div>
                 <div className="md:col-span-6">
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                    Mensagem Recebida no WhatsApp
+                    Mensagem Recebida no WhatsApp (Texto ou 🎙️ Áudio)
                   </label>
                   <div className="flex gap-2">
                     <input
@@ -3076,6 +3052,15 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                     <button
                       type="button"
                       disabled={isTestingN8nAgent}
+                      onClick={() => handleRunAgentLiveTest(undefined, true)}
+                      title="Simular envio como Áudio de Voz no WhatsApp"
+                      className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
+                    >
+                      <span>🎙️ Áudio</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isTestingN8nAgent}
                       onClick={() => handleRunAgentLiveTest()}
                       className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer"
                     >
@@ -3084,7 +3069,7 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                       ) : (
                         <Send className="w-3.5 h-3.5" />
                       )}
-                      <span>{isTestingN8nAgent ? 'Processando...' : 'Testar Agente'}</span>
+                      <span>{isTestingN8nAgent ? 'Processando...' : 'Testar'}</span>
                     </button>
                   </div>
                 </div>
@@ -3111,12 +3096,25 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                       <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                       <span>Resposta Gerada pelo Agente IA ({agentTestResult.triggeredTool})</span>
                     </span>
-                    <div className="flex items-center gap-2 text-[11px] font-mono">
-                      <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-sans font-medium">
-                        ⏱️ Espera de {n8nResponseDelaySeconds}s respeitada · 📝 Bloco Único
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-mono">
+                      {agentTestResult.isAudio && (
+                        <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 border border-indigo-200 font-sans font-semibold">
+                          🎙️ Áudio Interpretado
+                        </span>
+                      )}
+                      <span
+                        className={`px-2 py-0.5 rounded border font-sans font-semibold ${
+                          agentTestResult.isFollowUp
+                            ? 'bg-purple-50 text-purple-800 border-purple-200'
+                            : 'bg-blue-50 text-blue-800 border-blue-200'
+                        }`}
+                      >
+                        {agentTestResult.isFollowUp
+                          ? `💬 Turno #${agentTestResult.turnCount} (Continuação sem repetir saudação)`
+                          : '👋 Turno #1 (1ª Mensagem da Conversa)'}
                       </span>
-                      <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">
-                        Latência: {agentTestResult.latencyMs}ms
+                      <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-sans font-medium">
+                        ⏱️ {n8nResponseDelaySeconds}s · 📝 Bloco Único
                       </span>
                       {dispatchToRemoteN8n && (
                         <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
@@ -3128,6 +3126,25 @@ REGRAS OBRIGATÓRIAS DE ATENDIMENTO AO CLIENTE:
                   <div className="p-3.5 bg-[#DCF8C6]/50 border border-emerald-200 rounded-xl whitespace-pre-wrap text-slate-900 leading-relaxed font-sans text-xs">
                     {agentTestResult.agentReply}
                   </div>
+                  {agentTestResult.conversationMemory?.recentMessages?.length > 1 && (
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
+                        <span>🧠 Contexto Mantido na Conversa ({agentTestResult.conversationMemory.recentMessages.length} mensagens na sessão):</span>
+                        <span className="text-slate-500 font-mono">{agentTestResult.conversationMemory.sessionKey}</span>
+                      </div>
+                      <div className="space-y-1 max-h-36 overflow-y-auto text-[11px] text-slate-700 font-sans">
+                        {agentTestResult.conversationMemory.recentMessages.map((m: any, idx: number) => (
+                          <div key={idx} className="flex gap-1.5">
+                            <span className="text-slate-400 font-mono shrink-0">[{m.timeStr}]</span>
+                            <span className={m.role === 'user' ? 'font-semibold text-blue-800' : 'font-semibold text-emerald-800'}>
+                              {m.role === 'user' ? `${m.isAudio ? '🎙️ ' : ''}Cliente:` : '🤖 Agente:'}
+                            </span>
+                            <span className="truncate">{m.text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

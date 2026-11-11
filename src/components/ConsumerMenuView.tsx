@@ -87,7 +87,7 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
   });
   const [paymentMethod, setPaymentMethod] = useState<string>('⚡ Pix Instantâneo (Aprovação Automática)');
 
-  // Detect ?mesa=XX from QR Code on Table
+  // Detect ?mesa=XX from QR Code on Table, or ?repetir=ORDER_ID / ?item=PRODUCT_ID from WhatsApp AI Agent ("Quero aquele de ontem")
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
@@ -96,7 +96,72 @@ export const ConsumerMenuView: React.FC<ConsumerMenuViewProps> = ({
       setTableNumber(mesaParam.replace(/\D/g, '').padStart(2, '0'));
       setDeliveryType('dine_in');
     }
-  }, []);
+
+    const itemParam = params.get('item');
+    const qtdParam = Math.max(1, Number(params.get('qtd')) || 1);
+    if (itemParam && products.length > 0) {
+      const targetProd = products.find((p) => p.id === itemParam || p.name.toLowerCase() === itemParam.toLowerCase());
+      if (targetProd) {
+        setCartItems((prev) => {
+          if (prev.some((i) => i.productId === targetProd.id)) return prev;
+          return [
+            ...prev,
+            {
+              id: `cart_${Date.now()}_${targetProd.id}`,
+              productId: targetProd.id,
+              productName: targetProd.name,
+              name: targetProd.name,
+              quantity: qtdParam,
+              unitPriceCents: targetProd.priceCents,
+              totalPriceCents: targetProd.priceCents * qtdParam,
+              totalCents: targetProd.priceCents * qtdParam,
+              selectedOptions: [],
+            },
+          ];
+        });
+        setCartStep('bag');
+        setIsCartOpen(true);
+        setAddedToastMessage(`✨ ${qtdParam}x ${targetProd.name} separado na sua sacola!`);
+        setTimeout(() => setAddedToastMessage(null), 4000);
+      }
+    }
+
+    const repetirParam = params.get('repetir');
+    if (repetirParam && tenant.slug) {
+      fetch(`/api/v1/tenants/${encodeURIComponent(tenant.slug)}/repeat-order?orderId=${encodeURIComponent(repetirParam)}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data?.success && data?.order?.itemsDetailed?.length > 0) {
+            const repeatedItems: OrderItem[] = data.order.itemsDetailed.map((it: any, idx: number) => {
+              const catalogMatch = products.find(
+                (p) => p.id === it.productId || p.name.toLowerCase() === String(it.name || '').toLowerCase()
+              );
+              const unitPrice = catalogMatch ? catalogMatch.priceCents : Number(it.priceCents) || 0;
+              const qty = Math.max(1, Number(it.quantity) || 1);
+              const resolvedName = catalogMatch ? catalogMatch.name : it.name;
+              return {
+                id: `repeat_${Date.now()}_${idx}`,
+                productId: catalogMatch ? catalogMatch.id : it.productId || `prod_${idx}`,
+                productName: resolvedName,
+                name: resolvedName,
+                quantity: qty,
+                unitPriceCents: unitPrice,
+                totalPriceCents: unitPrice * qty,
+                totalCents: unitPrice * qty,
+                notes: it.notes || undefined,
+                selectedOptions: Array.isArray(it.selectedOptions) ? it.selectedOptions : [],
+              };
+            });
+            setCartItems(repeatedItems);
+            setCartStep('bag');
+            setIsCartOpen(true);
+            setAddedToastMessage('🔄 Repetimos seu último pedido direto na sacola! Confira e finalize.');
+            setTimeout(() => setAddedToastMessage(null), 4500);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [tenant.slug, products]);
 
   // Pix payment modal state
   const [activePixOrder, setActivePixOrder] = useState<Order | null>(null);
