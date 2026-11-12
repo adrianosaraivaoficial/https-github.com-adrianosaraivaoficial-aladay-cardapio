@@ -4,23 +4,15 @@ import {
   QrCode,
   RefreshCw,
   CheckCircle2,
-  Phone,
   Check,
   Copy,
   Terminal,
   Server,
-  Play,
-  Pause,
   Send,
   Sparkles,
-  Layers,
-  ArrowRight,
-  ExternalLink,
   Bot,
   User,
   Sliders,
-  Settings,
-  HelpCircle,
   FileCode,
   ShieldCheck,
   Clock,
@@ -28,15 +20,15 @@ import {
   Smartphone,
   Radio,
   Zap,
-  Filter,
   Eye,
   LogOut,
-  BatteryCharging,
-  Database
+  Database,
+  Loader2
 } from 'lucide-react';
 import { Order, RestaurantTenant, WebhookLogEvent, EvolutionQrConnectResponse, AuthSession } from '../types';
 import { NotificationTemplatesEditor } from './NotificationTemplatesEditor';
 import { WhatsAppQrPairingModal } from './WhatsAppQrPairingModal';
+import { buildPublicMenuUrl } from '../utils/publicMenuUrl';
 
 interface WhatsAppAutomationViewProps {
   tenant: RestaurantTenant;
@@ -63,32 +55,42 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   onSimulateEvolutionReconnect,
   authSession,
 }) => {
-  const isSuperAdmin = authSession ? authSession.user.role === 'SUPER_ADMIN' : true;
+  const isSuperAdmin = Boolean(authSession && authSession.user?.role === 'SUPER_ADMIN');
   const [subTab, setSubTab] = useState<'qrcode_pairing' | 'status_notifications' | 'simulator' | 'n8n_workflow' | 'templates' | 'easypanel' | 'logs'>(
-    initialSubTab || 'qrcode_pairing'
+    initialSubTab && (isSuperAdmin || (initialSubTab !== 'n8n_workflow' && initialSubTab !== 'easypanel' && initialSubTab !== 'logs'))
+      ? initialSubTab
+      : 'qrcode_pairing'
   );
+
+  // Redireciona restaurantes para o pareamento QR Code caso tentem acessar abas restritas de infraestrutura
+  useEffect(() => {
+    if (!isSuperAdmin && (subTab === 'n8n_workflow' || subTab === 'easypanel' || subTab === 'logs')) {
+      setSubTab('qrcode_pairing');
+    }
+  }, [isSuperAdmin, subTab]);
+
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
 
-  // Form settings state (defaults populated from user's Easypanel setup)
+  // Form settings state (Secrets are stored strictly in backend .env)
   const [evolutionUrl, setEvolutionUrl] = useState(
     tenant.evolutionApiUrl || ''
   );
-  const [evolutionApiKey, setEvolutionApiKey] = useState(
-    tenant.evolutionApiKey || ''
-  );
+  const [evolutionApiKey, setEvolutionApiKey] = useState('');
   const [n8nWebhookUrl, setN8nWebhookUrl] = useState(
-    tenant.n8nWebhookUrl || ''
+    () => `https://integration.example.invalid${tenant.slug}`
   );
-  const [isAutoReplyActive, setIsAutoReplyActive] = useState(tenant.botAutoReplyEnabled ?? true);
+  const [isAutoReplyActive] = useState(tenant.botAutoReplyEnabled ?? true);
 
   // Template messages state
+  const publicStoreUrl = buildPublicMenuUrl(tenant.slug);
+
   const [welcomeTemplate, setWelcomeTemplate] = useState(
     tenant.botWelcomeMessage ||
-      `Olá! Seja muito bem-vindo ao *${tenant.name}*! 🍔\n\nNosso cardápio digital completo está disponível no link abaixo com fotos e preços em tempo real:\n\n👉 https://cardapio.seudominio.com/${tenant.slug}\n\nFaça seu pedido diretamente pelo link! Se preferir falar com um atendente da nossa equipe, responda com *2*.`
+      `Olá! Seja muito bem-vindo ao *${tenant.name}*! 🍔\n\nNosso cardápio digital completo está disponível no link abaixo com fotos e preços em tempo real:\n\n👉 ${publicStoreUrl}\n\nFaça seu pedido diretamente pelo link! Se preferir falar com um atendente da nossa equipe, responda com *2*.`
   );
   const [closedHoursTemplate, setClosedHoursTemplate] = useState(
     tenant.botClosedHoursMessage ||
-      `Olá! Agradecemos sua mensagem para o *${tenant.name}*.\n\nNo momento nosso restaurante está *FECHADO*.\n🕒 Horário de atendimento: ${tenant.openingHoursText}.\n\nVocê já pode conferir nosso cardápio e adiantar seu pedido para quando abrirmos:\n👉 https://cardapio.seudominio.com/${tenant.slug}`
+      `Olá! Agradecemos sua mensagem para o *${tenant.name}*.\n\nNo momento nosso restaurante está *FECHADO*.\n🕒 Horário de atendimento: ${tenant.openingHoursText}.\n\nVocê já pode conferir nosso cardápio e adiantar seu pedido para quando abrirmos:\n👉 ${publicStoreUrl}`
   );
   const [humanHandoffTemplate, setHumanHandoffTemplate] = useState(
     tenant.botHumanHandoffMessage ||
@@ -97,6 +99,15 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
 
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
 
+  const normalizeBrPhone = useCallback((raw?: string) => {
+    const digits = String(raw || '').replace(/\D/g, '').replace(/^0+/, '');
+    if (!digits) return '';
+    if (digits.length === 10 || digits.length === 11) {
+      return `55${digits}`;
+    }
+    return digits;
+  }, []);
+
   // On-Screen QR Code Pairing State
   const [embeddedQrData, setEmbeddedQrData] = useState<EvolutionQrConnectResponse | null>(null);
   const [embeddedQrSeconds, setEmbeddedQrSeconds] = useState(40);
@@ -104,9 +115,16 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const [copiedEmbeddedCode, setCopiedEmbeddedCode] = useState(false);
   const [isSimulatingEmbeddedScan, setIsSimulatingEmbeddedScan] = useState(false);
   const [isDisconnectingEmbedded, setIsDisconnectingEmbedded] = useState(false);
-  const [embeddedPhoneInput, setEmbeddedPhoneInput] = useState(tenant.phone || '5511987654321');
+  const [embeddedPhoneInput, setEmbeddedPhoneInput] = useState(() => normalizeBrPhone(tenant.phone || ''));
   const [embeddedPairingMode, setEmbeddedPairingMode] = useState<'qr' | 'code'>('qr');
   const [embeddedErrorNotice, setEmbeddedErrorNotice] = useState<string | null>(null);
+  const [inlineGlobalApiKey, setInlineGlobalApiKey] = useState(tenant.evolutionApiKey || '');
+
+  useEffect(() => {
+    if (tenant.phone) {
+      setEmbeddedPhoneInput(normalizeBrPhone(tenant.phone));
+    }
+  }, [tenant.phone, normalizeBrPhone]);
 
   // EasyPanel PostgreSQL Database Configurator State (Super Admin)
   const [epProjectName, setEpProjectName] = useState('agencia');
@@ -221,32 +239,79 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
 
   const qrTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const fetchEmbeddedQr = useCallback(async (force = false) => {
-    if (tenant.evolutionStatus === 'connected' && !force) return;
-    setLoadingEmbeddedQr(true);
-    setEmbeddedErrorNotice(null);
-    try {
-      const res = await fetch(`/api/v1/evolution/instance/${tenant.evolutionInstanceId || 'aladay'}/connect`);
-      if (res.ok) {
-        const data: EvolutionQrConnectResponse = await res.json();
-        setEmbeddedQrData(data);
-        setEmbeddedQrSeconds(data.expiresInSeconds || 40);
-      } else {
-        setEmbeddedErrorNotice('Não foi possível carregar o QR Code no momento.');
+  const fetchEmbeddedQr = useCallback(
+    async (force = false, overridePhone?: string, overrideApiKey?: string) => {
+      if (tenant.evolutionStatus === 'connected' && !force) return;
+      setLoadingEmbeddedQr(true);
+      setEmbeddedErrorNotice(null);
+      try {
+        const phoneToUse = normalizeBrPhone(overridePhone ?? embeddedPhoneInput ?? tenant.phone);
+        const params = new URLSearchParams();
+        if (phoneToUse) params.set('number', phoneToUse);
+        if (overrideApiKey && overrideApiKey.trim()) params.set('apiKey', overrideApiKey.trim());
+
+        const instanceId = tenant.evolutionInstanceId || `instancia_${tenant.slug}`;
+        const res = await fetch(
+          `/api/v1/evolution/instance/${encodeURIComponent(instanceId)}/connect?${params.toString()}`
+        );
+        if (res.ok) {
+          const data: EvolutionQrConnectResponse = await res.json();
+          setEmbeddedQrData(data);
+          setEmbeddedQrSeconds(data.expiresInSeconds || 40);
+          if (data.state === 'open' && tenant.evolutionStatus !== 'connected') {
+            onUpdateTenant({
+              ...tenant,
+              evolutionStatus: 'connected',
+              phone: data.connectedPhone || phoneToUse || tenant.phone,
+            });
+            setSaveNotice('WhatsApp conectado com sucesso na Evolution API!');
+            setTimeout(() => setSaveNotice(null), 4000);
+          }
+        } else {
+          setEmbeddedErrorNotice('Não foi possível carregar o QR Code no momento.');
+        }
+      } catch {
+        setEmbeddedErrorNotice('Erro ao buscar QR Code da Evolution API.');
+      } finally {
+        setLoadingEmbeddedQr(false);
       }
-    } catch {
-      setEmbeddedErrorNotice('Erro ao buscar QR Code da Evolution API.');
-    } finally {
-      setLoadingEmbeddedQr(false);
-    }
-  }, [tenant.evolutionInstanceId, tenant.evolutionStatus]);
+    },
+    [tenant, embeddedPhoneInput, normalizeBrPhone, onUpdateTenant]
+  );
 
   // Load QR code when subTab is qrcode_pairing
   useEffect(() => {
     if (subTab === 'qrcode_pairing') {
-      fetchEmbeddedQr();
+      fetchEmbeddedQr(true);
     }
-  }, [subTab, fetchEmbeddedQr]);
+  }, [subTab, tenant.slug]);
+
+  // Poll real-time status from Evolution API every 3.5s while on qrcode_pairing tab
+  useEffect(() => {
+    if (subTab !== 'qrcode_pairing') return;
+    const instanceId = tenant.evolutionInstanceId || `instancia_${tenant.slug}`;
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/v1/evolution/instance/${encodeURIComponent(instanceId)}/status`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.state === 'open' && tenant.evolutionStatus !== 'connected') {
+            onUpdateTenant({
+              ...tenant,
+              evolutionStatus: 'connected',
+              phone: data.connectedPhone || normalizeBrPhone(embeddedPhoneInput || tenant.phone),
+            });
+            setSaveNotice(`WhatsApp pareado e conectado com sucesso (+${data.connectedPhone || normalizeBrPhone(tenant.phone)})!`);
+            setTimeout(() => setSaveNotice(null), 4500);
+          }
+        }
+      } catch {
+        // Ignore transient status poll error
+      }
+    }, 3500);
+
+    return () => clearInterval(poll);
+  }, [subTab, tenant, embeddedPhoneInput, normalizeBrPhone, onUpdateTenant]);
 
   // Countdown timer for QR refresh
   useEffect(() => {
@@ -270,11 +335,13 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const handleEmbeddedSimulateScan = async () => {
     setIsSimulatingEmbeddedScan(true);
     try {
+      const normalized = normalizeBrPhone(embeddedPhoneInput || tenant.phone || '');
+      setEmbeddedPhoneInput(normalized);
       const res = await fetch(`/api/v1/evolution/instance/${tenant.evolutionInstanceId || 'aladay'}/simulate-scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone: embeddedPhoneInput || tenant.phone || '5511987654321',
+          phone: normalized,
           profileName: `${tenant.name} Atendimento`,
         }),
       });
@@ -283,10 +350,10 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
         const updated: RestaurantTenant = {
           ...tenant,
           evolutionStatus: 'connected',
-          phone: data.connectedPhone || tenant.phone,
+          phone: data.connectedPhone || normalized,
         };
         onUpdateTenant(updated);
-        setSaveNotice(`WhatsApp pareado com sucesso no número +${data.connectedPhone}!`);
+        setSaveNotice(`WhatsApp pareado com sucesso no número +${data.connectedPhone || normalized}!`);
         setTimeout(() => setSaveNotice(null), 4000);
       }
     } catch {
@@ -309,7 +376,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
           evolutionStatus: 'disconnected',
         };
         onUpdateTenant(updated);
-        setSaveNotice('Instância desconectada. Pronto para novo pareamento via QR Code.');
+        setSaveNotice('Instância desconectada. Pronto para novo pareamento via QR Code ou Código de 8 Dígitos.');
         setTimeout(() => setSaveNotice(null), 4000);
         fetchEmbeddedQr(true);
       }
@@ -328,7 +395,184 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const [botPausedForCustomer, setBotPausedForCustomer] = useState(false);
   const [activePipelineStep, setActivePipelineStep] = useState<number | null>(null);
   const [copiedWorkflow, setCopiedWorkflow] = useState(false);
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [copiedCurl, setCopiedCurl] = useState(false);
+
+  // n8n AI Agent Configurator State (Default focused on Restaurant Digital Menu Customer Support)
+  const [n8nAgentMode, setN8nAgentMode] = useState<'sdr_aladay' | 'restaurante_ia' | 'deterministico'>('restaurante_ia');
+  const [n8nLlmProvider, setN8nLlmProvider] = useState<'openai' | 'gemini'>('openai');
+  const [n8nLlmModel, setN8nLlmModel] = useState<string>('gpt-4o-mini');
+  const [n8nMemoryWindow, setN8nMemoryWindow] = useState<number>(12);
+  const [n8nWebhookPath, setN8nWebhookPath] = useState<string>(`cardapio-${tenant.slug}`);
+  const [isBindingWebhook, setIsBindingWebhook] = useState(false);
+  const [webhookBindFeedback, setWebhookBindFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Live n8n Agent Tester State
+  const [agentTestCustomerName, setAgentTestCustomerName] = useState('Cliente de demonstração');
+  const [agentTestPhone, setAgentTestPhone] = useState('');
+  const [agentTestMessage, setAgentTestMessage] = useState('Boa noite! Vocês estão abertos? Quero ver o cardápio digital e os preços de hoje.');
+  const [dispatchToRemoteN8n, setDispatchToRemoteN8n] = useState(false);
+  const [isTestingN8nAgent, setIsTestingN8nAgent] = useState(false);
+  const [agentTestResult, setAgentTestResult] = useState<any | null>(null);
+
+  const appOriginUrl =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : 'https://aladay.com.br';
+
+  // Live Knowledge Base Editor State
+  const [isKbModalOpen, setIsKbModalOpen] = useState(false);
+  const [kbContent, setKbContent] = useState('');
+  const [kbVersion, setKbVersion] = useState('4.1 (Novembro 2026)');
+  const [isLoadingKb, setIsLoadingKb] = useState(false);
+  const [isSavingKb, setIsSavingKb] = useState(false);
+  const [kbSaveFeedback, setKbSaveFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const handleOpenKbModal = async () => {
+    setIsKbModalOpen(true);
+    setKbSaveFeedback(null);
+    setIsLoadingKb(true);
+    try {
+      const res = await fetch('/api/v1/n8n/knowledge-base');
+      const data = await res.json();
+      if (data?.knowledgeBase) {
+        setKbContent(data.knowledgeBase);
+      }
+      if (data?.version) {
+        setKbVersion(data.version);
+      }
+    } catch {
+      setKbSaveFeedback({
+        type: 'error',
+        message: 'Não foi possível carregar a Base de Conhecimento do servidor.',
+      });
+    } finally {
+      setIsLoadingKb(false);
+    }
+  };
+
+  const handleSaveKbContent = async () => {
+    if (!kbContent || kbContent.trim().length < 50) {
+      setKbSaveFeedback({
+        type: 'error',
+        message: 'O conteúdo da Base de Conhecimento está muito curto.',
+      });
+      return;
+    }
+    setIsSavingKb(true);
+    setKbSaveFeedback(null);
+    try {
+      const res = await fetch('/api/v1/n8n/knowledge-base', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: kbContent }),
+      });
+      const data = await res.json();
+      if (res.ok && data?.ok) {
+        setKbSaveFeedback({
+          type: 'success',
+          message: data.message || 'Base de Conhecimento v4.1 salva e atualizada em tempo real!',
+        });
+      } else {
+        setKbSaveFeedback({
+          type: 'error',
+          message: data?.error || 'Erro ao salvar alterações na Base de Conhecimento.',
+        });
+      }
+    } catch {
+      setKbSaveFeedback({
+        type: 'error',
+        message: 'Falha de conexão ao salvar a Base de Conhecimento.',
+      });
+    } finally {
+      setIsSavingKb(false);
+    }
+  };
+
+  const defaultSdrSystemPrompt = `Você é o Consultor Comercial Especialista (SDR / Closer) da Aladay Cardápios Digitais (${appOriginUrl}) — Base de Conhecimento v4.1.
+WhatsApp Oficial de Suporte e Vendas: +55 (91) 3197-6334 (https://wa.me/559131976334).
+
+⚡ DIRETRIZES DE NATURALIDADE, ÁUDIO E ANTI-REPETIÇÃO NO WHATSAPP:
+1. RESPOSTA EM BLOCO ÚNICO E CURTO: Envie toda a sua resposta em UM ÚNICO BLOCO de mensagem (2 a 4 frases curtas, máx. 60 palavras).
+2. PROIBIDO REPETIR SAUDAÇÕES OU DESPEDIDAS: Cumprimente pelo nome APENAS na 1ª mensagem da conversa. A partir da 2ª mensagem, NUNCA repita "Olá [Nome]!" nem se despeça com "Até logo!" / "Até mais!". Continue a conversa de forma fluida e natural.
+3. INTERPRETAÇÃO DE ÁUDIOS: Quando o lead enviar áudio de voz (transcrito automaticamente), responda naturalmente ao que ele falou no áudio.
+4. PAUSA HUMANIZADA (5s): O n8n aguarda automaticamente 5 segundos com indicador 'digitando...'.
+
+PLANOS E PREÇOS OFICIAIS (0% DE COMISSÃO SEMPRE):
+- PLANO ANUAL: 12x de R$ 99,00 no cartão de crédito (economia de R$ 370,80/ano).
+- PLANO MENSAL: R$ 129,90/mês com 15 DIAS GRÁTIS para testar tudo na prática sem pagar nada hoje (Pix, Boleto ou Cartão).
+- Link oficial para cadastro: ${appOriginUrl}
+- Atendente humano / Opção 2: direcione para o WhatsApp oficial https://wa.me/559131976334`;
+
+  const defaultRestaurantSystemPrompt = `Você é o Atendente Virtual Inteligente do restaurante identificado no contexto em tempo real abaixo (ex: *${tenant.name}*).
+Este workflow no n8n é MULTI-TENANT: você identifica automaticamente qual restaurante recebeu a mensagem através de "CONTEXTO EM TEMPO REAL DA LOJA" e atende exclusivamente em nome dele.
+
+⚡ REGRAS DE OURO PARA UM ATENDIMENTO HUMANO, NATURAL E SEM REPETIÇÃO:
+1. ANTI-REPETIÇÃO (MUITO IMPORTANTE):
+   - Na 1ª mensagem da conversa (Turno #1): cumprimente o cliente pelo nome com simpatia e fale em nome do restaurante.
+   - Da 2ª mensagem em diante (Turno #2+): NUNCA repita "Olá, [Nome]! Aqui é do [Restaurante]" no início! NUNCA termine mensagens com "Até logo!", "Até mais!" ou frases robóticas repetidas. Continue o papo exatamente de onde parou, como um atendente humano conversando no WhatsApp.
+2. INTERPRETAÇÃO DE ÁUDIOS DE VOZ:
+   - Se a mensagem vier marcada como [🎙️ ÁUDIO DE VOZ TRANSCRITO], o cliente enviou um áudio no WhatsApp. Responda com naturalidade (ex: "Ouvi seu áudio! ...") atendendo exatamente ao que ele pediu.
+3. PEDIDOS ANTERIORES ("QUERO AQUELE DE ONTEM" / "O MESMO DA ÚLTIMA VEZ"):
+   - Quando o cliente disser "quero aquele de ontem", "o mesmo da última vez", "repetir meu pedido" ou "o de sempre", consulte a seção "=== HISTÓRICO E PEDIDO DE ONTEM DESTE CLIENTE ===".
+   - Cite os itens exatos e o valor do pedido anterior dele e envie o "Link Direto p/ Repetir na Sacola em 1 Clique" (/cardapio/slug?repetir=...), explicando que ao clicar a sacola já abre pronta com esses itens!
+4. MANUTENÇÃO DO CONTEXTO DA CONVERSA:
+   - Use o histórico da conversa para entender referências como "quero 2 desse", "e quanto fica com entrega?", "tem de frango?", calculando o valor com base na tabela de preços ao vivo.
+5. BLOCO ÚNICO E CONCISO:
+   - Responda SEMPRE em um único balão de mensagem (2 a 4 frases curtas, máx. 55 palavras).
+6. ATENDENTE HUMANO (OPÇÃO 2):
+   - Se o cliente digitar "2" ou pedir atendente humano, avise em 1 frase que pausou o atendimento automático e chamou a equipe.`;
+
+  const [agentSystemPrompt, setAgentSystemPrompt] = useState<string>(defaultRestaurantSystemPrompt);
+  const [n8nResponseDelaySeconds, setN8nResponseDelaySeconds] = useState<number>(5);
+  const [isDelayCountingDown, setIsDelayCountingDown] = useState<boolean>(false);
+  const [delayCountdownSeconds, setDelayCountdownSeconds] = useState<number>(5);
+
+  const syncWebhookPathAndUrl = useCallback(
+    (rawPath: string) => {
+      const clean = rawPath.replace(/^\/+|\/+$/g, '').trim() || `cardapio-${tenant.slug}`;
+      setN8nWebhookPath(clean);
+      setN8nWebhookUrl((prev) => {
+        const base = (prev || 'https://integration.example.invalid')
+          .trim()
+          .replace(/\/webhook(-test)?\/.*$/, '')
+          .replace(/\/+$/, '');
+        return `${base || 'https://integration.example.invalid'}/webhook/${clean}`;
+      });
+    },
+    [tenant.slug]
+  );
+
+  // Sync restaurant prompt and unique webhook path automatically when switching the active restaurant
+  useEffect(() => {
+    if (n8nAgentMode === 'restaurante_ia') {
+      setAgentSystemPrompt(defaultRestaurantSystemPrompt);
+      syncWebhookPathAndUrl(`cardapio-${tenant.slug}`);
+    } else if (n8nAgentMode === 'deterministico') {
+      syncWebhookPathAndUrl(`auto-${tenant.slug}`);
+    }
+  }, [tenant.slug, tenant.name, tenant.isOpen, tenant.openingHoursText, n8nAgentMode, defaultRestaurantSystemPrompt, syncWebhookPathAndUrl]);
+
+  // Switch default system prompt and non-conflicting webhook path when user switches agent mode
+  const handleSelectAgentMode = (mode: 'sdr_aladay' | 'restaurante_ia' | 'deterministico') => {
+    setN8nAgentMode(mode);
+    if (mode === 'sdr_aladay') {
+      setAgentSystemPrompt(defaultSdrSystemPrompt);
+      setAgentTestCustomerName('Responsável de demonstração');
+      setAgentTestMessage('Olá! Gostaria de saber quanto custa o sistema da Aladay e se vocês cobram comissão por pedido.');
+      syncWebhookPathAndUrl('sdr-aladay');
+    } else if (mode === 'restaurante_ia') {
+      setAgentSystemPrompt(defaultRestaurantSystemPrompt);
+      setAgentTestCustomerName('Cliente Exemplo');
+      setAgentTestMessage('Oi! Quero pedir aquele mesmo de ontem, por favor!');
+      syncWebhookPathAndUrl(`cardapio-${tenant.slug}`);
+    } else {
+      setAgentSystemPrompt(defaultRestaurantSystemPrompt);
+      setAgentTestCustomerName('Cliente Exemplo');
+      setAgentTestMessage('Oi! Quero pedir aquele mesmo de ontem, por favor!');
+      syncWebhookPathAndUrl(`auto-${tenant.slug}`);
+    }
+  };
 
   // Webhook Logs & Live Inspector State
   const [webhookLogs, setWebhookLogs] = useState<WebhookLogEvent[]>([]);
@@ -338,137 +582,481 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   const [isSendingTestWebhook, setIsSendingTestWebhook] = useState(false);
   const [testWebhookResult, setTestWebhookResult] = useState<any>(null);
 
-  // Workflow JSON generated dynamically tailored to the Evolution API v2 Easypanel schema
-  const n8nWorkflowJSON = JSON.stringify(
-    {
-      name: `Evolution API v2 - Auto Resposta Cardapio [${tenant.evolutionInstanceId || 'aladay'}]`,
-      nodes: [
+  // Build the dynamic n8n Workflow JSON according to the selected mode (Single Multi-Tenant Workflow for all restaurants)
+  const n8nWorkflowJSON = React.useMemo(() => {
+    const cleanEvoUrl = (evolutionUrl || 'https://integration.example.invalid').replace(/\/$/, '');
+    const cleanInstance = tenant.evolutionInstanceId || 'aladay';
+    const cleanPath = (n8nWebhookPath || `cardapio-${tenant.slug}`).replace(/^\//, '');
+    const safeIdSuffix = cleanPath.replace(/[^a-zA-Z0-9_-]/g, '-');
+
+    if (n8nAgentMode === 'deterministico') {
+      return JSON.stringify(
         {
-          parameters: {
-            httpMethod: 'POST',
-            path: 'saas',
-            responseMode: 'onReceived',
-            responseData: 'OK',
-            options: {},
-          },
-          id: 'node-webhook-evolution',
-          name: 'Webhook Evolution API',
-          type: 'n8n-nodes-base.webhook',
-          typeVersion: 2,
-          position: [140, 300],
-          webhookId: 'evolution-saas-webhook',
-        },
-        {
-          parameters: {
-            jsCode: `// =========================================================================\n// Processador de Webhook Evolution API v2 (Easypanel Hostinger)\n// Baseado na estrutura real recebida em /webhook/saas\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // 1. Descartar grupos (@g.us) e canais de transmissao (@broadcast)\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  // 2. Tratar fromMe (Anti-Loop com suporte a Teste no n8n):\n  // Em modo de teste (webhookUrl com /webhook-test/ ou executionMode: test),\n  // permitimos fromMe=true para testar enviando do proprio celular conectado.\n  // Em producao real, ignora mensagens enviadas pelo bot.\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/') ||\n                      String(body.destination || '').includes('/webhook-test/');\n\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  // 3. Extrair telefone limpo (ex: 559181214188)\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n\n  // 4. Tratar nome do cliente (ex: 'Adriano Saraiva | Ozonteck' -> 'Adriano Saraiva')\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n\n  // 5. Extrair mensagem de texto (suporta conversa direta ou extendedTextMessage)\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    ''\n  ).trim();\n\n  // 6. Extrair credenciais dinamicas enviadas no proprio webhook pela Evolution API\n  const serverUrl = (body.server_url || '${evolutionUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  const instance = body.instance || '${tenant.evolutionInstanceId || 'aladay'}';\n\n  // 7. Analise de intencao do cliente\n  const isHumanHandoff = /^(2|atendente|humano|ajuda|falar com atendente|falar com alguem|suporte)$/i.test(messageText);\n\n  // 8. Mensagens dinamicas\n  const menuReply = \`Olá, *\${customerName}*! Seja muito bem-vindo ao *${tenant.name}*! 🍔\\n\\nNosso cardápio digital completo está disponível com fotos e preços em tempo real:\\n\\n👉 https://cardapio.seudominio.com/${tenant.slug}\\n\\nFaça seu pedido diretamente pelo link acima!\\nSe preferir falar com um atendente da nossa equipe, responda com *2*.\`;\n\n  const humanReply = \`Perfeito, *\${customerName}*! Pausamos o bot automático. Um dos nossos atendentes humanos vai te responder em instantes! 👨‍🍳\`;\n\n  const replyText = isHumanHandoff ? humanReply : menuReply;\n\n  results.push({\n    json: {\n      customerPhone,\n      customerName,\n      messageText,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      isHumanHandoff,\n      replyText,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n      payloadToSend: {\n        number: customerPhone,\n        text: replyText,\n        options: {\n          delay: 1200,\n          presence: 'composing',\n          linkPreview: true,\n        },\n      },\n    },\n  });\n}\n\nreturn results;`,
-          },
-          id: 'node-code-process',
-          name: 'Tratar Payload Evolution API',
-          type: 'n8n-nodes-base.code',
-          typeVersion: 2,
-          position: [380, 300],
-        },
-        {
-          parameters: {
-            conditions: {
-              boolean: [
-                {
-                  value1: '={{ $json.isHumanHandoff }}',
-                  value2: true,
-                },
-              ],
+          name: `Aladay Multi-Tenant - Auto-Resposta Cardapio Digital [${cleanPath}]`,
+          nodes: [
+            {
+              parameters: {
+                httpMethod: 'POST',
+                path: cleanPath,
+                responseMode: 'onReceived',
+                responseData: 'OK',
+                options: {},
+              },
+              id: 'node-webhook-evolution',
+              name: 'Webhook Evolution API',
+              type: 'n8n-nodes-base.webhook',
+              typeVersion: 2,
+              position: [120, 300],
+              webhookId: `aladay-webhook-det-${safeIdSuffix}`,
             },
-          },
-          id: 'node-if-human',
-          name: 'É Pedido de Atendente Humano?',
-          type: 'n8n-nodes-base.if',
-          typeVersion: 2,
-          position: [620, 300],
-        },
-        {
-          parameters: {
-            method: 'POST',
-            url: '={{ $json.endpointUrl }}',
-            sendHeaders: true,
-            headerParameters: {
-              parameters: [
-                {
-                  name: 'apikey',
-                  value: '={{ $json.apiKey }}',
-                },
-                {
-                  name: 'Content-Type',
-                  value: 'application/json',
-                },
-              ],
+            {
+              parameters: {
+                jsCode: `// =========================================================================\n// 1. Roteador Multi-Tenant + Captura de Áudio & Anti-Loop Evolution API v2\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // Ignorar mensagens de grupos e status/canais\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/') ||\n                      String(body.destination || '').includes('/webhook-test/');\n\n  // Ignorar mensagens enviadas pelo proprio restaurante (fromMe)\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n\n  // Detecta se o cliente enviou Áudio de Voz (PTT / audioMessage) ou Texto\n  const isAudio = Boolean(\n    data.message?.audioMessage ||\n    data.message?.pttMessage ||\n    data.messageType === 'audioMessage'\n  );\n  const audioBase64 = data.message?.base64 || body.data?.base64 || '';\n  const audioMimeType = data.message?.audioMessage?.mimetype || 'audio/ogg';\n  const audioTranscription = (\n    data.message?.speechToText ||\n    data.message?.audioMessage?.transcription ||\n    ''\n  ).trim();\n\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    audioTranscription ||\n    ''\n  ).trim();\n\n  if (!messageText && !isAudio) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  const instance = body.instance || '${cleanInstance}';\n  const dynamicSlug = String(instance).replace(/^instancia_/i, '').replace(/_/g, '-');\n\n  results.push({\n    json: {\n      tenantSlug: dynamicSlug || '${tenant.slug}',\n      customerPhone,\n      customerName,\n      messageText,\n      isAudio,\n      audioBase64,\n      audioMimeType,\n      audioTranscription,\n      messageKey: key,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n    },\n  });\n}\n\nreturn results;`,
+              },
+              id: 'node-code-process',
+              name: 'Tratar Payload Evolution API',
+              type: 'n8n-nodes-base.code',
+              typeVersion: 2,
+              position: [360, 300],
             },
-            sendBody: true,
-            specifyBody: 'json',
-            jsonBody: '={{ JSON.stringify($json.payloadToSend) }}',
-            options: {},
-          },
-          id: 'node-send-cardapio',
-          name: 'Enviar Cardápio Digital (Evolution API)',
-          type: 'n8n-nodes-base.httpRequest',
-          typeVersion: 4.2,
-          position: [880, 220],
-        },
-        {
-          parameters: {
-            method: 'POST',
-            url: '={{ $json.endpointUrl }}',
-            sendHeaders: true,
-            headerParameters: {
-              parameters: [
-                {
-                  name: 'apikey',
-                  value: '={{ $json.apiKey }}',
+            {
+              parameters: {
+                method: 'POST',
+                url: `${appOriginUrl}/api/v1/n8n/restaurant-auto-reply`,
+                sendHeaders: true,
+                headerParameters: {
+                  parameters: [{ name: 'Content-Type', value: 'application/json' }],
                 },
-                {
-                  name: 'Content-Type',
-                  value: 'application/json',
-                },
-              ],
+                sendBody: true,
+                specifyBody: 'json',
+                jsonBody:
+                  '={{ JSON.stringify({ tenantSlug: $json.tenantSlug, instance: $json.instance, customerName: $json.customerName, customerPhone: $json.customerPhone, messageText: $json.messageText, isAudio: $json.isAudio, audioBase64: $json.audioBase64, audioMimeType: $json.audioMimeType, audioTranscription: $json.audioTranscription, messageKey: $json.messageKey, serverUrl: $json.serverUrl, apiKey: $json.apiKey }) }}',
+                options: {},
+              },
+              id: 'node-fetch-menu-reply',
+              name: 'Consultar Cardápio, Horário e Resposta (API Aladay)',
+              type: 'n8n-nodes-base.httpRequest',
+              typeVersion: 4.2,
+              position: [640, 300],
             },
-            sendBody: true,
-            specifyBody: 'json',
-            jsonBody: '={{ JSON.stringify($json.payloadToSend) }}',
-            options: {},
-          },
-          id: 'node-send-humano',
-          name: 'Avisar Atendente Humano (Evolution API)',
-          type: 'n8n-nodes-base.httpRequest',
-          typeVersion: 4.2,
-          position: [880, 380],
-        },
-      ],
-      connections: {
-        'Webhook Evolution API': {
-          main: [[{ node: 'Tratar Payload Evolution API', type: 'main', index: 0 }]],
-        },
-        'Tratar Payload Evolution API': {
-          main: [[{ node: 'É Pedido de Atendente Humano?', type: 'main', index: 0 }]],
-        },
-        'É Pedido de Atendente Humano?': {
-          main: [
-            [{ node: 'Avisar Atendente Humano (Evolution API)', type: 'main', index: 0 }],
-            [{ node: 'Enviar Cardápio Digital (Evolution API)', type: 'main', index: 0 }],
+            {
+              parameters: {
+                amount: n8nResponseDelaySeconds,
+                unit: 'seconds',
+              },
+              id: 'node-wait-delay',
+              name: `Aguardar ${n8nResponseDelaySeconds}s (Humanização / Digitando)`,
+              type: 'n8n-nodes-base.wait',
+              typeVersion: 1.1,
+              position: [880, 300],
+              webhookId: `aladay-wait-det-${safeIdSuffix}`,
+            },
+            {
+              parameters: {
+                method: 'POST',
+                url: '={{ $("Tratar Payload Evolution API").item.json.endpointUrl }}',
+                sendHeaders: true,
+                headerParameters: {
+                  parameters: [
+                    { name: 'apikey', value: '={{ $("Tratar Payload Evolution API").item.json.apiKey }}' },
+                    { name: 'Content-Type', value: 'application/json' },
+                  ],
+                },
+                sendBody: true,
+                specifyBody: 'json',
+                jsonBody:
+                  `={{ JSON.stringify({ number: $("Tratar Payload Evolution API").item.json.customerPhone, text: $json.replyMessage, options: { delay: ${n8nResponseDelaySeconds * 1000}, presence: "composing", linkPreview: true } }) }}`,
+                options: {},
+              },
+              id: 'node-send-whatsapp',
+              name: 'Enviar Cardápio no WhatsApp (Evolution API)',
+              type: 'n8n-nodes-base.httpRequest',
+              typeVersion: 4.2,
+              position: [1120, 300],
+            },
           ],
+          connections: {
+            'Webhook Evolution API': {
+              main: [[{ node: 'Tratar Payload Evolution API', type: 'main', index: 0 }]],
+            },
+            'Tratar Payload Evolution API': {
+              main: [[{ node: 'Consultar Cardápio, Horário e Resposta (API Aladay)', type: 'main', index: 0 }]],
+            },
+            'Consultar Cardápio, Horário e Resposta (API Aladay)': {
+              main: [[{ node: `Aguardar ${n8nResponseDelaySeconds}s (Humanização / Digitando)`, type: 'main', index: 0 }]],
+            },
+            [`Aguardar ${n8nResponseDelaySeconds}s (Humanização / Digitando)`]: {
+              main: [[{ node: 'Enviar Cardápio no WhatsApp (Evolution API)', type: 'main', index: 0 }]],
+            },
+          },
+          active: true,
+          settings: { executionOrder: 'v1' },
+        },
+        null,
+        2
+      );
+    }
+
+    // AI Agent Workflow (Single Multi-Tenant LangChain n8n Agent + Chat Model + Window Buffer Memory + Audio Transcription + Anti-Repetition Context)
+    const llmNode =
+      n8nLlmProvider === 'gemini'
+        ? {
+            parameters: {
+              modelName: 'models/gemini-2.5-flash',
+              options: { temperature: 0.35 },
+            },
+            id: 'node-llm-model',
+            name: 'Google Gemini Chat Model',
+            type: '@n8n/n8n-nodes-langchain.lmChatGoogleGemini',
+            typeVersion: 1,
+            position: [680, 560],
+          }
+        : {
+            parameters: {
+              model: {
+                __rl: true,
+                value: n8nLlmModel || 'gpt-4o-mini',
+                mode: 'list',
+              },
+              options: { temperature: 0.35 },
+            },
+            id: 'node-llm-model',
+            name: 'OpenAI Chat Model',
+            type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
+            typeVersion: 1.2,
+            position: [680, 560],
+          };
+
+    const preloadContextNode =
+      n8nAgentMode === 'restaurante_ia'
+        ? {
+            parameters: {
+              method: 'POST',
+              url: `${appOriginUrl}/api/v1/n8n/agent-context`,
+              sendHeaders: true,
+              headerParameters: {
+                parameters: [{ name: 'Content-Type', value: 'application/json' }],
+              },
+              sendBody: true,
+              specifyBody: 'json',
+              jsonBody:
+                '={{ JSON.stringify({ instance: $json.instance, tenantSlug: $json.tenantSlug, customerPhone: $json.customerPhone, customerName: $json.customerName, messageText: $json.messageText, isAudio: $json.isAudio, audioBase64: $json.audioBase64, audioMimeType: $json.audioMimeType, audioTranscription: $json.audioTranscription, messageKey: $json.messageKey, serverUrl: $json.serverUrl, endpointUrl: $json.endpointUrl, apiKey: $json.apiKey }) }}',
+              options: {},
+            },
+            id: 'node-preload-catalog-context',
+            name: 'Carregar Cardápio, Áudio e Histórico ao Vivo',
+            type: 'n8n-nodes-base.httpRequest',
+            typeVersion: 4.2,
+            position: [560, 300],
+          }
+        : {
+            parameters: {
+              method: 'GET',
+              url: `${appOriginUrl}/api/v1/n8n/knowledge-base`,
+              options: {},
+            },
+            id: 'node-preload-kb-context',
+            name: 'Carregar Base de Conhecimento Aladay',
+            type: 'n8n-nodes-base.httpRequest',
+            typeVersion: 4.2,
+            position: [560, 300],
+          };
+
+    const agentPromptText =
+      n8nAgentMode === 'restaurante_ia'
+        ? `={{ ($json.inbound?.isAudio ? "🎙️ [ÁUDIO DE VOZ TRANSCRITO DO CLIENTE] (" : "💬 MENSAGEM DO CLIENTE (") + ($json.inbound?.customerName || $("Tratar Payload & Anti-Loop").item.json.customerName) + " - WhatsApp " + ($json.inbound?.customerPhone || $("Tratar Payload & Anti-Loop").item.json.customerPhone) + "): " + ($json.inbound?.messageText || $("Tratar Payload & Anti-Loop").item.json.messageText) + "\\n\\n=== DIRETRIZ DE CONTINUIDADE E ANTI-REPETIÇÃO (TURNO #" + ($json.conversationMemory?.turnCount || 1) + ") ===\\n" + ($json.conversationMemory?.antiRepetitionDirective || "Responda de forma natural e objetiva.") + "\\n\\n=== HISTÓRICO RECENTE DESTA CONVERSA ===\\n" + ($json.conversationMemory?.historyTranscript || "Primeira mensagem.") + "\\n\\n=== HISTÓRICO E PEDIDO DE ONTEM DESTE CLIENTE (PARA 'QUERO AQUELE DE ONTEM') ===\\n" + ($json.lastOrderContextText || "Sem pedidos anteriores.") + "\\n\\n=== CONTEXTO EM TEMPO REAL DA LOJA (" + $json.restaurant.name + ") ===\\nStatus Atual: " + $json.restaurant.statusLabel + "\\nHorário Configurado na Barra Superior: " + $json.restaurant.openingHoursText + "\\nLink Direto do Cardápio Digital: " + $json.restaurant.digitalMenuUrl + "\\nLink QR Code de Mesa: " + $json.restaurant.tableQrCodeUrlExample + "\\nTaxa de Entrega: " + $json.restaurant.deliveryFeeFormatted + " | Pedido Mínimo: " + $json.restaurant.minOrderFormatted + "\\n\\n=== PRODUTOS E PREÇOS DISPONÍVEIS NO CARDÁPIO ===\\n" + ($json.catalogTextFormatted || $json.topItemsText || "Cardápio disponível no link oficial.") }}`
+        : `={{ $("Tratar Payload & Anti-Loop").item.json.chatInput + "\\n\\n=== BASE DE CONHECIMENTO OFICIAL ALADAY ===\\n" + ($json.knowledgeBaseText || "") }}`;
+
+    const agentNodeName =
+      n8nAgentMode === 'sdr_aladay'
+        ? 'Agente IA Comercial Aladay (SDR)'
+        : 'Agente IA Cardápio Digital (Multi-Restaurantes)';
+
+    const waitDelayNodeName = `Aguardar ${n8nResponseDelaySeconds}s (Humanização / Digitando)`;
+    const waitDelayNode = {
+      parameters: {
+        amount: n8nResponseDelaySeconds,
+        unit: 'seconds',
+      },
+      id: 'node-wait-delay',
+      name: waitDelayNodeName,
+      type: 'n8n-nodes-base.wait',
+      typeVersion: 1.1,
+      position: [1040, 300],
+      webhookId: `aladay-wait-${n8nAgentMode}-${safeIdSuffix}`,
+    };
+
+    const nodesList: any[] = [
+      {
+        parameters: {
+          httpMethod: 'POST',
+          path: cleanPath,
+          responseMode: 'onReceived',
+          responseData: 'OK',
+          options: {},
+        },
+        id: 'node-webhook-evolution',
+        name: 'Webhook Evolution API',
+        type: 'n8n-nodes-base.webhook',
+        typeVersion: 2,
+        position: [100, 300],
+        webhookId: `aladay-webhook-${n8nAgentMode}-${safeIdSuffix}`,
+      },
+      {
+        parameters: {
+          jsCode: `// =========================================================================\n// Roteador Multi-Tenant + Suporte a Áudio & Anti-Loop Evolution API v2\n// =========================================================================\nconst results = [];\n\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const data = body.data || {};\n  const key = data.key || {};\n  const remoteJid = key.remoteJid || key.remoteJidAlt || '';\n\n  // 1. Ignorar grupos e canais\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) {\n    continue;\n  }\n\n  // 2. Ignorar mensagens enviadas pelo proprio bot (fromMe), exceto em Teste no n8n\n  const isTestMode = item.json.executionMode === 'test' ||\n                      String(item.json.webhookUrl || '').includes('/webhook-test/');\n  if (key.fromMe === true && !isTestMode) {\n    continue;\n  }\n\n  const customerPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');\n  const rawPushName = data.pushName || 'Cliente';\n  const customerName = rawPushName.includes('|') ? rawPushName.split('|')[0].trim() : rawPushName.trim();\n\n  // 3. Suporte nativo a Áudios de Voz (audioMessage / PTT) e Texto\n  const isAudio = Boolean(\n    data.message?.audioMessage ||\n    data.message?.pttMessage ||\n    data.messageType === 'audioMessage'\n  );\n  const audioBase64 = data.message?.base64 || body.data?.base64 || '';\n  const audioMimeType = data.message?.audioMessage?.mimetype || 'audio/ogg';\n  const audioTranscription = (\n    data.message?.speechToText ||\n    data.message?.audioMessage?.transcription ||\n    ''\n  ).trim();\n\n  const messageText = (\n    data.message?.conversation ||\n    data.message?.extendedTextMessage?.text ||\n    data.message?.imageMessage?.caption ||\n    audioTranscription ||\n    ''\n  ).trim();\n\n  if (!messageText && !isAudio) continue;\n\n  const serverUrl = (body.server_url || '${cleanEvoUrl}').replace(/\\/$/, '');\n  const apiKey = body.apikey || '${evolutionApiKey}';\n  const instance = body.instance || '${cleanInstance}';\n  const dynamicSlug = String(instance).replace(/^instancia_/i, '').replace(/_/g, '-');\n\n  results.push({\n    json: {\n      tenantSlug: dynamicSlug || '${tenant.slug}',\n      customerPhone,\n      customerName,\n      messageText,\n      isAudio,\n      audioBase64,\n      audioMimeType,\n      audioTranscription,\n      messageKey: key,\n      serverUrl,\n      apiKey,\n      instance,\n      remoteJid,\n      endpointUrl: \`\${serverUrl}/message/sendText/\${instance}\`,\n      chatInput: \`Cliente (\${customerName} - WhatsApp \${customerPhone}): \${messageText || '[Áudio de voz]'}\`,\n    },\n  });\n}\n\nreturn results;`,
+        },
+        id: 'node-code-sanitize',
+        name: 'Tratar Payload & Anti-Loop',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 2,
+        position: [320, 300],
+      },
+      preloadContextNode,
+      {
+        parameters: {
+          promptType: 'define',
+          text: agentPromptText,
+          options: {
+            systemMessage: agentSystemPrompt,
+          },
+        },
+        id: 'node-ai-agent',
+        name: agentNodeName,
+        type: '@n8n/n8n-nodes-langchain.agent',
+        typeVersion: 1.7,
+        position: [800, 300],
+      },
+      llmNode,
+      {
+        parameters: {
+          sessionIdType: 'customKey',
+          sessionKey: '={{ ($json.inbound?.instance || $("Tratar Payload & Anti-Loop").item.json.instance) + "_" + ($json.inbound?.customerPhone || $("Tratar Payload & Anti-Loop").item.json.customerPhone) }}',
+          contextWindowLength: Math.max(10, n8nMemoryWindow),
+        },
+        id: 'node-memory-window',
+        name: 'Memória por WhatsApp (Window Buffer)',
+        type: '@n8n/n8n-nodes-langchain.memoryBufferWindow',
+        typeVersion: 1.3,
+        position: [920, 560],
+      },
+      waitDelayNode,
+      {
+        parameters: {
+          method: 'POST',
+          url: '={{ $("Tratar Payload & Anti-Loop").item.json.endpointUrl }}',
+          sendHeaders: true,
+          headerParameters: {
+            parameters: [
+              {
+                name: 'apikey',
+                value: '={{ $("Tratar Payload & Anti-Loop").item.json.apiKey }}',
+              },
+              {
+                name: 'Content-Type',
+                value: 'application/json',
+              },
+            ],
+          },
+          sendBody: true,
+          specifyBody: 'json',
+          jsonBody:
+            `={{ JSON.stringify({ number: $("Tratar Payload & Anti-Loop").item.json.customerPhone, text: $json.output, options: { delay: ${n8nResponseDelaySeconds * 1000}, presence: "composing", linkPreview: true } }) }}`,
+          options: {},
+        },
+        id: 'node-send-evolution-reply',
+        name: 'Responder Cliente no WhatsApp (Evolution API)',
+        type: 'n8n-nodes-base.httpRequest',
+        typeVersion: 4.2,
+        position: [1280, 300],
+      },
+    ];
+
+    const connectionsObj: Record<string, any> = {
+      'Webhook Evolution API': {
+        main: [[{ node: 'Tratar Payload & Anti-Loop', type: 'main', index: 0 }]],
+      },
+      'Tratar Payload & Anti-Loop': {
+        main: [[{ node: preloadContextNode.name, type: 'main', index: 0 }]],
+      },
+      [preloadContextNode.name]: {
+        main: [[{ node: agentNodeName, type: 'main', index: 0 }]],
+      },
+      [llmNode.name]: {
+        ai_languageModel: [[{ node: agentNodeName, type: 'ai_languageModel', index: 0 }]],
+      },
+      'Memória por WhatsApp (Window Buffer)': {
+        ai_memory: [[{ node: agentNodeName, type: 'ai_memory', index: 0 }]],
+      },
+      [agentNodeName]: {
+        main: [[{ node: waitDelayNodeName, type: 'main', index: 0 }]],
+      },
+      [waitDelayNodeName]: {
+        main: [[{ node: 'Responder Cliente no WhatsApp (Evolution API)', type: 'main', index: 0 }]],
+      },
+    };
+
+    return JSON.stringify(
+      {
+        name:
+          n8nAgentMode === 'sdr_aladay'
+            ? `Aladay SaaS - Agente IA Comercial SDR + Evolution API [${cleanInstance}]`
+            : `${tenant.name} - Agente IA Cardapio Digital & Pedidos + Evolution API [${cleanInstance}]`,
+        nodes: nodesList,
+        connections: connectionsObj,
+        active: true,
+        settings: {
+          executionOrder: 'v1',
         },
       },
-      active: true,
-      settings: {
-        executionOrder: 'v1',
-      },
-    },
-    null,
-    2
-  );
+      null,
+      2
+    );
+  }, [
+    n8nAgentMode,
+    n8nResponseDelaySeconds,
+    n8nLlmProvider,
+    n8nLlmModel,
+    n8nMemoryWindow,
+    n8nWebhookPath,
+    evolutionUrl,
+    evolutionApiKey,
+    tenant.evolutionInstanceId,
+    tenant.name,
+    tenant.slug,
+    agentSystemPrompt,
+    appOriginUrl,
+  ]);
 
   const handleCopyWorkflow = () => {
     navigator.clipboard.writeText(n8nWorkflowJSON);
     setCopiedWorkflow(true);
     setTimeout(() => setCopiedWorkflow(false), 3000);
+  };
+
+  const handleDownloadWorkflowJson = () => {
+    const blob = new Blob([n8nWorkflowJSON], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download =
+      n8nAgentMode === 'sdr_aladay'
+        ? `n8n-agente-ia-comercial-aladay-${tenant.evolutionInstanceId || 'aladay'}.json`
+        : `n8n-agente-ia-${tenant.slug}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopySystemPrompt = () => {
+    navigator.clipboard.writeText(agentSystemPrompt);
+    setCopiedPrompt(true);
+    setTimeout(() => setCopiedPrompt(false), 3000);
+  };
+
+  const handleBindEvolutionWebhookToN8n = async () => {
+    setIsBindingWebhook(true);
+    setWebhookBindFeedback(null);
+    try {
+      const res = await fetch('/api/v1/n8n/configure-evolution-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          evolutionUrl,
+          evolutionApiKey,
+          instanceName: tenant.evolutionInstanceId || 'aladay',
+          n8nWebhookUrl,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setWebhookBindFeedback({
+          type: 'success',
+          message: data.message || 'Webhook MESSAGES_UPSERT vinculado com sucesso na Evolution API apontando para o n8n!',
+        });
+        handleRefreshLogs();
+      } else {
+        setWebhookBindFeedback({
+          type: 'error',
+          message: data.error || 'Falha ao vincular webhook na Evolution API.',
+        });
+      }
+    } catch (err: any) {
+      setWebhookBindFeedback({
+        type: 'error',
+        message: err?.message || 'Erro de conexão ao tentar configurar o webhook.',
+      });
+    } finally {
+      setIsBindingWebhook(false);
+    }
+  };
+
+  const handleRunAgentLiveTest = async (overrideMessage?: string, asAudio?: boolean) => {
+    const msgToTest = overrideMessage ?? agentTestMessage;
+    if (!msgToTest.trim() || isTestingN8nAgent) return;
+    if (overrideMessage) setAgentTestMessage(overrideMessage);
+    setIsTestingN8nAgent(true);
+    setAgentTestResult(null);
+    setIsDelayCountingDown(true);
+    setDelayCountdownSeconds(n8nResponseDelaySeconds);
+
+    const delayMs = n8nResponseDelaySeconds * 1000;
+    const timerInterval = setInterval(() => {
+      setDelayCountdownSeconds((prev) => Math.max(0, prev - 1));
+    }, 1000);
+
+    try {
+      const isSimulatedAudio = Boolean(asAudio || msgToTest.startsWith('🎙️'));
+      const fetchPromise = fetch('/api/v1/n8n/test-agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentProfile: n8nAgentMode === 'restaurante_ia' ? 'restaurante_ia' : 'sdr_aladay',
+          tenantSlug: tenant.slug,
+          customerName: agentTestCustomerName,
+          customerPhone: agentTestPhone,
+          messageText: msgToTest,
+          isAudio: isSimulatedAudio,
+          n8nWebhookUrl,
+          dispatchToRemoteN8n,
+          delaySeconds: n8nResponseDelaySeconds,
+        }),
+      });
+
+      const delayPromise = new Promise((resolve) => setTimeout(resolve, delayMs));
+      const [res] = await Promise.all([fetchPromise, delayPromise]);
+
+      clearInterval(timerInterval);
+      if (res.ok) {
+        const data = await res.json();
+        setAgentTestResult(data);
+        handleRefreshLogs();
+      }
+    } catch {
+      clearInterval(timerInterval);
+    } finally {
+      setIsDelayCountingDown(false);
+      setIsTestingN8nAgent(false);
+    }
+  };
+
+  const handleClearConversationMemory = async () => {
+    try {
+      await fetch('/api/v1/n8n/conversation-memory/clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantSlug: n8nAgentMode === 'sdr_aladay' ? 'sdr_aladay' : tenant.slug,
+          customerPhone: agentTestPhone,
+        }),
+      });
+      setAgentTestResult(null);
+      setSaveNotice('Memória da conversa reiniciada! A próxima mensagem será tratada como Turno #1 (1ª mensagem).');
+      setTimeout(() => setSaveNotice(null), 4000);
+    } catch {
+      // ignore error
+    }
   };
 
   const handleSaveSettings = (e: React.FormEvent) => {
@@ -490,7 +1078,9 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
 
   const handleRefreshLogs = async () => {
     try {
-      const res = await fetch(`/api/v1/webhooks/logs?instance=${tenant.evolutionInstanceId}`);
+      const res = await fetch(`/api/v1/webhooks/logs?instance=${tenant.evolutionInstanceId}`, {
+        headers: authSession?.token ? { Authorization: `Bearer ${authSession.token}` } : {},
+      });
       if (res.ok) {
         const json = await res.json();
         if (json.data && Array.isArray(json.data) && json.data.length > 0) {
@@ -510,7 +1100,10 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
     try {
       const res = await fetch('/api/v1/webhooks/test-dispatch', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authSession?.token ? { Authorization: `Bearer ${authSession.token}` } : {}),
+        },
         body: JSON.stringify({
           instance: tenant.evolutionInstanceId,
           tenantSlug: tenant.slug,
@@ -548,15 +1141,16 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
   };
 
 
-  // Simulate customer sending a message in the WhatsApp simulator
-  const handleSimulateCustomerSend = (message: string) => {
+  // Simulate customer sending a message in the WhatsApp simulator (powered by the n8n Restaurant Agent engine)
+  const handleSimulateCustomerSend = async (message: string) => {
     if (!message.trim() || isSimulatingResponse) return;
 
+    const trimmedMsg = message.trim();
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     const userMsg: ChatMessage = {
       id: `msg_${Date.now()}`,
       sender: 'customer',
-      text: message.trim(),
+      text: trimmedMsg,
       time: currentTime,
       status: 'delivered',
     };
@@ -568,31 +1162,59 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
     // Step 1: Webhook received by Evolution API
     setActivePipelineStep(1);
 
+    const lower = trimmedMsg.toLowerCase();
+    const isHumanOption = lower === '2' || lower.includes('humano') || lower.includes('atendente');
+
+    let serverReplyText = '';
+    try {
+      const res = await fetch('/api/v1/bot/simulate-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantSlug: tenant.slug,
+          customerName: 'Cliente WhatsApp',
+          customerPhone: '',
+          messageText: trimmedMsg,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.replyMessage) {
+          serverReplyText = data.replyMessage;
+        }
+      }
+    } catch {
+      // Fallback to local template if offline
+    }
+
+    const totalDelayMs = Math.max(2500, n8nResponseDelaySeconds * 1000);
+    const step1Delay = 400;
+    const step2Delay = 500;
+    const typingDelay = Math.max(1000, totalDelayMs - step1Delay - step2Delay);
+
     setTimeout(() => {
       // Step 2: Webhook dispatched to n8n
       setActivePipelineStep(2);
 
       setTimeout(() => {
-        // Step 3: n8n evaluates business rules
+        // Step 3: n8n evaluates business rules & waits configured delay (simulando digitando...)
         setActivePipelineStep(3);
 
-        const lower = message.toLowerCase().trim();
-        const isHumanOption = lower === '2' || lower.includes('humano') || lower.includes('atendente');
-
         setTimeout(() => {
-          // Step 4: Evolution API responds back
+          // Step 4: Evolution API responds back in single unified block
           setActivePipelineStep(4);
 
           let replyText = '';
           let senderType: 'bot' | 'human' = 'bot';
 
           if (botPausedForCustomer && !lower.includes('cardapio') && !lower.includes('cardápio')) {
-            // Bot is paused, simulated human answers
             senderType = 'human';
-            replyText = `Olá! Sou o atendente humano da cozinha do ${tenant.name}. Já recebi sua mensagem aqui no painel e posso te ajudar! Como posso te atender?`;
+            replyText = `Olá! Sou o atendente humano da equipe do ${tenant.name}. Já recebi sua mensagem aqui no painel e posso te ajudar! Como posso te atender?`;
           } else if (isHumanOption) {
             setBotPausedForCustomer(true);
-            replyText = humanHandoffTemplate;
+            replyText = serverReplyText || humanHandoffTemplate;
+          } else if (serverReplyText) {
+            replyText = serverReplyText;
           } else if (!tenant.isOpen) {
             replyText = closedHoursTemplate;
           } else {
@@ -610,9 +1232,10 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
           setChatMessages((prev) => [...prev, botMsg]);
           setIsSimulatingResponse(false);
           setActivePipelineStep(null);
-        }, 800);
-      }, 700);
-    }, 600);
+          handleRefreshLogs();
+        }, typingDelay);
+      }, step2Delay);
+    }, step1Delay);
   };
 
   return (
@@ -622,58 +1245,82 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-neutral-100">
           <div>
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className={`w-2.5 h-2.5 rounded-full ${tenant.evolutionStatus === 'connected' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500 animate-pulse'}`} />
               <h3 className="text-sm font-bold text-neutral-900">
-                Automação de Resposta com n8n &amp; Evolution API (Hostinger VPS / Easypanel)
+                {isSuperAdmin
+                  ? 'Automação de Resposta com n8n & Evolution API (Infraestrutura Geral)'
+                  : `WhatsApp Oficial - ${tenant.name}`}
               </h3>
             </div>
             <p className="text-xs text-neutral-600 mt-1">
-              Conecte sua Evolution API e seus fluxos do n8n para responder instantaneamente clientes no WhatsApp com o cardápio digital e gerenciar pedidos.
+              {isSuperAdmin
+                ? 'Conecte sua Evolution API e seus fluxos do n8n para responder instantaneamente clientes no WhatsApp com o cardápio digital e gerenciar pedidos.'
+                : 'Conecte o WhatsApp do seu estabelecimento para enviar atualizações de pedidos da cozinha e interagir com seus clientes automaticamente. A infraestrutura e a conexão são configuradas de forma 100% automática pela plataforma.'}
             </p>
           </div>
 
-          {/* Service Status Badges on VPS */}
+          {/* Service Status Badges */}
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-neutral-100 rounded-md text-[11px] font-medium text-neutral-700">
-              <Server className="w-3.5 h-3.5 text-neutral-500" />
-              <span>Easypanel VPS</span>
+            {isSuperAdmin && (
+              <>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-neutral-100 rounded-md text-[11px] font-medium text-neutral-700">
+                  <Server className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>Easypanel VPS</span>
+                </div>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded-md text-[11px] font-medium text-emerald-800">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                  <span>Evolution API Online</span>
+                </div>
+              </>
+            )}
+
+            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[11px] font-bold border ${
+              tenant.evolutionStatus === 'connected'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-amber-50 border-amber-200 text-amber-800'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${tenant.evolutionStatus === 'connected' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              <span>{tenant.evolutionStatus === 'connected' ? 'WhatsApp Conectado' : 'Aguardando Leitura'}</span>
             </div>
-            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded-md text-[11px] font-medium text-emerald-800">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-              <span>Evolution API Online</span>
-            </div>
+
             <button
               type="button"
-              onClick={() => setIsQrModalOpen(true)}
+              onClick={() => {
+                setSubTab('qrcode_pairing');
+                fetchEmbeddedQr(true);
+              }}
               className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-[11px] font-bold transition-colors shadow-2xs cursor-pointer"
-              title="Abrir Pareamento com Evolution API via QR Code"
+              title="Abrir Pareamento com WhatsApp via QR Code"
             >
               <QrCode className="w-3.5 h-3.5" />
-              <span>{tenant.evolutionStatus === 'connected' ? 'WhatsApp Pareado' : 'Parear WhatsApp (QR Code)'}</span>
+              <span>{tenant.evolutionStatus === 'connected' ? 'Ver Status / Reconectar' : 'Ler QR Code'}</span>
             </button>
-            <button
-              onClick={onSimulateEvolutionReconnect}
-              className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-md transition-colors"
-              title="Testar Ping de Conexão com Evolution API"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
+
+            {isSuperAdmin && (
+              <button
+                onClick={onSimulateEvolutionReconnect}
+                className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-md transition-colors"
+                title="Testar Ping de Conexão com Evolution API"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
         {/* Sub-tabs strip */}
         <div className="flex items-center gap-2 pt-3 overflow-x-auto text-xs font-medium">
-          {/* Lojista / Restaurante Functions */}
+          {/* Aba Principal do Restaurante: QR Code */}
           <button
             onClick={() => setSubTab('qrcode_pairing')}
-            className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+            className={`px-3.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
               subTab === 'qrcode_pairing'
                 ? 'bg-neutral-900 text-white font-semibold shadow-xs'
                 : 'text-neutral-600 hover:bg-neutral-100'
             }`}
           >
             <QrCode className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Pareamento QR Code (Na Tela)</span>
+            <span>Conectar WhatsApp (QR Code)</span>
             <span
               className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold border ${
                 tenant.evolutionStatus === 'connected'
@@ -694,7 +1341,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
             }`}
           >
             <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Notificações de Status do Pedido (KDS)</span>
+            <span>Avisos de Pedidos (KDS)</span>
           </button>
 
           <button
@@ -706,7 +1353,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
             }`}
           >
             <MessageSquare className="w-3.5 h-3.5" />
-            <span>Mensagens &amp; Textos do Bot</span>
+            <span>Mensagens do Restaurante</span>
           </button>
 
           <button
@@ -718,30 +1365,36 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
             }`}
           >
             <Smartphone className="w-3.5 h-3.5" />
-            <span>Simulador de Resposta (Chat ao Vivo)</span>
+            <span>Simulador de Atendimento</span>
           </button>
 
-          {/* Somente para o ADM (Super Admin da Plataforma) */}
+          {/* Somente para o Administrador Geral da Plataforma (Super Admin) */}
           {isSuperAdmin && (
             <>
               <div className="h-5 w-px bg-neutral-300 mx-1 shrink-0" />
-              <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 shrink-0">
-                Somente ADM:
+              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-800 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 shrink-0">
+                Infra Plataforma:
               </span>
 
               <button
                 onClick={() => setSubTab('n8n_workflow')}
-                className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer border ${
+                className={`px-3.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer border ${
                   subTab === 'n8n_workflow'
-                    ? 'bg-purple-900 text-white border-purple-800 font-semibold shadow-xs'
-                    : 'text-purple-700 bg-purple-50 hover:bg-purple-100 border-purple-200'
+                    ? 'bg-blue-600 text-white border-blue-600 font-bold shadow-xs'
+                    : 'text-blue-700 bg-blue-50 hover:bg-blue-100 border-blue-200 font-semibold'
                 }`}
-                title="Workflow mestre do n8n em formato JSON (Somente para o Administrador da Plataforma)"
+                title="Configurar Agente de IA e exportar Workflow JSON para o n8n"
               >
-                <Layers className="w-3.5 h-3.5" />
-                <span>Workflow do n8n</span>
-                <span className="text-[9px] px-1 py-0.2 bg-purple-200 text-purple-900 rounded font-bold uppercase">
-                  ADM
+                <Bot className="w-4 h-4" />
+                <span>Configurar Agente IA no n8n</span>
+                <span
+                  className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                    subTab === 'n8n_workflow'
+                      ? 'bg-white/20 text-white'
+                      : 'bg-blue-200 text-blue-900'
+                  }`}
+                >
+                  Super Admin
                 </span>
               </button>
 
@@ -752,13 +1405,10 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                     ? 'bg-indigo-900 text-white border-indigo-800 font-semibold shadow-xs'
                     : 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border-indigo-200'
                 }`}
-                title="Configurações e comando cURL no Easypanel (Somente para o Administrador da Plataforma)"
+                title="Configurações e comando cURL no Easypanel"
               >
                 <Terminal className="w-3.5 h-3.5" />
                 <span>Passo a Passo na VPS</span>
-                <span className="text-[9px] px-1 py-0.2 bg-indigo-200 text-indigo-900 rounded font-bold uppercase">
-                  ADM
-                </span>
               </button>
 
               <button
@@ -768,13 +1418,10 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                     ? 'bg-emerald-900 text-white border-emerald-800 font-semibold shadow-xs'
                     : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border-emerald-200'
                 }`}
-                title="Inspetor técnico de Webhooks e tráfego HTTP em tempo real (Somente para o Administrador da Plataforma)"
+                title="Inspetor técnico de Webhooks e tráfego HTTP em tempo real"
               >
                 <Radio className="w-3.5 h-3.5" />
                 <span>Logs &amp; Inspetor de Webhooks</span>
-                <span className="text-[9px] px-1 py-0.2 bg-emerald-200 text-emerald-900 rounded font-bold uppercase">
-                  ADM
-                </span>
               </button>
             </>
           )}
@@ -793,6 +1440,19 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
       {/* ============================================================== */}
       {subTab === 'qrcode_pairing' && (
         <div className="space-y-6">
+          {/* Automatic Configuration Assurance Notice */}
+          <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center justify-between gap-3 shadow-2xs">
+            <div className="flex items-center gap-2.5">
+              <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
+              <span>
+                <strong>Configuração Automática Ativa:</strong> A plataforma gerencia todos os servidores, webhooks e conexões em nuvem nos bastidores. Você só precisa manter o QR Code conectado abaixo.
+              </span>
+            </div>
+            <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-200/80 text-blue-900 px-2 py-0.5 rounded shrink-0">
+              100% Automático
+            </span>
+          </div>
+
           {/* Top Status Banner */}
           <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-2xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -807,16 +1467,18 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-bold text-neutral-900">
-                      Pareamento de WhatsApp em Tempo Real
+                      Conexão do WhatsApp do Restaurante
                     </h3>
-                    <span className="font-mono text-[10px] bg-neutral-100 text-neutral-700 px-2 py-0.5 rounded font-bold">
-                      Instância: {tenant.evolutionInstanceId || 'aladay'}
-                    </span>
+                    {isSuperAdmin && (
+                      <span className="font-mono text-[10px] bg-neutral-100 text-neutral-700 px-2 py-0.5 rounded font-bold">
+                        Instância: {tenant.evolutionInstanceId || 'aladay'}
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-neutral-500 mt-0.5">
                     {tenant.evolutionStatus === 'connected'
-                      ? 'WhatsApp conectado e pronto para enviar mensagens de confirmação e rastreamento do KDS.'
-                      : 'Aponte a câmera do seu WhatsApp para o QR Code abaixo para conectar este restaurante.'}
+                      ? 'WhatsApp conectado e pronto para enviar mensagens de confirmação e rastreamento da cozinha.'
+                      : 'Aponte a câmera do seu WhatsApp para o QR Code abaixo para conectar seu restaurante.'}
                   </p>
                 </div>
               </div>
@@ -878,6 +1540,28 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                   </button>
                 </div>
 
+                {/* Status Badge: Real Evolution API vs Simulation (Somente Super Admin) */}
+                {isSuperAdmin && embeddedQrData && (
+                  <div
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold border ${
+                      embeddedQrData.remoteFetched
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : 'bg-amber-50 border-amber-300 text-amber-900'
+                    }`}
+                  >
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        embeddedQrData.remoteFetched ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                      }`}
+                    />
+                    <span>
+                      {embeddedQrData.remoteFetched
+                        ? 'Conectado à Evolution API v2 (QR/Código Oficial)'
+                        : 'Instância Aguardando Criação na Evolution API'}
+                    </span>
+                  </div>
+                )}
+
                 {embeddedPairingMode === 'qr' ? (
                   <div className="space-y-3">
                     {/* The QR Container */}
@@ -918,7 +1602,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                     </div>
 
                     {/* Expiration Bar & Countdown */}
-                    <div className="w-full max-w-[280px] space-y-1.5">
+                    <div className="w-full max-w-[280px] space-y-1.5 mx-auto">
                       <div className="flex items-center justify-between text-[11px] text-neutral-500">
                         <span className="flex items-center gap-1 font-medium">
                           <RefreshCw className="w-3 h-3 animate-spin text-neutral-400" />
@@ -926,7 +1610,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                         </span>
                         <button
                           type="button"
-                          onClick={() => fetchEmbeddedQr(true)}
+                          onClick={() => fetchEmbeddedQr(true, embeddedPhoneInput, inlineGlobalApiKey)}
                           className="text-emerald-700 hover:text-emerald-900 font-bold hover:underline cursor-pointer"
                         >
                           Atualizar agora
@@ -943,30 +1627,124 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                   </div>
                 ) : (
                   /* 8 Digits Pairing Code Card */
-                  <div className="w-full max-w-[320px] p-6 bg-neutral-900 text-white rounded-2xl text-center space-y-4">
+                  <div className="w-full max-w-[340px] p-5 bg-neutral-900 text-white rounded-2xl text-center space-y-4">
                     <span className="text-[10px] uppercase font-bold text-neutral-400 tracking-wider block">
-                      Código de Pareamento
+                      Código de Pareamento WhatsApp (8 Dígitos)
                     </span>
+
+                    {/* Phone Input with Automatic Brazil DDI 55 */}
+                    <div className="text-left space-y-1.5 bg-neutral-800/70 p-3 rounded-xl border border-neutral-700">
+                      <label className="text-[11px] font-bold text-neutral-200 block">
+                        Número do WhatsApp (com DDI 55 + DDD):
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={embeddedPhoneInput}
+                          onChange={(e) => setEmbeddedPhoneInput(e.target.value)}
+                          onBlur={() => setEmbeddedPhoneInput(normalizeBrPhone(embeddedPhoneInput))}
+                          placeholder="Informe DDI, DDD e número"
+                          className="w-full p-2 bg-neutral-900 border border-neutral-600 rounded-lg text-xs font-mono text-white"
+                        />
+                        <button
+                          type="button"
+                          disabled={loadingEmbeddedQr}
+                          onClick={() => {
+                            const norm = normalizeBrPhone(embeddedPhoneInput);
+                            setEmbeddedPhoneInput(norm);
+                            fetchEmbeddedQr(true, norm, inlineGlobalApiKey);
+                          }}
+                          className="px-3 py-2 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded-lg text-xs whitespace-nowrap cursor-pointer disabled:opacity-50"
+                        >
+                          {loadingEmbeddedQr ? 'Gerando...' : 'Gerar Código'}
+                        </button>
+                      </div>
+                      <span className="text-[10px] text-emerald-400 block">
+                        Formato automático Brasil: <strong>+{normalizeBrPhone(embeddedPhoneInput)}</strong> (Ex: 55 + 91 + 981214188)
+                      </span>
+                    </div>
+
                     <div className="py-2.5 px-4 bg-neutral-800/80 border border-neutral-700 rounded-xl inline-flex items-center gap-3">
                       <span className="font-mono text-2xl font-bold tracking-widest text-emerald-400">
-                        {embeddedQrData?.pairingCode || 'ALAD-8492'}
+                        {embeddedQrData?.pairingCode || 'Clique em Gerar'}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(embeddedQrData?.pairingCode || 'ALAD-8492');
-                          setCopiedEmbeddedCode(true);
-                          setTimeout(() => setCopiedEmbeddedCode(false), 2500);
-                        }}
-                        className="p-1 text-neutral-400 hover:text-white rounded"
-                        title="Copiar código"
-                      >
-                        {copiedEmbeddedCode ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                      </button>
+                      {embeddedQrData?.pairingCode && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(
+                              String(embeddedQrData?.pairingCode || '').replace(/[^A-Z0-9]/gi, '')
+                            );
+                            setCopiedEmbeddedCode(true);
+                            setTimeout(() => setCopiedEmbeddedCode(false), 2500);
+                          }}
+                          className="p-1 text-neutral-400 hover:text-white rounded cursor-pointer"
+                          title="Copiar código"
+                        >
+                          {copiedEmbeddedCode ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                        </button>
+                      )}
                     </div>
-                    <p className="text-[11px] text-neutral-400">
-                      No WhatsApp, em <strong>Aparelhos conectados</strong>, toque em <strong>Conectar com número de telefone</strong> e digite o código acima.
+                    <p className="text-[11px] text-neutral-400 leading-relaxed">
+                      No WhatsApp do celular <strong>+{normalizeBrPhone(embeddedPhoneInput)}</strong>, vá em{' '}
+                      <strong>Aparelhos conectados &rarr; Conectar com número de telefone</strong> e digite o código acima.
                     </p>
+                  </div>
+                )}
+
+                {/* Diagnostic Box if Instance Needs Global API Key on Evolution API (Somente Super Admin) */}
+                {isSuperAdmin && embeddedQrData && !embeddedQrData.remoteFetched && (
+                  <div className="w-full max-w-[350px] p-3.5 bg-amber-50 border border-amber-300 rounded-xl text-left space-y-2.5 text-xs text-amber-950">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="font-bold text-amber-950">
+                          Por que o celular não leu o QR Code / Código?
+                        </p>
+                        <p className="text-[11px] text-amber-900 leading-relaxed">
+                          {embeddedQrData.remoteErrorMessage ||
+                            `A instância "${tenant.evolutionInstanceId}" ainda não foi criada na Evolution API.`}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="pt-1 space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-amber-900 block">
+                        Global API Key (AUTHENTICATION_API_KEY do EasyPanel) ou Token da Instância:
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={inlineGlobalApiKey}
+                          onChange={(e) => setInlineGlobalApiKey(e.target.value)}
+                          placeholder="Cole a AUTHENTICATION_API_KEY do EasyPanel"
+                          className="w-full p-2 bg-white border border-amber-300 rounded-lg text-[11px] font-mono text-neutral-900"
+                        />
+                        <button
+                          type="button"
+                          disabled={loadingEmbeddedQr}
+                          onClick={async () => {
+                            const normPhone = normalizeBrPhone(embeddedPhoneInput);
+                            setEmbeddedPhoneInput(normPhone);
+                            if (inlineGlobalApiKey.trim()) {
+                              setEvolutionApiKey(inlineGlobalApiKey.trim());
+                              await fetch(`/api/v1/tenants/${tenant.slug}/evolution-config`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  evolutionApiKey: inlineGlobalApiKey.trim(),
+                                  phone: normPhone,
+                                }),
+                              }).catch(() => {});
+                            }
+                            fetchEmbeddedQr(true, normPhone, inlineGlobalApiKey.trim());
+                          }}
+                          className="px-3 py-2 bg-amber-900 hover:bg-amber-950 text-white font-bold rounded-lg text-[11px] whitespace-nowrap cursor-pointer"
+                        >
+                          Criar &amp; Gerar Real
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -985,7 +1763,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                     Como parear o WhatsApp do Restaurante
                   </h3>
                   <p className="text-xs text-neutral-500 mt-1 leading-relaxed">
-                    Siga o procedimento padrão do WhatsApp no aparelho da loja para sincronizar a instância da Evolution API:
+                    Siga os 4 passos abaixo no aparelho da loja para sincronizar o atendimento:
                   </p>
                 </div>
 
@@ -1040,49 +1818,51 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                   </div>
                 </div>
 
-                {/* 1-Click Test Simulation Card */}
-                <div className="p-4 bg-neutral-900 text-white rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold flex items-center gap-1.5 text-emerald-400">
-                      <Zap className="w-4 h-4 fill-current" />
-                      Testar Agora (Simulação em 1 Clique)
-                    </span>
-                    <span className="text-[10px] bg-neutral-800 text-neutral-300 px-2 py-0.5 rounded font-mono font-semibold">
-                      Sem Celular Físico
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-neutral-300 leading-relaxed">
-                    Você pode simular o pareamento imediatamente para ver o fluxo completo de envio de mensagens no KDS e simulador de chat.
-                  </p>
+                {/* 1-Click Test Simulation Card (Somente Super Admin) */}
+                {isSuperAdmin && (
+                  <div className="p-4 bg-neutral-900 text-white rounded-2xl space-y-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold flex items-center gap-1.5 text-emerald-400">
+                        <Zap className="w-4 h-4 fill-current" />
+                        Testar Agora (Simulação em 1 Clique)
+                      </span>
+                      <span className="text-[10px] bg-neutral-800 text-neutral-300 px-2 py-0.5 rounded font-mono font-semibold">
+                        Sem Celular Físico
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-neutral-300 leading-relaxed">
+                      Você pode simular o pareamento imediatamente para ver o fluxo completo de envio de mensagens no KDS e simulador de chat.
+                    </p>
 
-                  <div className="flex flex-col sm:flex-row items-center gap-2">
-                    <input
-                      type="text"
-                      value={embeddedPhoneInput}
-                      onChange={(e) => setEmbeddedPhoneInput(e.target.value)}
-                      placeholder="5511987654321"
-                      className="w-full sm:w-auto flex-1 p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-xs font-mono text-white placeholder-neutral-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleEmbeddedSimulateScan}
-                      disabled={isSimulatingEmbeddedScan}
-                      className="w-full sm:w-auto px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50 cursor-pointer whitespace-nowrap"
-                    >
-                      {isSimulatingEmbeddedScan ? (
-                        <>
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          <span>Pareando...</span>
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Simular Leitura do QR Code</span>
-                        </>
-                      )}
-                    </button>
+                    <div className="flex flex-col sm:flex-row items-center gap-2">
+                      <input
+                        type="text"
+                        value={embeddedPhoneInput}
+                        onChange={(e) => setEmbeddedPhoneInput(e.target.value)}
+                        placeholder="5511987654321"
+                        className="w-full sm:w-auto flex-1 p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-xs font-mono text-white placeholder-neutral-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleEmbeddedSimulateScan}
+                        disabled={isSimulatingEmbeddedScan}
+                        className="w-full sm:w-auto px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                      >
+                        {isSimulatingEmbeddedScan ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>Pareando...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Simular Leitura do QR Code</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
           </div>
@@ -1096,8 +1876,10 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
         <NotificationTemplatesEditor
           tenant={tenant}
           orders={orders}
+          isSuperAdmin={isSuperAdmin}
+          authToken={authSession?.token}
           onUpdateTenant={onUpdateTenant}
-          onNavigateToLogs={() => setSubTab('logs')}
+          onNavigateToLogs={isSuperAdmin ? () => setSubTab('logs') : undefined}
         />
       )}
 
@@ -1130,7 +1912,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span>1. WhatsApp Inbound (Evolution API)</span>
+                    <span>1. Mensagem Recebida do Cliente</span>
                     {activePipelineStep === 1 && (
                       <span className="font-mono text-[10px] bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded">
                         Recebendo...
@@ -1138,7 +1920,9 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                     )}
                   </div>
                   <p className="text-[11px] text-neutral-500 font-normal mt-0.5">
-                    Cliente envia texto. Evolution API dispara webhook <code className="bg-neutral-200 px-1 py-0.2 rounded font-mono text-[10px]">MESSAGES_UPSERT</code>.
+                    {isSuperAdmin
+                      ? 'Cliente envia texto. Evolution API dispara webhook MESSAGES_UPSERT.'
+                      : 'Cliente envia mensagem para o número de WhatsApp conectado do seu restaurante.'}
                   </p>
                 </div>
 
@@ -1150,15 +1934,17 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span>2. Webhook acionado no n8n</span>
+                    <span>2. Verificação Automática da Loja</span>
                     {activePipelineStep === 2 && (
                       <span className="font-mono text-[10px] bg-indigo-200 text-indigo-900 px-1.5 py-0.5 rounded">
-                        Processando nós...
+                        Processando...
                       </span>
                     )}
                   </div>
                   <p className="text-[11px] text-neutral-500 font-normal mt-0.5">
-                    O n8n recebe o payload na URL <code className="bg-neutral-200 px-1 py-0.2 rounded font-mono text-[10px]">/webhook/evolution-messages-upsert</code>.
+                    {isSuperAdmin
+                      ? 'O n8n recebe o payload na URL /webhook/evolution-messages-upsert.'
+                      : 'O sistema verifica se o restaurante está aberto e seleciona a mensagem apropriada.'}
                   </p>
                 </div>
 
@@ -1170,7 +1956,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span>3. Regras de Negócio &amp; Decisão no n8n</span>
+                    <span>3. Geração do Link do Cardápio</span>
                     {activePipelineStep === 3 && (
                       <span className="font-mono text-[10px] bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded">
                         Avaliando...
@@ -1178,7 +1964,9 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                     )}
                   </div>
                   <p className="text-[11px] text-neutral-500 font-normal mt-0.5">
-                    Verifica: restaurante aberto? Cliente pediu atendente (2)? Extrai link do cardápio de {tenant.name}.
+                    {isSuperAdmin
+                      ? `Verifica: restaurante aberto? Cliente pediu atendente (2)? Extrai link do cardápio de ${tenant.name}.`
+                      : `Insere o link oficial do cardápio digital de ${tenant.name} com fotos e preços atualizados.`}
                   </p>
                 </div>
 
@@ -1190,7 +1978,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span>4. Disparo de Resposta via Evolution API</span>
+                    <span>4. Resposta Entregue no WhatsApp</span>
                     {activePipelineStep === 4 && (
                       <span className="font-mono text-[10px] bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded">
                         Enviando resposta...
@@ -1198,7 +1986,9 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                     )}
                   </div>
                   <p className="text-[11px] text-neutral-500 font-normal mt-0.5">
-                    O nó HTTP Request do n8n executa <code className="bg-neutral-200 px-1 py-0.2 rounded font-mono text-[10px]">POST /message/sendText/{tenant.evolutionInstanceId}</code>.
+                    {isSuperAdmin
+                      ? `O nó HTTP Request do n8n executa POST /message/sendText/${tenant.evolutionInstanceId}.`
+                      : 'O cliente recebe instantaneamente a resposta no WhatsApp e clica no cardápio para pedir.'}
                   </p>
                 </div>
               </div>
@@ -1206,23 +1996,23 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
               {/* Quick Simulation Buttons */}
               <div className="pt-2 border-t border-neutral-100">
                 <span className="text-[11px] font-semibold text-neutral-700 block mb-2">
-                  Testes Rápidos de Interação:
+                  Testes Rápidos de Atendimento ao Cliente ({tenant.name}):
                 </span>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                   <button
                     type="button"
                     disabled={isSimulatingResponse}
-                    onClick={() => handleSimulateCustomerSend('Olá, boa noite! Quero ver o cardápio.')}
-                    className="p-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-left font-medium transition-colors disabled:opacity-50"
+                    onClick={() => handleSimulateCustomerSend('Olá, boa noite! Quero ver o cardápio digital.')}
+                    className="p-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-left font-medium transition-colors disabled:opacity-50 cursor-pointer"
                   >
-                    💬 &quot;Quero o cardápio&quot;
+                    🍔 &quot;Quero ver o cardápio digital&quot;
                   </button>
 
                   <button
                     type="button"
                     disabled={isSimulatingResponse}
                     onClick={() => handleSimulateCustomerSend('Qual o horário de funcionamento hoje?')}
-                    className="p-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-left font-medium transition-colors disabled:opacity-50"
+                    className="p-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-left font-medium transition-colors disabled:opacity-50 cursor-pointer"
                   >
                     🕒 &quot;Qual o horário de atendimento?&quot;
                   </button>
@@ -1230,45 +2020,75 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                   <button
                     type="button"
                     disabled={isSimulatingResponse}
-                    onClick={() => handleSimulateCustomerSend('2')}
-                    className="p-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg text-left font-medium transition-colors disabled:opacity-50"
+                    onClick={() => handleSimulateCustomerSend('Quais as opções e preços do cardápio completo?')}
+                    className="p-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-left font-medium transition-colors disabled:opacity-50 cursor-pointer"
                   >
-                    👨‍🍳 &quot;2 (Falar com Atendente)&quot;
+                    🍽️ &quot;Quais as opções e preços?&quot;
                   </button>
 
                   <button
                     type="button"
                     disabled={isSimulatingResponse}
-                    onClick={() => {
-                      setBotPausedForCustomer(false);
-                      handleSimulateCustomerSend('Oi, voltei a pedir pelo cardápio');
-                    }}
-                    className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-lg text-left font-medium transition-colors disabled:opacity-50"
+                    onClick={() => handleSimulateCustomerSend('Qual o valor da taxa de entrega e aceita Pix?')}
+                    className="p-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-left font-medium transition-colors disabled:opacity-50 cursor-pointer"
                   >
-                    🔄 Reativar Bot Automático
+                    🛵 &quot;Taxa de entrega e Pix&quot;
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isSimulatingResponse}
+                    onClick={() => handleSimulateCustomerSend('Onde está meu pedido?')}
+                    className="p-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-left font-medium transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    📦 &quot;Onde está meu pedido?&quot;
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isSimulatingResponse}
+                    onClick={() => handleSimulateCustomerSend('2')}
+                    className="p-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg text-left font-medium transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    👨‍🍳 &quot;2 (Falar com Atendente)&quot;
                   </button>
                 </div>
+                {botPausedForCustomer && (
+                  <button
+                    type="button"
+                    disabled={isSimulatingResponse}
+                    onClick={() => {
+                      setBotPausedForCustomer(false);
+                      handleSimulateCustomerSend('Oi, quero ver o cardápio digital novamente');
+                    }}
+                    className="mt-2 w-full p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-lg text-center text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    🔄 Reativar Resposta Automática do Cardápio
+                  </button>
+                )}
               </div>
             </div>
 
-            {/* Quick Summary of Current Stack Settings */}
-            <div className="bg-neutral-900 text-neutral-100 rounded-xl p-4 text-xs font-mono space-y-2">
-              <div className="text-neutral-400 font-bold uppercase text-[10px]">Parâmetros Atuais da VPS:</div>
-              <div className="flex justify-between border-b border-neutral-800 pb-1">
-                <span className="text-neutral-400">Instância Evolution:</span>
-                <span className="text-white font-semibold">{tenant.evolutionInstanceId}</span>
+            {/* Quick Summary of Current Stack Settings (Somente Super Admin) */}
+            {isSuperAdmin && (
+              <div className="bg-neutral-900 text-neutral-100 rounded-xl p-4 text-xs font-mono space-y-2">
+                <div className="text-neutral-400 font-bold uppercase text-[10px]">Parâmetros Atuais da VPS:</div>
+                <div className="flex justify-between border-b border-neutral-800 pb-1">
+                  <span className="text-neutral-400">Instância Evolution:</span>
+                  <span className="text-white font-semibold">{tenant.evolutionInstanceId}</span>
+                </div>
+                <div className="flex justify-between border-b border-neutral-800 pb-1">
+                  <span className="text-neutral-400">Webhook n8n:</span>
+                  <span className="text-emerald-400 truncate max-w-xs">{n8nWebhookUrl}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-neutral-400">Status do Bot:</span>
+                  <span className={botPausedForCustomer ? 'text-amber-400' : 'text-emerald-400'}>
+                    {botPausedForCustomer ? 'Pausado (Em Atendimento Humano)' : 'Ativo (Auto-Resposta Ligada)'}
+                  </span>
+                </div>
               </div>
-              <div className="flex justify-between border-b border-neutral-800 pb-1">
-                <span className="text-neutral-400">Webhook n8n:</span>
-                <span className="text-emerald-400 truncate max-w-xs">{n8nWebhookUrl}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-neutral-400">Status do Bot:</span>
-                <span className={botPausedForCustomer ? 'text-amber-400' : 'text-emerald-400'}>
-                  {botPausedForCustomer ? 'Pausado (Em Atendimento Humano)' : 'Ativo (Auto-Resposta Ligada)'}
-                </span>
-              </div>
-            </div>
+            )}
           </div>
 
           {/* Right: Simulated WhatsApp Chat Device */}
@@ -1342,7 +2162,9 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                     <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-bounce" />
                     <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-bounce [animation-delay:0.2s]" />
                     <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-bounce [animation-delay:0.4s]" />
-                    <span className="text-[10px] ml-1">n8n processando resposta...</span>
+                    <span className="text-[10px] ml-1">
+                      {isSuperAdmin ? 'n8n processando resposta...' : 'Respondendo...'}
+                    </span>
                   </div>
                 )}
               </div>
@@ -1375,157 +2197,972 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
         </div>
       )}
 
-      {/* Access Denied Card for Non-Admin trying to access infrastructure tools */}
-      {!isSuperAdmin && (subTab === 'n8n_workflow' || subTab === 'easypanel' || subTab === 'logs') && (
-        <div className="bg-white border border-amber-200 rounded-xl p-8 text-center space-y-3 shadow-2xs">
-          <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto font-bold text-lg">
-            🛡️
+      {/* Access Notice for Non-Admin trying to access infrastructure tools */}
+      {!isSuperAdmin && (subTab === 'easypanel' || subTab === 'logs' || subTab === 'n8n_workflow') && (
+        <div className="bg-white border border-neutral-200 rounded-xl p-8 text-center space-y-3 shadow-2xs">
+          <div className="w-12 h-12 rounded-full bg-blue-50 text-blue-700 flex items-center justify-center mx-auto font-bold text-lg">
+            📱
           </div>
-          <h4 className="text-base font-bold text-neutral-900">Ferramenta de Infraestrutura (Exclusivo ADM)</h4>
+          <h4 className="text-base font-bold text-neutral-900">Configuração Automática da Plataforma</h4>
           <p className="text-xs text-neutral-600 max-w-md mx-auto">
-            Esta área (Workflow do n8n, Passo a Passo na VPS e Logs de Webhooks) é de controle exclusivo da equipe técnica e do Administrador Geral da plataforma Aladay.
+            Toda a inteligência e infraestrutura de servidores em nuvem são gerenciadas automaticamente pela Aladay. Como restaurante, você só precisa conectar seu WhatsApp lendo o QR Code.
           </p>
           <div className="pt-2">
             <button
               type="button"
               onClick={() => setSubTab('qrcode_pairing')}
-              className="px-4 py-2 bg-neutral-900 text-white rounded-lg text-xs font-semibold hover:bg-neutral-800 transition-colors cursor-pointer"
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 transition-colors cursor-pointer"
             >
-              Voltar para o Pareamento da Loja
+              Ir para Conectar WhatsApp (QR Code)
             </button>
           </div>
         </div>
       )}
 
       {/* ============================================================== */}
-      {/* SUB-TAB 2: N8N WORKFLOW JSON EXPORT (Somente ADM)              */}
+      {/* SUB-TAB 2: N8N AI AGENT CONFIGURATOR & WORKFLOW STUDIO (SUPER ADMIN) */}
       {/* ============================================================== */}
       {isSuperAdmin && subTab === 'n8n_workflow' && (
-        <div className="space-y-5">
-          <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-2xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-neutral-100">
-              <div>
-                <h4 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
-                  <FileCode className="w-4 h-4 text-indigo-600" />
-                  <span>Workflow Pronto para Importação no n8n</span>
-                </h4>
-                <p className="text-xs text-neutral-600 mt-0.5">
-                  Copie o código JSON abaixo e cole diretamente dentro do seu n8n rodando no Easypanel (menu &quot;Import from JSON&quot;).
-                </p>
+        <div className="space-y-6">
+          {/* STEP 1: SELECT AGENT ARCHITECTURE PROFILE */}
+          <div className="bg-white border border-neutral-200 rounded-2xl p-6 shadow-2xs space-y-5">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-neutral-100">
+              <div className="flex items-start gap-3">
+                <div className="w-11 h-11 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <Bot className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h4 className="text-base font-bold text-neutral-900">
+                      Estúdio de Configuração do Agente de IA no n8n + Evolution API v2
+                    </h4>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                      Pronto para Importar no EasyPanel
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-600 mt-1">
+                    Configure seu Agente de IA com memória de conversa por WhatsApp, Base de Conhecimento Oficial e ferramentas HTTP em tempo real, e importe no seu n8n em 1 clique.
+                  </p>
+                </div>
               </div>
 
-              <button
-                type="button"
-                onClick={handleCopyWorkflow}
-                className="flex items-center gap-1.5 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold rounded-lg transition-colors shadow-xs shrink-0"
-              >
-                {copiedWorkflow ? (
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleOpenKbModal}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                >
+                  <FileCode className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Ver / Editar Base de Conhecimento (v4.1)</span>
+                </button>
+                <a
+                  href="/base-conhecimento-agente-ia-aladay.txt"
+                  download="base-conhecimento-agente-ia-aladay.txt"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl transition-colors"
+                >
+                  <FileCode className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Baixar .TXT (v4.1)</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={handleCopyWorkflow}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-colors shadow-xs cursor-pointer"
+                >
+                  {copiedWorkflow ? (
+                    <>
+                      <Check className="w-4 h-4 text-emerald-300" />
+                      <span>Workflow JSON Copiado!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-4 h-4" />
+                      <span>Copiar Workflow p/ n8n (Ctrl+V)</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* LIVE KNOWLEDGE BASE EDITOR MODAL */}
+            {isKbModalOpen && (
+              <div className="bg-slate-900 text-slate-100 rounded-2xl p-5 border border-slate-700 space-y-4 shadow-xl">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        Base Oficial Ativa • {kbVersion}
+                      </span>
+                      <h5 className="text-sm font-bold text-white">
+                        Base de Conhecimento Oficial do Agente IA (RAG / HTTP Tool n8n)
+                      </h5>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Inclui Salão/Mesas & Garçom, Integração Oficial iFood no KDS, Relatórios Recharts, Configurador de Horário na Barra Superior e Link Direto. Qualquer edição abaixo atualiza o endpoint <code className="text-emerald-300">/api/v1/n8n/knowledge-base</code> em tempo real.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleSaveKbContent}
+                      disabled={isSavingKb || isLoadingKb}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                    >
+                      {isSavingKb ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Salvando...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Salvar Base de Conhecimento</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsKbModalOpen(false)}
+                      className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                </div>
+
+                {kbSaveFeedback && (
+                  <div
+                    className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 ${
+                      kbSaveFeedback.type === 'success'
+                        ? 'bg-emerald-950/80 text-emerald-200 border border-emerald-700/60'
+                        : 'bg-rose-950/80 text-rose-200 border border-rose-700/60'
+                    }`}
+                  >
+                    {kbSaveFeedback.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    )}
+                    <span>{kbSaveFeedback.message}</span>
+                  </div>
+                )}
+
+                {isLoadingKb ? (
+                  <div className="py-12 flex items-center justify-center gap-2 text-xs text-slate-400">
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                    <span>Carregando Base de Conhecimento v4.1...</span>
+                  </div>
+                ) : (
+                  <textarea
+                    rows={16}
+                    value={kbContent}
+                    onChange={(e) => setKbContent(e.target.value)}
+                    className="w-full px-3.5 py-3 bg-slate-950 border border-slate-800 rounded-xl font-mono text-[11px] text-slate-200 focus:outline-hidden focus:border-blue-500 leading-relaxed"
+                  />
+                )}
+              </div>
+            )}
+
+            {/* 3 Profile Cards */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-neutral-900">
+                1. Escolha o Perfil do Agente no n8n:
+              </label>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleSelectAgentMode('restaurante_ia')}
+                  className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+                    n8nAgentMode === 'restaurante_ia'
+                      ? 'border-emerald-600 bg-emerald-50/70 ring-2 ring-emerald-600/20'
+                      : 'border-neutral-200 bg-white hover:border-neutral-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
+                      <Bot className="w-4 h-4 text-emerald-600" />
+                      <span>Agente IA de Cardápio &amp; Pedidos</span>
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-600 text-white">
+                      Loja: {tenant.slug}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-600 leading-relaxed">
+                    Atende os clientes de <strong>{tenant.name}</strong> no WhatsApp: informa se está <strong>Aberto/Fechado</strong> e o horário da barra superior, responde preços reais do cardápio, envia o link direto <code className="font-mono">/cardapio/{tenant.slug}</code> e consulta status de pedidos.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectAgentMode('deterministico')}
+                  className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+                    n8nAgentMode === 'deterministico'
+                      ? 'border-blue-600 bg-blue-50/70 ring-2 ring-blue-600/20'
+                      : 'border-neutral-200 bg-white hover:border-neutral-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
+                      <Zap className="w-4 h-4 text-amber-600" />
+                      <span>Auto-Resposta Cardápio (Sem LLM)</span>
+                    </span>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-amber-100 text-amber-900">
+                      Zero Custo IA
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-600 leading-relaxed">
+                    Consulta a API do <strong>{tenant.name}</strong> em tempo real sem gastar tokens OpenAI/Gemini: responde com horário atualizado, destaques com preços, link direto <code className="font-mono">/cardapio/{tenant.slug}</code> ou transfere no <strong>2</strong>.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectAgentMode('sdr_aladay')}
+                  className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+                    n8nAgentMode === 'sdr_aladay'
+                      ? 'border-blue-600 bg-blue-50/70 ring-2 ring-blue-600/20'
+                      : 'border-neutral-200 bg-white hover:border-neutral-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-blue-600" />
+                      <span>Agente IA Comercial SDR Aladay</span>
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
+                      Vendas SaaS
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-600 leading-relaxed">
+                    Treinado com a Base de Conhecimento v4.1 para atender <strong>donos de restaurantes (Leads)</strong>, apresentar Mesas/Garçom e Integração iFood, e converter nos planos da plataforma.
+                  </p>
+                </button>
+              </div>
+            </div>
+
+            {/* STEP 2: CREDENTIALS, LLM MODEL & WEBHOOK BINDING */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 pt-2">
+              <div className="lg:col-span-7 space-y-4 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                    <Sliders className="w-4 h-4 text-blue-600" />
+                    <span>2. Parâmetros de Conexão (Evolution API + n8n + Modelo de IA)</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-500">
+                    Instância: {tenant.evolutionInstanceId || 'aladay'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      URL da Evolution API (EasyPanel)
+                    </label>
+                    <input
+                      type="text"
+                      value={evolutionUrl}
+                      onChange={(e) => setEvolutionUrl(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-[11px]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Global API Key (Evolution API)
+                    </label>
+                    <input
+                      type="text"
+                      value={evolutionApiKey}
+                      onChange={(e) => setEvolutionApiKey(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-[11px]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      URL do Webhook no n8n (Produção)
+                    </label>
+                    <input
+                      type="text"
+                      value={n8nWebhookUrl}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setN8nWebhookUrl(val);
+                        const match = val.match(/\/webhook(?:-test)?\/([^/?#]+)/);
+                        if (match && match[1]) {
+                          setN8nWebhookPath(match[1]);
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-[11px]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                      <span>Path do Nó Webhook no n8n</span>
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
+                        Sem Conflito de URL
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      value={n8nWebhookPath}
+                      onChange={(e) => syncWebhookPathAndUrl(e.target.value)}
+                      placeholder={`cardapio-${tenant.slug}`}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-[11px]"
+                    />
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                      <span className="text-[10px] text-slate-500">Atalhos sem conflito:</span>
+                      <button
+                        type="button"
+                        onClick={() => syncWebhookPathAndUrl(`cardapio-${tenant.slug}`)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-colors cursor-pointer ${
+                          n8nWebhookPath === `cardapio-${tenant.slug}`
+                            ? 'bg-blue-600 text-white border-blue-600 font-bold'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                        }`}
+                      >
+                        cardapio-{tenant.slug}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => syncWebhookPathAndUrl('cardapio-digital')}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-colors cursor-pointer ${
+                          n8nWebhookPath === 'cardapio-digital'
+                            ? 'bg-blue-600 text-white border-blue-600 font-bold'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                        }`}
+                      >
+                        cardapio-digital
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => syncWebhookPathAndUrl('sdr-aladay')}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-colors cursor-pointer ${
+                          n8nWebhookPath === 'sdr-aladay'
+                            ? 'bg-blue-600 text-white border-blue-600 font-bold'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                        }`}
+                      >
+                        sdr-aladay
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => syncWebhookPathAndUrl('saas')}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-colors cursor-pointer ${
+                          n8nWebhookPath === 'saas'
+                            ? 'bg-blue-600 text-white border-blue-600 font-bold'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                        }`}
+                      >
+                        saas
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="sm:col-span-2 p-3 bg-amber-50/90 border border-amber-200 rounded-xl text-[11px] text-amber-950 space-y-1">
+                    <div className="font-bold flex items-center gap-1.5 text-amber-900">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Como evitar o erro &ldquo;uses a conflicting URL path&rdquo; no n8n:</span>
+                    </div>
+                    <p className="leading-relaxed text-amber-900/90">
+                      O n8n não permite 2 workflows ativos ao mesmo tempo com o mesmo caminho (ex: <code className="bg-amber-100 px-1 py-0.5 rounded font-mono">/webhook/saas</code>). Agora este workflow já usa automaticamente o caminho exclusivo <code className="bg-amber-100 px-1 py-0.5 rounded font-mono font-bold">/webhook/{n8nWebhookPath}</code> e um ID único! Basta clicar em <strong>Copiar JSON (Ctrl+V)</strong> ao lado, ativar no n8n e clicar em <strong>Vincular Webhook na Evolution API (1 Clique)</strong> abaixo.
+                    </p>
+                  </div>
+
+                  {n8nAgentMode !== 'deterministico' && (
+                    <>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Provedor de IA no n8n (Chat Model)
+                        </label>
+                        <select
+                          value={n8nLlmProvider}
+                          onChange={(e) => {
+                            const val = e.target.value as 'openai' | 'gemini';
+                            setN8nLlmProvider(val);
+                            setN8nLlmModel(val === 'gemini' ? 'models/gemini-2.5-flash' : 'gpt-4o-mini');
+                          }}
+                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-medium"
+                        >
+                          <option value="openai">OpenAI (gpt-4o-mini / gpt-4o)</option>
+                          <option value="gemini">Google Gemini (gemini-2.5-flash)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Janela de Memória por Cliente (Mensagens)
+                        </label>
+                        <input
+                          type="number"
+                          min={4}
+                          max={40}
+                          value={n8nMemoryWindow}
+                          onChange={(e) => setN8nMemoryWindow(Number(e.target.value) || 12)}
+                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-xs"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                      <span>Tempo de Espera antes de Responder</span>
+                      <span className="text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded">
+                        Humanização
+                      </span>
+                    </label>
+                    <select
+                      value={n8nResponseDelaySeconds}
+                      onChange={(e) => setN8nResponseDelaySeconds(Number(e.target.value) || 5)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900"
+                    >
+                      <option value={3}>3 segundos (Rápido)</option>
+                      <option value={5}>5 segundos (Recomendado - Humanizado)</option>
+                      <option value={7}>7 segundos (Pausado)</option>
+                      <option value={10}>10 segundos (Tranquilo)</option>
+                    </select>
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      O n8n aguarda {n8nResponseDelaySeconds}s e a Evolution API aciona &quot;digitando...&quot; no WhatsApp.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Formato das Mensagens
+                    </label>
+                    <div className="flex items-center gap-1.5 p-2 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-900 text-xs font-semibold">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Bloco Único &amp; Mensagem Curta (Anti-Textão)</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Mensagens curtas (2 a 4 frases) no mesmo balão de conversa.
+                    </p>
+                  </div>
+                </div>
+
+                {/* 1-Click Evolution API -> n8n Webhook Binder */}
+                <div className="pt-2 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="text-[11px] text-slate-600">
+                    Apontar evento <code className="bg-white px-1 py-0.5 rounded border border-slate-200 font-mono font-bold">MESSAGES_UPSERT</code> da instância <strong>{tenant.evolutionInstanceId || 'aladay'}</strong> direto para o n8n:
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isBindingWebhook}
+                    onClick={handleBindEvolutionWebhookToN8n}
+                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    {isBindingWebhook ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Vinculando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Vincular Webhook na Evolution API (1 Clique)</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {webhookBindFeedback && (
+                  <div
+                    className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
+                      webhookBindFeedback.type === 'success'
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                        : 'bg-rose-50 border-rose-200 text-rose-900'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                    <span>{webhookBindFeedback.message}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: Step-by-Step Checklist in n8n */}
+              <div className="lg:col-span-5 bg-blue-950 text-white rounded-xl p-5 flex flex-col justify-between space-y-4">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-blue-800 text-blue-200 font-bold">
+                      Guia Rápido (60 Segundos)
+                    </span>
+                    <span className="text-[11px] font-mono text-blue-300">
+                      n8n + EasyPanel
+                    </span>
+                  </div>
+                  <h5 className="text-sm font-bold text-white">
+                    Como ativar este Agente no seu n8n:
+                  </h5>
+                  <ol className="space-y-2.5 text-xs text-blue-100 leading-relaxed">
+                    <li className="flex items-start gap-2">
+                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                        1
+                      </span>
+                      <span>
+                        Clique em <strong>&ldquo;Copiar Workflow p/ n8n (Ctrl+V)&rdquo;</strong> ou baixe o arquivo <code className="bg-blue-900 px-1 rounded font-mono">.json</code> abaixo.
+                      </span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                        2
+                      </span>
+                      <span>
+                        Abra seu painel n8n em <code className="bg-blue-900 px-1 py-0.5 rounded font-mono text-[11px]">agencia-n8n.2eoc7n.easypanel.host</code>, crie um workflow em branco e pressione <kbd className="bg-blue-800 px-1.5 py-0.5 rounded border border-blue-600 font-mono text-[10px]">Ctrl + V</kbd>.
+                      </span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                        3
+                      </span>
+                      <span>
+                        {n8nAgentMode === 'deterministico' ? (
+                          <>Verifique o nó <strong>Webhook Evolution API</strong> e ative a chave <strong>Active</strong> no topo direito do n8n.</>
+                        ) : (
+                          <>Abra o nó <strong>{n8nLlmProvider === 'gemini' ? 'Google Gemini Chat Model' : 'OpenAI Chat Model'}</strong>, selecione sua credencial de API no n8n e ative a chave <strong>Active</strong> no canto superior direito.</>
+                        )}
+                      </span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="w-5 h-5 rounded-full bg-emerald-500 text-neutral-950 font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                        4
+                      </span>
+                      <span>
+                        Clique em <strong>&ldquo;Vincular Webhook na Evolution API&rdquo;</strong> ao lado e teste no simulador abaixo!
+                      </span>
+                    </li>
+                  </ol>
+                </div>
+
+                <div className="pt-3 border-t border-blue-800/80 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopyWorkflow}
+                    className="flex-1 py-2.5 px-3 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    {copiedWorkflow ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    <span>{copiedWorkflow ? 'Copiado!' : 'Copiar JSON (Ctrl+V)'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadWorkflowJson}
+                    className="py-2.5 px-3 bg-blue-900 hover:bg-blue-800 text-blue-100 border border-blue-700 font-semibold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <FileCode className="w-4 h-4" />
+                    <span>Baixar .JSON</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* STEP 3: SYSTEM PROMPT & TOOLS ARCHITECTURE */}
+            {n8nAgentMode !== 'deterministico' && (
+              <div className="space-y-3 pt-2 border-t border-neutral-100">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-900">
+                      3. System Prompt &amp; Base de Conhecimento Embutida no Nó &ldquo;AI Agent&rdquo; do n8n:
+                    </label>
+                    <p className="text-[11px] text-neutral-500">
+                      Você pode editar as instruções abaixo antes de copiar o JSON. O workflow já inclui este prompt configurado dentro do nó Agente IA.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAgentSystemPrompt(
+                          n8nAgentMode === 'sdr_aladay' ? defaultSdrSystemPrompt : defaultRestaurantSystemPrompt
+                        )
+                      }
+                      className="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-lg text-[11px] font-semibold cursor-pointer"
+                    >
+                      Restaurar Padrão
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCopySystemPrompt}
+                      className="px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      {copiedPrompt ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedPrompt ? 'Prompt Copiado!' : 'Copiar Apenas o Prompt'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <textarea
+                  rows={10}
+                  value={agentSystemPrompt}
+                  onChange={(e) => setAgentSystemPrompt(e.target.value)}
+                  className="w-full p-3.5 bg-slate-950 text-emerald-400 border border-slate-800 rounded-xl font-mono text-[11px] leading-relaxed focus:outline-blue-600"
+                />
+
+                {/* Endpoints HTTP Tools Exposed to the n8n AI Agent */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px]">
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <span className="font-bold text-blue-700 block">
+                      Tool HTTP 1: Base de Conhecimento SDR
+                    </span>
+                    <code className="font-mono text-[10px] text-slate-800 block mt-1 break-all">
+                      GET {appOriginUrl}/api/v1/n8n/knowledge-base
+                    </code>
+                    <p className="text-slate-500 mt-1">
+                      Retorna todos os planos, argumentos de conversão, ROI e FAQ oficial para o Agente Comercial.
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <span className="font-bold text-emerald-700 block">
+                      Tool HTTP 2: Cardápio &amp; Status da Loja
+                    </span>
+                    <code className="font-mono text-[10px] text-slate-800 block mt-1 break-all">
+                      GET {appOriginUrl}/api/v1/n8n/agent-context/{tenant.slug}
+                    </code>
+                    <p className="text-slate-500 mt-1">
+                      Retorna em tempo real os produtos disponíveis, preços, taxa de entrega e se a loja está aberta.
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <span className="font-bold text-purple-700 block">
+                      Tool HTTP 3: Consulta de Pedido por Telefone
+                    </span>
+                    <code className="font-mono text-[10px] text-slate-800 block mt-1 break-all">
+                      GET {appOriginUrl}/api/v1/n8n/order-status?phone=...
+                    </code>
+                    <p className="text-slate-500 mt-1">
+                      Permite ao agente informar ao cliente se o pedido está confirmado, em preparo ou saiu para entrega.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* STEP 4: LIVE AGENT SIMULATOR & N8N WEBHOOK DISPATCHER */}
+            <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h5 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-blue-600" />
+                    <span>4. Testar Resposta do Agente IA (Áudio, &ldquo;Aquele de Ontem&rdquo; &amp; Memória sem Repetição)</span>
+                  </h5>
+                  <p className="text-[11px] text-slate-600 mt-0.5">
+                    Simule áudios de voz, pedidos anteriores (&ldquo;quero aquele de ontem&rdquo;) e múltiplos turnos seguidos sem repetir saudações robóticas.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleClearConversationMemory}
+                    className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-300 cursor-pointer transition-colors"
+                    title="Limpa o histórico de turnos deste número para testar a 1ª mensagem novamente"
+                  >
+                    <RefreshCw className="w-3 h-3 text-slate-500" />
+                    <span>Reiniciar Memória da Conversa</span>
+                  </button>
+
+                  <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 bg-white px-3 py-1.5 rounded-lg border border-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={dispatchToRemoteN8n}
+                      onChange={(e) => setDispatchToRemoteN8n(e.target.checked)}
+                      className="accent-blue-600"
+                    />
+                    <span>Enviar também POST real p/ URL do n8n</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Quick Preset Questions */}
+              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                <span className="font-semibold text-slate-600">
+                  {n8nAgentMode === 'sdr_aladay'
+                    ? 'Perguntas de Teste (SDR Comercial Aladay v4.1):'
+                    : `Cenários de Teste Naturais (${tenant.name}):`}
+                </span>
+                {n8nAgentMode === 'sdr_aladay' ? (
                   <>
-                    <Check className="w-4 h-4 text-emerald-400" />
-                    <span>Copiado com Sucesso!</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest(
+                          'Olá! Quero saber quanto custa o sistema da Aladay e como funcionam os planos.'
+                        )
+                      }
+                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      💰 &ldquo;Planos e Preços&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest(
+                          '🎙️ [Áudio]: Oi! Tenho uma churrascaria, como funciona o controle de mesas e garçons?',
+                          true
+                        )
+                      }
+                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 rounded-lg font-semibold transition-colors cursor-pointer"
+                    >
+                      🎙️ Simular Áudio de Voz
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest(
+                          'Vocês têm integração oficial com o iFood para cair tudo na mesma cozinha?'
+                        )
+                      }
+                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      🛵 &ldquo;Integração Oficial iFood&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest(
+                          'Tenho muitos produtos, dá para importar meu cardápio por planilha Excel?'
+                        )
+                      }
+                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      📑 &ldquo;Importar Planilha Excel&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunAgentLiveTest('Quero falar com um consultor humano')}
+                      className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      👨‍💼 &ldquo;Falar com consultor humano&rdquo;
+                    </button>
                   </>
                 ) : (
                   <>
-                    <Copy className="w-4 h-4" />
-                    <span>Copiar Workflow JSON (1 Clique)</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest('Oi! Quero pedir aquele mesmo de ontem, por favor!')
+                      }
+                      className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-lg font-semibold transition-colors cursor-pointer"
+                    >
+                      🔄 &ldquo;Quero aquele de ontem&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest(
+                          '🎙️ [Áudio]: Oi! Manda aquele mesmo pedido da última vez para entrega?',
+                          true
+                        )
+                      }
+                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-300 rounded-lg font-semibold transition-colors cursor-pointer"
+                    >
+                      🎙️ Simular Áudio (&ldquo;Manda o da última vez&rdquo;)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest('Quais são as opções e preços do cardápio de hoje?')
+                      }
+                      className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      🍽️ &ldquo;Ver produtos e preços&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest('E quanto fica se eu pedir 2 desse no total?')
+                      }
+                      className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-lg font-semibold transition-colors cursor-pointer"
+                    >
+                      💬 Continuar papo: &ldquo;Quanto fica 2 desse?&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest('Vocês estão abertos agora? Qual o horário de funcionamento?')
+                      }
+                      className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      🕒 &ldquo;Vocês estão abertos?&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRunAgentLiveTest('Onde está meu pedido? Qual o status na cozinha?')
+                      }
+                      className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-slate-800 border border-slate-300 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      📦 &ldquo;Onde está meu pedido?&rdquo;
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunAgentLiveTest('2')}
+                      className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg font-medium transition-colors cursor-pointer"
+                    >
+                      👨‍🍳 &ldquo;2 (Falar com atendente)&rdquo;
+                    </button>
                   </>
                 )}
-              </button>
-            </div>
+              </div>
 
-            {/* Step-by-Step Import Guide */}
-            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-xs text-indigo-950 space-y-1">
-              <span className="font-bold flex items-center gap-1.5 text-indigo-900">
-                <CheckCircle2 className="w-4 h-4 text-indigo-600" />
-                Como importar no seu n8n rodando no Easypanel (30 segundos):
-              </span>
-              <ol className="list-decimal list-inside space-y-0.5 text-[11px] text-indigo-900/90 pl-1">
-                <li>Clique no botão <strong>&quot;Copiar Workflow JSON&quot;</strong> acima.</li>
-                <li>Abra o n8n em <code className="bg-white/80 px-1 py-0.5 rounded font-mono font-bold">https://agencia-n8n.2eoc7n.easypanel.host</code>.</li>
-                <li>Crie um novo workflow vazio e simplesmente pressione <kbd className="bg-white px-1.5 py-0.5 rounded border border-indigo-300 font-mono text-[10px]">Ctrl + V</kbd> (ou clique no menu ⋯ &gt; &quot;Import from JSON&quot;).</li>
-                <li>Para testar: clique no nó <em>Webhook Evolution API</em> &gt; <strong>&quot;Test step&quot;</strong>.</li>
-                <li>Para deixar 24h rodando: ative a chave seletora <strong>&quot;Active&quot;</strong> no canto superior direito do n8n.</li>
-              </ol>
-            </div>
-
-            {/* Architecture diagram of n8n nodes */}
-            <div className="p-4 bg-neutral-50 rounded-lg border border-neutral-200 space-y-2 text-xs">
-              <span className="font-bold text-neutral-900 text-xs block">
-                Nós configurados neste Workflow:
-              </span>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-[11px]">
-                <div className="p-2.5 bg-white border border-neutral-200 rounded-md shadow-2xs">
-                  <p className="font-bold text-indigo-700">1. Webhook Evolution</p>
-                  <p className="text-neutral-500 mt-0.5">
-                    Path <code className="font-mono text-neutral-800 font-bold">/saas</code>. Recebe <code className="font-mono">messages.upsert</code>.
-                  </p>
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
+                <div className="md:col-span-3">
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Nome do Lead / Cliente (pushName)
+                  </label>
+                  <input
+                    type="text"
+                    value={agentTestCustomerName}
+                    onChange={(e) => setAgentTestCustomerName(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs"
+                  />
                 </div>
-                <div className="p-2.5 bg-white border border-neutral-200 rounded-md shadow-2xs">
-                  <p className="font-bold text-neutral-800">2. Code / Sanitização</p>
-                  <p className="text-neutral-500 mt-0.5">
-                    Extrai <code className="font-mono text-neutral-800">remoteJid</code>, filtra grupos e previne loop de <code className="font-mono text-neutral-800">fromMe</code>.
-                  </p>
+                <div className="md:col-span-3">
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    WhatsApp (remoteJid)
+                  </label>
+                  <input
+                    type="text"
+                    value={agentTestPhone}
+                    onChange={(e) => setAgentTestPhone(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-xs"
+                  />
                 </div>
-                <div className="p-2.5 bg-white border border-neutral-200 rounded-md shadow-2xs">
-                  <p className="font-bold text-amber-700">3. Switch de Intenção</p>
-                  <p className="text-neutral-500 mt-0.5">
-                    Verifica se o cliente digitou &quot;2&quot; ou pediu atendente humano.
-                  </p>
-                </div>
-                <div className="p-2.5 bg-white border border-neutral-200 rounded-md shadow-2xs">
-                  <p className="font-bold text-emerald-700">4. HTTP Request (Evolution)</p>
-                  <p className="text-neutral-500 mt-0.5">
-                    POST para <code className="font-mono text-neutral-800">/message/sendText/{tenant.evolutionInstanceId || 'aladay'}</code>.
-                  </p>
+                <div className="md:col-span-6">
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Mensagem Recebida no WhatsApp (Texto ou 🎙️ Áudio)
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={agentTestMessage}
+                      onChange={(e) => setAgentTestMessage(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleRunAgentLiveTest();
+                      }}
+                      className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs"
+                    />
+                    <button
+                      type="button"
+                      disabled={isTestingN8nAgent}
+                      onClick={() => handleRunAgentLiveTest(undefined, true)}
+                      title="Simular envio como Áudio de Voz no WhatsApp"
+                      className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
+                    >
+                      <span>🎙️ Áudio</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isTestingN8nAgent}
+                      onClick={() => handleRunAgentLiveTest()}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer"
+                    >
+                      {isTestingN8nAgent ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Send className="w-3.5 h-3.5" />
+                      )}
+                      <span>{isTestingN8nAgent ? 'Processando...' : 'Testar'}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
+
+              {isDelayCountingDown && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-900 flex items-center justify-between shadow-2xs animate-pulse">
+                  <div className="flex items-center gap-2.5">
+                    <Clock className="w-4 h-4 text-amber-600 animate-spin shrink-0" />
+                    <span>
+                      Aguardando <strong>{delayCountdownSeconds}s</strong> (Simulando status &quot;digitando...&quot; no WhatsApp antes de disparar)...
+                    </span>
+                  </div>
+                  <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-amber-200/80 text-amber-900 shrink-0">
+                    Pausa de {n8nResponseDelaySeconds}s
+                  </span>
+                </div>
+              )}
+
+              {agentTestResult && (
+                <div className="bg-white border border-blue-200 rounded-xl p-4 space-y-3 text-xs shadow-2xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
+                    <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span>Resposta Gerada pelo Agente IA ({agentTestResult.triggeredTool})</span>
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-mono">
+                      {agentTestResult.isAudio && (
+                        <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 border border-indigo-200 font-sans font-semibold">
+                          🎙️ Áudio Interpretado
+                        </span>
+                      )}
+                      <span
+                        className={`px-2 py-0.5 rounded border font-sans font-semibold ${
+                          agentTestResult.isFollowUp
+                            ? 'bg-purple-50 text-purple-800 border-purple-200'
+                            : 'bg-blue-50 text-blue-800 border-blue-200'
+                        }`}
+                      >
+                        {agentTestResult.isFollowUp
+                          ? `💬 Turno #${agentTestResult.turnCount} (Continuação sem repetir saudação)`
+                          : '👋 Turno #1 (1ª Mensagem da Conversa)'}
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-sans font-medium">
+                        ⏱️ {n8nResponseDelaySeconds}s · 📝 Bloco Único
+                      </span>
+                      {dispatchToRemoteN8n && (
+                        <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                          Webhook n8n: {agentTestResult.remoteN8nStatus}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="p-3.5 bg-[#DCF8C6]/50 border border-emerald-200 rounded-xl whitespace-pre-wrap text-slate-900 leading-relaxed font-sans text-xs">
+                    {agentTestResult.agentReply}
+                  </div>
+                  {agentTestResult.conversationMemory?.recentMessages?.length > 1 && (
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
+                        <span>🧠 Contexto Mantido na Conversa ({agentTestResult.conversationMemory.recentMessages.length} mensagens na sessão):</span>
+                        <span className="text-slate-500 font-mono">{agentTestResult.conversationMemory.sessionKey}</span>
+                      </div>
+                      <div className="space-y-1 max-h-36 overflow-y-auto text-[11px] text-slate-700 font-sans">
+                        {agentTestResult.conversationMemory.recentMessages.map((m: any, idx: number) => (
+                          <div key={idx} className="flex gap-1.5">
+                            <span className="text-slate-400 font-mono shrink-0">[{m.timeStr}]</span>
+                            <span className={m.role === 'user' ? 'font-semibold text-blue-800' : 'font-semibold text-emerald-800'}>
+                              {m.role === 'user' ? `${m.isAudio ? '🎙️ ' : ''}Cliente:` : '🤖 Agente:'}
+                            </span>
+                            <span className="truncate">{m.text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
-            {/* Live Webhook Schema Mapping based on user's exact payload */}
-            <div className="p-4 bg-amber-50/60 border border-amber-200 rounded-lg space-y-2 text-xs">
-              <span className="font-bold text-amber-950 text-xs flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-amber-600" />
-                Mapeamento das Variáveis do seu Webhook Real da Evolution API v2:
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-[11px] font-mono">
-                <div className="p-2 bg-white rounded border border-amber-200">
-                  <span className="text-neutral-400 block text-[10px]">Origem (Webhook Evolution):</span>
-                  <span className="text-amber-800 font-semibold">body.server_url</span>
-                  <span className="text-neutral-600 block truncate mt-0.5">&quot;https://agencia-evolution-api.2eoc7n...&quot;</span>
-                </div>
-                <div className="p-2 bg-white rounded border border-amber-200">
-                  <span className="text-neutral-400 block text-[10px]">Origem (Webhook Evolution):</span>
-                  <span className="text-amber-800 font-semibold">body.apikey</span>
-                  <span className="text-neutral-600 block truncate mt-0.5">&quot;21C3D49F3F00-48FA...&quot;</span>
-                </div>
-                <div className="p-2 bg-white rounded border border-amber-200">
-                  <span className="text-neutral-400 block text-[10px]">Instância:</span>
-                  <span className="text-amber-800 font-semibold">body.instance</span>
-                  <span className="text-neutral-600 block font-bold mt-0.5">&quot;aladay&quot;</span>
-                </div>
-                <div className="p-2 bg-white rounded border border-amber-200">
-                  <span className="text-neutral-400 block text-[10px]">Telefone do Cliente:</span>
-                  <span className="text-amber-800 font-semibold">body.data.key.remoteJid</span>
-                  <span className="text-neutral-600 block font-bold mt-0.5">559181214188</span>
-                </div>
-                <div className="p-2 bg-white rounded border border-amber-200">
-                  <span className="text-neutral-400 block text-[10px]">Nome do Cliente:</span>
-                  <span className="text-amber-800 font-semibold">body.data.pushName</span>
-                  <span className="text-neutral-600 block font-bold mt-0.5">&quot;Adriano Saraiva&quot;</span>
-                </div>
-                <div className="p-2 bg-white rounded border border-amber-200">
-                  <span className="text-neutral-400 block text-[10px]">Texto da Mensagem:</span>
-                  <span className="text-amber-800 font-semibold">data.message.conversation</span>
-                  <span className="text-neutral-600 block font-bold mt-0.5">&quot;Quero ver o cardápio&quot;</span>
-                </div>
+            {/* STEP 5: COMPLETE N8N WORKFLOW JSON PREVIEW */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-neutral-900">
+                  5. Código JSON Completo do Workflow n8n ({n8nAgentMode === 'sdr_aladay' ? 'Agente IA Comercial SDR Aladay' : n8nAgentMode === 'restaurante_ia' ? `Agente IA ${tenant.name}` : 'Auto-Resposta Determinística'}):
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyWorkflow}
+                  className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  {copiedWorkflow ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedWorkflow ? 'JSON Copiado!' : 'Copiar JSON'}</span>
+                </button>
               </div>
-            </div>
-
-            {/* Code Box */}
-            <div className="relative">
-              <pre className="bg-neutral-900 text-emerald-400 p-4 rounded-xl font-mono text-[11px] overflow-x-auto max-h-[460px] leading-relaxed">
-                {n8nWorkflowJSON}
-              </pre>
+              <div className="relative">
+                <pre className="bg-neutral-900 text-emerald-400 p-4 rounded-xl font-mono text-[11px] overflow-x-auto max-h-[420px] leading-relaxed">
+                  {n8nWorkflowJSON}
+                </pre>
+              </div>
             </div>
           </div>
         </div>
@@ -1845,6 +3482,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
               )}
 
               {/* Ready-to-copy Environment Variables for EasyPanel Site App */}
+              <p className="text-xs text-neutral-600">Gere um segredo exclusivo no servidor com <code>openssl rand -hex 32</code> e configure JWT_SECRET diretamente no ambiente de deploy. Não reutilize valores de exemplo.</p>
               <div className="space-y-2 pt-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-neutral-900">
@@ -1853,7 +3491,7 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const envText = `PORT=3000\nNODE_ENV=production\nAPP_URL=HTTPS_URL_PUBLICA_DO_APP\nDATABASE_URL=${generatedEasyPanelDbUrl}\nPGSSLMODE=disable\nJWT_SECRET=GERAR_COM_OPENSSL_RAND_HEX_48\nADMIN_EMAIL=SEU_EMAIL_ADMIN\nADMIN_PASSWORD=SENHA_FORTE_COM_14_CARACTERES_OU_MAIS\nADMIN_PHONE=DDD_TELEFONE_INTERNACIONAL\nEVOLUTION_API_URL=${evolutionUrl}\nEVOLUTION_API_KEY=${evolutionApiKey}\nEVOLUTION_WEBHOOK_TOKEN=GERAR_TOKEN_ALEATORIO_FORTE\nPIX_WEBHOOK_TOKEN=GERAR_TOKEN_ALEATORIO_FORTE\nN8N_WEBHOOK_URL=${n8nWebhookUrl}\nASAAS_ENVIRONMENT=sandbox\nASAAS_API_KEY=\nASAAS_WEBHOOK_TOKEN=`;
+                      const envText = `PORT=3000\nNODE_ENV=production\nDATABASE_URL=${generatedEasyPanelDbUrl}\nPGSSLMODE=disable\n# Gere JWT_SECRET no servidor com: openssl rand -hex 32\nEVOLUTION_API_URL=${evolutionUrl}\nEVOLUTION_API_KEY=${evolutionApiKey}\nN8N_WEBHOOK_URL=${n8nWebhookUrl}`;
                       navigator.clipboard.writeText(envText);
                       setCopiedEnvBlock(true);
                       setTimeout(() => setCopiedEnvBlock(false), 3000);
@@ -1868,21 +3506,12 @@ export const WhatsAppAutomationView: React.FC<WhatsAppAutomationViewProps> = ({
                 <pre className="bg-neutral-900 text-neutral-200 p-3.5 rounded-lg font-mono text-[11px] overflow-x-auto leading-relaxed">
 {`PORT=3000
 NODE_ENV=production
-APP_URL=HTTPS_URL_PUBLICA_DO_APP
 DATABASE_URL=${generatedEasyPanelDbUrl}
 PGSSLMODE=disable
-JWT_SECRET=GERAR_COM_OPENSSL_RAND_HEX_48
-ADMIN_EMAIL=SEU_EMAIL_ADMIN
-ADMIN_PASSWORD=SENHA_FORTE_COM_14_CARACTERES_OU_MAIS
-ADMIN_PHONE=DDD_TELEFONE_INTERNACIONAL
+# Gere JWT_SECRET no servidor com: openssl rand -hex 32
 EVOLUTION_API_URL=${evolutionUrl}
 EVOLUTION_API_KEY=${evolutionApiKey}
-EVOLUTION_WEBHOOK_TOKEN=GERAR_TOKEN_ALEATORIO_FORTE
-PIX_WEBHOOK_TOKEN=GERAR_TOKEN_ALEATORIO_FORTE
-N8N_WEBHOOK_URL=${n8nWebhookUrl}
-ASAAS_ENVIRONMENT=sandbox
-ASAAS_API_KEY=
-ASAAS_WEBHOOK_TOKEN=`}
+N8N_WEBHOOK_URL=${n8nWebhookUrl}`}
                 </pre>
               </div>
 
@@ -1933,8 +3562,8 @@ ASAAS_WEBHOOK_TOKEN=`}
                 <span className="font-bold text-neutral-900">Variáveis de Ambiente da Evolution API no Easypanel:</span>
               </div>
               <pre className="bg-neutral-900 text-neutral-200 p-3 rounded font-mono text-[11px] overflow-x-auto">
-{`SERVER_URL=https://SUA_EVOLUTION_API
-AUTHENTICATION_API_KEY=SUBSTITUA_POR_CHAVE_FORTE_UNICA
+{`SERVER_URL=https://sua-evolution-api.easypanel.host
+AUTHENTICATION_API_KEY=SUA_GLOBAL_API_KEY_EVOLUTION_AQUI
 DATABASE_ENABLED=true
 DATABASE_CONNECTION_URI=postgresql://postgres:senha@postgres:5432/evolution
 REDIS_ENABLED=true
@@ -1951,7 +3580,7 @@ REDIS_URI=redis://default:senha@redis:6379`}
                 <span className="font-bold text-neutral-900">Variáveis de Ambiente do n8n no Easypanel:</span>
               </div>
               <pre className="bg-neutral-900 text-neutral-200 p-3 rounded font-mono text-[11px] overflow-x-auto">
-{`WEBHOOK_URL=https://SEU_N8N/
+{`WEBHOOK_URL=https://integration.example.invalid
 N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
 EXECUTIONS_DATA_PRUNE=true
 EXECUTIONS_DATA_MAX_AGE=168`}
@@ -2303,6 +3932,7 @@ EXECUTIONS_DATA_MAX_AGE=168`}
         onClose={() => setIsQrModalOpen(false)}
         tenant={tenant}
         onTenantUpdated={onUpdateTenant}
+        isSuperAdmin={isSuperAdmin}
       />
     </div>
   );

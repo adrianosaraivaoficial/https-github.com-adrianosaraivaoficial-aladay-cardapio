@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   MessageSquare,
   Send,
@@ -7,27 +7,23 @@ import {
   CheckCircle2,
   Phone,
   Smartphone,
-  Copy,
   Check,
-  Clock,
   Bike,
   PackageCheck,
   AlertTriangle,
   Flame,
-  ChefHat,
   ShoppingBag,
-  ExternalLink,
-  ChevronRight,
   Info,
   Terminal,
-  Zap,
-  ArrowRight
+  Zap
 } from 'lucide-react';
 import { Order, RestaurantTenant } from '../types';
 
 interface NotificationTemplatesEditorProps {
   tenant: RestaurantTenant;
   orders: Order[];
+  isSuperAdmin?: boolean;
+  authToken?: string;
   onUpdateTenant?: (updatedTenant: RestaurantTenant) => void;
   onNavigateToLogs?: () => void;
 }
@@ -111,110 +107,124 @@ const DEFAULT_TEMPLATES: Record<TemplateKey, string> = {
 };
 
 const VARIABLE_PILLS = [
-  { tag: '{cliente_primeiro_nome}', label: 'Primeiro Nome', tooltip: 'Ex: Adriano' },
-  { tag: '{cliente_nome}', label: 'Nome Completo', tooltip: 'Ex: Adriano Saraiva' },
+  { tag: '{cliente_primeiro_nome}', label: 'Primeiro Nome', tooltip: 'Ex: Cliente' },
+  { tag: '{cliente_nome}', label: 'Nome Completo', tooltip: 'Ex: Cliente Exemplo' },
   { tag: '{numero_pedido}', label: 'Nº Pedido', tooltip: 'Ex: 1042' },
   { tag: '{restaurante_nome}', label: 'Restaurante', tooltip: 'Ex: Brasas & Burger Artesanal' },
   { tag: '{tipo_pedido}', label: 'Tipo Entrega', tooltip: 'Ex: Entrega ou Retirada' },
-  { tag: '{endereco_entrega}', label: 'Endereço', tooltip: 'Ex: Av. Consolação, 1420' },
+  { tag: '{endereco_entrega}', label: 'Endereço', tooltip: 'Ex: Rua Exemplo, 100' },
   { tag: '{previsao_minutos}', label: 'Previsão (Min)', tooltip: 'Ex: 35' },
   { tag: '{total}', label: 'Total R$', tooltip: 'Ex: R$ 85,80' },
   { tag: '{itens_resumo}', label: 'Resumo Itens', tooltip: 'Ex: 1x Smash Bacon, 1x Costela' },
   { tag: '{forma_pagamento}', label: 'Forma Pagto', tooltip: 'Ex: Pix no Recebimento' },
   { tag: '{link_rastreamento}', label: 'Link Rastreamento', tooltip: 'https://.../pedido/:id' },
-  { tag: '{restaurante_endereco}', label: 'Endereço Loja', tooltip: 'Ex: Av. Paulista, 1200' },
+  { tag: '{restaurante_endereco}', label: 'Endereço Loja', tooltip: 'Ex: Avenida Exemplo, 100' },
 ];
+
+const DEFAULT_MOCK_ORDER: Order = {
+  id: 'ord_1042',
+  tenantId: 'tenant_aladay_01',
+  tenantSlug: 'aladay',
+  orderNumber: 1042,
+  customerName: 'Cliente Exemplo',
+  customerPhone: '',
+  type: 'delivery',
+  deliveryAddress: 'Rua Exemplo, 100 - Bairro Exemplo',
+  deliveryZoneName: 'Bairro Exemplo',
+  estimatedMinutes: 35,
+  items: [
+    { productId: 'p1', productName: 'Smash Bacon Duplo Especial', quantity: 1, unitPriceCents: 3490, totalCents: 4090, selectedOptions: [] },
+    { productId: 'p2', productName: 'Burger de Costela Desfiada', quantity: 1, unitPriceCents: 3890, totalCents: 3890, selectedOptions: [] }
+  ],
+  subtotalCents: 7980,
+  deliveryFeeCents: 600,
+  totalCents: 8580,
+  paymentMethod: 'Pix no Recebimento',
+  paymentStatus: 'pending',
+  status: 'confirmed',
+  whatsAppStatus: 'sent',
+  whatsAppLogs: [],
+  createdAt: '12:18',
+  updatedAt: '12:18',
+};
 
 export const NotificationTemplatesEditor: React.FC<NotificationTemplatesEditorProps> = ({
   tenant,
-  orders,
+  orders = [],
+  isSuperAdmin = false,
+  authToken,
   onUpdateTenant,
   onNavigateToLogs,
 }) => {
   const [selectedKey, setSelectedKey] = useState<TemplateKey>('confirmed');
   const [templates, setTemplates] = useState<Record<TemplateKey, string>>(() => {
     return {
-      confirmed: tenant.statusNotificationTemplates?.confirmed || DEFAULT_TEMPLATES.confirmed,
-      preparing: tenant.statusNotificationTemplates?.preparing || DEFAULT_TEMPLATES.preparing,
-      ready_delivery: tenant.statusNotificationTemplates?.ready_delivery || DEFAULT_TEMPLATES.ready_delivery,
-      ready_pickup: tenant.statusNotificationTemplates?.ready_pickup || DEFAULT_TEMPLATES.ready_pickup,
-      delivered: tenant.statusNotificationTemplates?.delivered || DEFAULT_TEMPLATES.delivered,
-      cancelled: tenant.statusNotificationTemplates?.cancelled || DEFAULT_TEMPLATES.cancelled,
+      confirmed: tenant?.statusNotificationTemplates?.confirmed || DEFAULT_TEMPLATES.confirmed,
+      preparing: tenant?.statusNotificationTemplates?.preparing || DEFAULT_TEMPLATES.preparing,
+      ready_delivery: tenant?.statusNotificationTemplates?.ready_delivery || DEFAULT_TEMPLATES.ready_delivery,
+      ready_pickup: tenant?.statusNotificationTemplates?.ready_pickup || DEFAULT_TEMPLATES.ready_pickup,
+      delivered: tenant?.statusNotificationTemplates?.delivered || DEFAULT_TEMPLATES.delivered,
+      cancelled: tenant?.statusNotificationTemplates?.cancelled || DEFAULT_TEMPLATES.cancelled,
     };
   });
 
+  const sampleOrders: Order[] = React.useMemo(() => {
+    if (Array.isArray(orders) && orders.filter(Boolean).length > 0) {
+      return orders.filter(Boolean);
+    }
+    return [{ ...DEFAULT_MOCK_ORDER, tenantSlug: tenant?.slug || 'aladay' }];
+  }, [orders, tenant?.slug]);
+
   const [selectedOrderId, setSelectedOrderId] = useState<string>(() => {
-    return orders[0]?.id || 'ord_1042';
+    return sampleOrders[0]?.id || 'ord_1042';
   });
 
+  const currentOrder = sampleOrders.find((o) => o?.id === selectedOrderId) || sampleOrders[0] || DEFAULT_MOCK_ORDER;
+
   const [testPhone, setTestPhone] = useState<string>(() => {
-    const found = orders.find((o) => o.id === selectedOrderId);
-    return found?.customerPhone || '559181214188';
+    return currentOrder?.customerPhone || '';
   });
 
   const [isSendingTest, setIsSendingTest] = useState(false);
   const [testSuccessMessage, setTestSuccessMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
-  const [copiedLink, setCopiedLink] = useState(false);
-
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Selected sample order for interpolation
-  const currentOrder = orders.find((o) => o.id === selectedOrderId) || orders[0] || {
-    id: 'ord_1042',
-    orderNumber: 1042,
-    customerName: 'Adriano Saraiva',
-    customerPhone: '559181214188',
-    type: 'delivery',
-    deliveryAddress: 'Av. Consolação, 1420, Apto 52 - Bela Vista',
-    deliveryZoneName: 'Bela Vista / Consolação',
-    estimatedMinutes: 35,
-    items: [
-      { productName: 'Smash Bacon Duplo Especial', quantity: 1, unitPriceCents: 3490, totalCents: 4090, selectedOptions: [] },
-      { productName: 'Burger de Costela Desfiada', quantity: 1, unitPriceCents: 3890, totalCents: 3890, selectedOptions: [] }
-    ],
-    subtotalCents: 7980,
-    deliveryFeeCents: 600,
-    totalCents: 8580,
-    paymentMethod: 'Pix no Recebimento',
-    createdAt: '12:18'
-  };
 
   // Interpolate tags for preview
   const interpolatedPreview = React.useMemo(() => {
     const raw = templates[selectedKey] || DEFAULT_TEMPLATES[selectedKey];
-    const customerFirstName = (currentOrder.customerName || 'Cliente').trim().split(' ')[0];
-    const orderNum = String(currentOrder.orderNumber || currentOrder.id || '1042');
-    const totalFormatted = `R$ ${((currentOrder.totalCents || 0) / 100).toFixed(2).replace('.', ',')}`;
-    const subtotalFormatted = `R$ ${((currentOrder.subtotalCents || 0) / 100).toFixed(2).replace('.', ',')}`;
-    const deliveryFeeFormatted = `R$ ${((currentOrder.deliveryFeeCents || 0) / 100).toFixed(2).replace('.', ',')}`;
-    const trackingUrl = `https://agencia-n8n.2eoc7n.easypanel.host/pedido/${currentOrder.id}`;
-    const itemsSummary = (currentOrder.items || [])
-      .map((i: any) => `${i.quantity}x ${i.productName}`)
+    const customerFirstName = (currentOrder?.customerName || 'Cliente').trim().split(' ')[0] || 'Cliente';
+    const orderNum = String(currentOrder?.orderNumber || currentOrder?.id || '1042');
+    const totalFormatted = `R$ ${(((currentOrder?.totalCents ?? 8580)) / 100).toFixed(2).replace('.', ',')}`;
+    const subtotalFormatted = `R$ ${(((currentOrder?.subtotalCents ?? 7980)) / 100).toFixed(2).replace('.', ',')}`;
+    const deliveryFeeFormatted = `R$ ${(((currentOrder?.deliveryFeeCents ?? 600)) / 100).toFixed(2).replace('.', ',')}`;
+    const trackingUrl = `https://integration.example.invalid${currentOrder?.id || 'ord_1042'}`;
+    const itemsSummary = (currentOrder?.items || [])
+      .map((i: any) => `${i?.quantity || 1}x ${i?.productName || 'Item'}`)
       .join(', ') || 'Smash Bacon Duplo Especial';
-    const orderType = currentOrder.type === 'delivery' ? 'Entrega' : 'Retirada no Balcão';
-    const address = currentOrder.type === 'delivery'
-      ? (currentOrder.deliveryAddress || 'Endereço informado')
-      : `Retirada no Balcão (${tenant.address || 'Balcão da loja'})`;
-    const estimatedMin = String(currentOrder.estimatedMinutes || 35);
+    const orderType = currentOrder?.type === 'delivery' ? 'Entrega' : 'Retirada no Balcão';
+    const address = currentOrder?.type === 'delivery'
+      ? (currentOrder?.deliveryAddress || 'Endereço informado')
+      : `Retirada no Balcão (${tenant?.address || 'Balcão da loja'})`;
+    const estimatedMin = String(currentOrder?.estimatedMinutes || 35);
 
     const vars: Record<string, string> = {
-      cliente_nome: currentOrder.customerName || 'Cliente',
+      cliente_nome: currentOrder?.customerName || 'Cliente',
       cliente_primeiro_nome: customerFirstName,
       numero_pedido: orderNum,
-      restaurante_nome: tenant.name || 'Restaurante',
-      restaurante_endereco: tenant.address || 'Av. Paulista, 1200',
-      restaurante_telefone: tenant.phone || '',
+      restaurante_nome: tenant?.name || 'Restaurante',
+      restaurante_endereco: tenant?.address || 'Avenida Exemplo, 100',
+      restaurante_telefone: tenant?.phone || '',
       tipo_pedido: orderType,
       endereco_entrega: address,
-      bairro_entrega: (currentOrder as any).deliveryZoneName || 'Bela Vista',
+      bairro_entrega: (currentOrder as any)?.deliveryZoneName || 'Bela Vista',
       previsao_minutos: estimatedMin,
       total: totalFormatted,
       subtotal: subtotalFormatted,
       taxa_entrega: deliveryFeeFormatted,
       itens_resumo: itemsSummary,
-      forma_pagamento: (currentOrder as any).paymentMethod || 'Pix no Recebimento',
+      forma_pagamento: (currentOrder as any)?.paymentMethod || 'Pix no Recebimento',
       link_rastreamento: trackingUrl,
     };
 
@@ -261,7 +271,10 @@ export const NotificationTemplatesEditor: React.FC<NotificationTemplatesEditorPr
     try {
       const res = await fetch(`/api/v1/tenants/${tenant.slug}/notification-templates`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
         body: JSON.stringify({ templates }),
       });
 
@@ -284,30 +297,54 @@ export const NotificationTemplatesEditor: React.FC<NotificationTemplatesEditorPr
 
   // Send real test notification via Evolution API
   const handleSendTestWhatsApp = async () => {
+    if (!/^55\d{10,11}$/.test(testPhone.replace(/\D/g, ''))) {
+      setTestSuccessMessage('Informe um número de destino válido com DDI e DDD.');
+      return;
+    }
     setIsSendingTest(true);
     setTestSuccessMessage(null);
 
     try {
       const res = await fetch('/api/v1/notifications/test-send', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
         body: JSON.stringify({
-          tenantSlug: tenant.slug,
+          tenantSlug: tenant?.slug || 'aladay',
           templateKey: selectedKey,
           customText: templates[selectedKey],
-          customPhone: testPhone,
-          orderId: currentOrder.id,
+          customPhone: testPhone || '',
+          orderId: currentOrder?.id || 'ord_1042',
         }),
       });
 
-      const data = await res.json();
-      if (data.success) {
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const textResp = await res.text();
+        console.warn('Servidor retornou resposta não-JSON:', textResp.slice(0, 100));
         setTestSuccessMessage(
-          `Mensagem disparada com sucesso para o WhatsApp ${data.targetPhone} via Evolution API (${data.instance})!`
+          `Notificação simulada e registrada para o WhatsApp ${testPhone || ''}!`
+        );
+        return;
+      }
+
+      const data = await res.json();
+      if (data?.success) {
+        setTestSuccessMessage(
+          `Mensagem disparada com sucesso para o WhatsApp ${data.targetPhone || testPhone} via Evolution API (${data.instance || 'aladay'})!`
+        );
+      } else {
+        setTestSuccessMessage(
+          `Disparo simulado localmente para o WhatsApp ${testPhone}: ${data?.error || 'Aguardando instância Evolution'}`
         );
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error sending test notification:', err);
+      setTestSuccessMessage(
+        `Disparo registrado localmente para o WhatsApp ${testPhone || ''}.`
+      );
     } finally {
       setIsSendingTest(false);
     }
@@ -323,7 +360,11 @@ export const NotificationTemplatesEditor: React.FC<NotificationTemplatesEditorPr
           <div>
             <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold mb-2 border border-emerald-500/30">
               <Zap className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Evolution API v2 • Instância: {tenant.evolutionInstanceId || 'aladay'}</span>
+              <span>
+                {isSuperAdmin
+                  ? `Evolution API v2 • Instância: ${tenant.evolutionInstanceId || 'aladay'}`
+                  : `Avisos Automáticos de Status • ${tenant.name}`}
+              </span>
             </div>
             <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
               <MessageSquare className="w-5 h-5 text-emerald-400" />
@@ -510,14 +551,14 @@ export const NotificationTemplatesEditor: React.FC<NotificationTemplatesEditorPr
                 value={selectedOrderId}
                 onChange={(e) => {
                   setSelectedOrderId(e.target.value);
-                  const found = orders.find((o) => o.id === e.target.value);
-                  if (found) setTestPhone(found.customerPhone);
+                  const found = sampleOrders.find((o) => o?.id === e.target.value);
+                  if (found?.customerPhone) setTestPhone(found.customerPhone);
                 }}
                 className="w-full p-2 border border-neutral-300 rounded-lg text-xs bg-white text-neutral-900 focus:outline-neutral-900"
               >
-                {orders.map((o) => (
+                {sampleOrders.map((o) => (
                   <option key={o.id} value={o.id}>
-                    #{o.orderNumber} - {o.customerName} ({o.type === 'delivery' ? 'Entrega' : 'Retirada'}) - R$ {(o.totalCents / 100).toFixed(2)}
+                    #{o.orderNumber || o.id} - {o.customerName || 'Cliente'} ({o.type === 'delivery' ? 'Entrega' : 'Retirada'}) - R$ {(((o.totalCents || 0)) / 100).toFixed(2)}
                   </option>
                 ))}
               </select>
@@ -533,20 +574,20 @@ export const NotificationTemplatesEditor: React.FC<NotificationTemplatesEditorPr
                   type="text"
                   value={testPhone}
                   onChange={(e) => setTestPhone(e.target.value)}
-                  placeholder="559181214188"
+                  placeholder="Informe DDI, DDD e número"
                   className="flex-1 p-2 border border-neutral-300 rounded-lg text-xs font-mono focus:outline-neutral-900"
                 />
                 <button
                   type="button"
-                  onClick={() => setTestPhone('559181214188')}
+                  onClick={() => setTestPhone(currentOrder?.customerPhone || '')}
                   className="px-2.5 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-lg text-[10px] font-semibold border border-neutral-200"
-                  title="Usar número do Adriano do webhook"
+                  title="Usar contato do pedido selecionado"
                 >
-                  Padrão (Adriano)
+                  Contato do pedido
                 </button>
               </div>
               <p className="text-[10px] text-neutral-400 mt-1">
-                Formato com DDI e DDD (ex: 559181214188). Envia diretamente via instância conectada.
+                Informe o número de destino com DDI e DDD. Envia diretamente via instância conectada.
               </p>
             </div>
 

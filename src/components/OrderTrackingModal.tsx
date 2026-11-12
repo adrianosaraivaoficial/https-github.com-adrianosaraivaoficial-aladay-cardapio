@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Clock, CheckCircle2, MapPin, Phone, MessageSquare, X, Copy, Check, ChevronRight, AlertCircle, ShoppingBag } from 'lucide-react';
+import { Clock, MapPin, MessageSquare, X, Copy, Check, ShoppingBag } from 'lucide-react';
 import { Order, OrderStatus, RestaurantTenant } from '../types';
 
 interface OrderTrackingModalProps {

@@ -247,7 +247,7 @@ export const ArchitectureDocView: React.FC = () => {
                             const cells = row
                               .split('|')
                               .map((c) => c.trim())
-                              .filter((c, i, arr) => i > 0 && i < arr.length - 1);
+                              .filter((_, i, arr) => i > 0 && i < arr.length - 1);
                             return (
                               <tr key={rIdx} className="hover:bg-neutral-50/60 transition-colors">
                                 {cells.map((cell, cIdx) => (

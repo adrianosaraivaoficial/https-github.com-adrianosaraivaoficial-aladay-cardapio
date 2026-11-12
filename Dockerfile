@@ -1,47 +1,20 @@
-# Multi-stage Dockerfile for Hostinger VPS with Easypanel
-# Stage 1: Build Frontend Assets
-FROM node:22-alpine AS builder
-
+FROM node:22-bookworm-slim AS build
 WORKDIR /app
-
-# Copy dependency manifests
-COPY package.json package-lock.json* bun.lock* ./
-
-# Install all dependencies (including devDependencies needed for vite build)
-RUN npm install --legacy-peer-deps
-
-# Copy application source code
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY . .
+RUN npm run lint && npm run build && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
-# Build Vite frontend to /app/dist
-RUN npm run build
-
-# Stage 2: Production Runner
-FROM node:22-alpine AS runner
-
+FROM node:22-bookworm-slim AS runtime
+ENV NODE_ENV=production PORT=3000
 WORKDIR /app
-
-ENV NODE_ENV=production
-ENV PORT=3000
-
-# Copy package files and install only production dependencies
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev --legacy-peer-deps
-
-# Copy compiled frontend from builder
-COPY --from=builder /app/dist ./dist
-
-# Copy backend server and essential source files
-COPY server.ts ./
-COPY src ./src
-COPY tsconfig.json ./
-
-# Expose default Easypanel port
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build --chown=node:node /app/backend ./backend
+COPY --from=build --chown=node:node /app/database ./database
+COPY --from=build --chown=node:node /app/public ./public
+COPY --from=build --chown=node:node /app/server.ts /app/package.json ./
+USER node
 EXPOSE 3000
-
-# Healthcheck for Easypanel / Traefik
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/v1/health || exit 1
-
-# Start full-stack server
-CMD ["npm", "start"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD node -e "fetch('http://127.0.0.1:3000/api/v1/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "--import", "tsx", "server.ts"]

@@ -1,18 +1,18 @@
 import React, { useState, useMemo } from 'react';
-import { Calculator, TrendingUp, AlertCircle, DollarSign, Layers } from 'lucide-react';
+import { Calculator, Layers } from 'lucide-react';
 
 export const FinancialCalculator: React.FC = () => {
   // Parameters
   const [activeTenants, setActiveTenants] = useState<number>(100);
-  const [subscriptionPrice, setSubscriptionPrice] = useState<number>(129.90);
+  const [subscriptionPrice] = useState<number>(129.90);
   const [fixedInfraCost, setFixedInfraCost] = useState<number>(1200); // VPS central + Managed PostgreSQL + Redis + S3/CDN
   const [evolutionCostPer50Tenants, setEvolutionCostPer50Tenants] = useState<number>(300); // 1 VPS can host ~50 active Evolution WhatsApp instances
   const [gatewayFeePercent, setGatewayFeePercent] = useState<number>(3.5); // Asaas / Iugu
   const [gatewayFixedFee, setGatewayFixedFee] = useState<number>(0.49);
   const [taxPercent, setTaxPercent] = useState<number>(6.0); // Simples Nacional Anexo III
   const [churnPercent, setChurnPercent] = useState<number>(4.5);
-  const [cacBRL, setCacBRL] = useState<number>(220); // Customer Acquisition Cost
-  const [supportCostPerTenant, setSupportCostPerTenant] = useState<number>(4.0); // customer success / support allocation
+  const [cacBRL] = useState<number>(220); // Customer Acquisition Cost
+  const [supportCostPerTenant] = useState<number>(4.0); // customer success / support allocation
 
   // Financial Calculations
   const calculations = useMemo(() => {

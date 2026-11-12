@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useMemo, useEffect } from 'react';
 import {
   LayoutGrid,
   Utensils,
@@ -8,7 +8,6 @@ import {
   QrCode,
   RefreshCw,
   CheckCircle2,
-  Phone,
   Check,
   X,
   ArrowRight,
@@ -16,19 +15,14 @@ import {
   Edit2,
   Trash2,
   Settings,
-  HelpCircle,
   Clock,
-  Sparkles,
-  DollarSign,
   AlertCircle,
   CreditCard,
   Printer,
-  FileText,
   Download,
   ShieldCheck,
   Copy,
   Search,
-  SlidersHorizontal,
   Smartphone,
   ChevronDown,
   ChevronUp,
@@ -38,17 +32,12 @@ import {
   PackageCheck,
   Zap,
   FileSpreadsheet,
-  Upload
+  Upload,
+  Lock
 } from 'lucide-react';
-import { AuthSession, Category, CustomerRecord, DeliveryZone, OptionGroup, OptionItem, Order, OrderStatus, PixGatewayConfig, Product, RestaurantTenant, UserRole } from '../types';
-import { ThermalTicketModal } from './ThermalTicketModal';
-import { ConsumerMenuView } from './ConsumerMenuView';
-import { WhatsAppAutomationView } from './WhatsAppAutomationView';
-import { OrderTrackingView } from './OrderTrackingView';
-import { WhatsAppQrPairingModal } from './WhatsAppQrPairingModal';
-import { AsaasSubscriptionBillingView } from './AsaasSubscriptionBillingView';
-import { AuditedDashboardView } from './AuditedDashboardView';
-import { CrmCustomerManagementView } from './CrmCustomerManagementView';
+import QRCode from 'qrcode';
+import { AuthSession, Category, CustomerRecord, DeliveryZone, NormalizedTenantCatalog, OptionGroup, Order, OrderStatus, PixGatewayConfig, Product, RestaurantTenant, UserRole } from '../types';
+import { ViewLoadingFallback } from './ViewLoadingFallback';
 import {
   MenuSpreadsheetModal,
   ParsedRowPreview,
@@ -56,7 +45,41 @@ import {
   parsePriceBRLToCents,
   parseOptionGroupsFromCell,
   escapeCsvCell,
+  readUploadedSpreadsheetFile,
 } from './MenuSpreadsheetModal';
+import { optimizeImageFile } from '../utils/imageOptimization';
+import { buildPublicMenuPath, buildPublicMenuUrl, buildPublicTableUrl } from '../utils/publicMenuUrl';
+
+const ThermalTicketModal = lazy(() =>
+  import('./ThermalTicketModal').then((module) => ({ default: module.ThermalTicketModal }))
+);
+const ConsumerMenuView = lazy(() =>
+  import('./ConsumerMenuView').then((module) => ({ default: module.ConsumerMenuView }))
+);
+const WhatsAppAutomationView = lazy(() =>
+  import('./WhatsAppAutomationView').then((module) => ({ default: module.WhatsAppAutomationView }))
+);
+const OrderTrackingView = lazy(() =>
+  import('./OrderTrackingView').then((module) => ({ default: module.OrderTrackingView }))
+);
+const WhatsAppQrPairingModal = lazy(() =>
+  import('./WhatsAppQrPairingModal').then((module) => ({ default: module.WhatsAppQrPairingModal }))
+);
+const AsaasSubscriptionBillingView = lazy(() =>
+  import('./AsaasSubscriptionBillingView').then((module) => ({ default: module.AsaasSubscriptionBillingView }))
+);
+const AuditedDashboardView = lazy(() =>
+  import('./AuditedDashboardView').then((module) => ({ default: module.AuditedDashboardView }))
+);
+const CrmCustomerManagementView = lazy(() =>
+  import('./CrmCustomerManagementView').then((module) => ({ default: module.CrmCustomerManagementView }))
+);
+const IfoodIntegrationView = lazy(() =>
+  import('./IfoodIntegrationView').then((module) => ({ default: module.IfoodIntegrationView }))
+);
+const TableWaiterManagementView = lazy(() =>
+  import('./TableWaiterManagementView').then((module) => ({ default: module.TableWaiterManagementView }))
+);
 
 interface RestaurantAdminViewProps {
   tenant: RestaurantTenant;
@@ -65,9 +88,12 @@ interface RestaurantAdminViewProps {
   categories: Category[];
   customers: CustomerRecord[];
   allTenants?: RestaurantTenant[];
+  catalogsByTenant?: Record<string, NormalizedTenantCatalog>;
   onSelectTenant?: (tenant: RestaurantTenant) => void;
+  onDeleteTenant?: (slug: string) => void;
   onUpdateTenant: (updatedTenant: RestaurantTenant) => void;
   onUpdateOrderStatus: (orderId: string, nextStatus: OrderStatus) => void;
+  onAddOrder?: (newOrder: Order) => void;
   onToggleProductAvailability: (productId: string) => void;
   onAddProduct: (newProduct: Product) => void;
   onUpdateProduct: (updatedProduct: Product) => void;
@@ -76,7 +102,7 @@ interface RestaurantAdminViewProps {
   onImportCatalog?: (newCategories: Category[], newProducts: Product[], mode: 'merge' | 'replace') => void;
   onSimulateEvolutionReconnect: () => void;
   authSession?: AuthSession | null;
-  onOpenAuthPortal?: () => void;
+  onOpenPublicMenu?: () => void;
 }
 
 export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
@@ -86,9 +112,12 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   categories,
   customers,
   allTenants = [],
+  catalogsByTenant = {},
   onSelectTenant,
+  onDeleteTenant,
   onUpdateTenant,
   onUpdateOrderStatus,
+  onAddOrder,
   onToggleProductAvailability,
   onAddProduct,
   onUpdateProduct,
@@ -97,15 +126,27 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   onImportCatalog,
   onSimulateEvolutionReconnect,
   authSession,
-  onOpenAuthPortal,
+  onOpenPublicMenu,
 }) => {
-  const [activeTab, setActiveTab] = useState<'kds' | 'menu' | 'categories' | 'settings' | 'billing' | 'whatsapp' | 'crm' | 'reports'>('menu');
+  const isSuperAdmin = authSession?.user?.role === 'SUPER_ADMIN';
+  const [publicLinkCopied, setPublicLinkCopied] = useState(false);
+  const [activeTab, setActiveTab] = useState<'super_subscriptions' | 'kds' | 'tables' | 'menu' | 'categories' | 'settings' | 'billing' | 'whatsapp' | 'crm' | 'reports' | 'ifood'>(() =>
+    authSession?.user?.role === 'SUPER_ADMIN' ? 'super_subscriptions' : 'menu'
+  );
   const [printingOrder, setPrintingOrder] = useState<Order | null>(null);
   const [trackingOrderModal, setTrackingOrderModal] = useState<Order | null>(null);
   const [statusUpdateToast, setStatusUpdateToast] = useState<string | null>(null);
-  const [testMsgStatus, setTestMsgStatus] = useState<string | null>(null);
   const [isQrPairingModalOpen, setIsQrPairingModalOpen] = useState(false);
+  const [isTopBarHoursModalOpen, setIsTopBarHoursModalOpen] = useState(false);
+  const [topBarDaysPreset, setTopBarDaysPreset] = useState('Segunda a Domingo');
+  const [topBarOpenTime, setTopBarOpenTime] = useState('18:00');
+  const [topBarCloseTime, setTopBarCloseTime] = useState('23:45');
   const [spreadsheetModalTab, setSpreadsheetModalTab] = useState<'export' | 'import' | null>(null);
+
+  // Super Admin state for filtering restaurants
+  const [superAdminSearch, setSuperAdminSearch] = useState('');
+  const [superAdminStatusFilter, setSuperAdminStatusFilter] = useState<'all' | 'active' | 'trial' | 'past_due'>('all');
+  const [superAdminActionNotice, setSuperAdminActionNotice] = useState<string | null>(null);
 
   // Dedicated 'Importação de Cardápio' Modal State
   const [isImportMenuModalOpen, setIsImportMenuModalOpen] = useState(false);
@@ -120,26 +161,384 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
   useEffect(() => {
     if (!authSession) return;
-    if (authSession.user.role === 'KITCHEN_STAFF') {
+    if (authSession.user.role === 'SUPER_ADMIN') {
+      setUserRole('owner');
+      setActiveTab((prev) =>
+        prev === 'menu' || prev === 'categories' || prev === 'kds' || prev === 'crm'
+          ? 'super_subscriptions'
+          : prev
+      );
+    } else if (authSession.user.role === 'KITCHEN_STAFF') {
       setUserRole('kitchen');
       setActiveTab('kds');
     } else {
       setUserRole('owner');
+      setActiveTab((prev) => (prev === 'super_subscriptions' ? 'menu' : prev));
     }
   }, [authSession]);
 
-  const handleKdsStatusChange = (order: Order, nextStatus: OrderStatus) => {
+  // ============================================================================
+  // FLUXO DE VALIDAÇÃO DE PAGAMENTO PIX & CHECKOUT (INTEGRAÇÃO ASAAS)
+  // ============================================================================
+  const [asaasPixValidationByOrder, setAsaasPixValidationByOrder] = useState<
+    Record<
+      string,
+      {
+        paid: boolean;
+        asaasStatus: string;
+        txid?: string;
+        paymentId?: string;
+        pixCopiaECola?: string;
+        pixQrDataUrl?: string;
+        paidAt?: string | null;
+        lastCheckedAt?: string;
+        isChecking?: boolean;
+        message?: string;
+      }
+    >
+  >({});
+  const [pixValidationModalOrder, setPixValidationModalOrder] = useState<Order | null>(null);
+  const [pendingKdsTransitionStatus, setPendingKdsTransitionStatus] = useState<OrderStatus>('delivered');
+  const [copiedPixCheckoutCode, setCopiedPixCheckoutCode] = useState(false);
+  const [isSimulatingPixReceipt, setIsSimulatingPixReceipt] = useState(false);
+
+  // Subscription Pix Status Polling State (Asaas)
+  const [asaasSubscriptionPixCheck, setAsaasSubscriptionPixCheck] = useState<{
+    paid: boolean;
+    status: string;
+    isChecking: boolean;
+    lastCheckedAt?: string;
+    message?: string;
+  }>({
+    paid: tenant.subscriptionStatus === 'active',
+    status: tenant.subscriptionStatus === 'active' ? 'RECEIVED' : 'PENDING',
+    isChecking: false,
+  });
+
+  const isPixOrderPayment = (order: Order): boolean => {
+    const method = (order.paymentMethod || '').toLowerCase();
+    return method.includes('pix') || Boolean(order.pixTransaction);
+  };
+
+  const isOrderPixPaidAndValidated = (order: Order): boolean => {
+    if (!isPixOrderPayment(order)) return true;
+    if (order.paymentStatus === 'paid_online') return true;
+    if (order.pixTransaction?.status === 'PAID') return true;
+    if (asaasPixValidationByOrder[order.id]?.paid) return true;
+    return false;
+  };
+
+  const validateOrderPixWithAsaas = async (order: Order, silent = false): Promise<boolean> => {
+    const nowLabel = new Date().toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+
+    setAsaasPixValidationByOrder((prev) => ({
+      ...prev,
+      [order.id]: {
+        ...(prev[order.id] || {
+          paid: order.paymentStatus === 'paid_online' || order.pixTransaction?.status === 'PAID',
+          asaasStatus: order.paymentStatus === 'paid_online' ? 'RECEIVED' : 'PENDING',
+        }),
+        isChecking: true,
+      },
+    }));
+
+    try {
+      const txidParam = order.pixTransaction?.txid || asaasPixValidationByOrder[order.id]?.txid || '';
+      const query = new URLSearchParams({
+        orderId: order.id,
+        txid: txidParam,
+        tenantSlug: tenant.slug,
+      });
+
+      const [asaasRes, subRes] = await Promise.all([
+        fetch(`/api/v1/asaas/pix/status?${query.toString()}`, {
+          headers: authSession?.token ? { Authorization: `Bearer ${authSession.token}` } : {},
+        }),
+        fetch(`/api/v1/asaas/subscription/${encodeURIComponent(tenant.slug)}/check-status`, {
+          headers: authSession?.token ? { Authorization: `Bearer ${authSession.token}` } : {},
+        }),
+      ]);
+
+      let paid = order.paymentStatus === 'paid_online' || order.pixTransaction?.status === 'PAID';
+      let asaasStatus = paid ? 'RECEIVED' : 'PENDING';
+      let resolvedTxid = txidParam;
+      let resolvedPaymentId = '';
+      let pixCopiaECola = order.pixTransaction?.pixCopiaECola || '';
+      let paidAt: string | null = order.pixTransaction?.paidAt || null;
+      let message = '';
+
+      if (asaasRes.ok) {
+        const data = await asaasRes.json();
+        if (data.paid || data.asaasStatus === 'RECEIVED' || data.asaasStatus === 'CONFIRMED' || data.status === 'PAID') {
+          paid = true;
+          asaasStatus = data.asaasStatus === 'CONFIRMED' ? 'CONFIRMED' : 'RECEIVED';
+        } else if (data.asaasStatus) {
+          asaasStatus = data.asaasStatus;
+        }
+        resolvedTxid = data.txid || resolvedTxid;
+        resolvedPaymentId = data.paymentId || resolvedTxid;
+        pixCopiaECola = data.pixCopiaECola || pixCopiaECola;
+        paidAt = data.paidAt || paidAt;
+        message = data.message || '';
+      }
+
+      if (subRes.ok) {
+        const subData = await subRes.json();
+        setAsaasSubscriptionPixCheck({
+          paid: Boolean(subData.paid),
+          status: subData.status || (subData.paid ? 'RECEIVED' : 'PENDING'),
+          isChecking: false,
+          lastCheckedAt: nowLabel,
+          message: subData.message,
+        });
+      }
+
+      let qrUrl = asaasPixValidationByOrder[order.id]?.pixQrDataUrl;
+      if (pixCopiaECola && !qrUrl) {
+        try {
+          qrUrl = await QRCode.toDataURL(pixCopiaECola, { width: 220, margin: 1 });
+        } catch {
+          // ignore QR generation error
+        }
+      }
+
+      setAsaasPixValidationByOrder((prev) => ({
+        ...prev,
+        [order.id]: {
+          paid,
+          asaasStatus,
+          txid: resolvedTxid,
+          paymentId: resolvedPaymentId,
+          pixCopiaECola,
+          pixQrDataUrl: qrUrl,
+          paidAt,
+          lastCheckedAt: nowLabel,
+          isChecking: false,
+          message:
+            message ||
+            (paid
+              ? 'Pagamento Pix validado com sucesso no Asaas (RECEIVED). Checkout liberado!'
+              : 'Cobrança Pix pendente de compensação no Asaas (PENDING). Checkout bloqueado até confirmação.'),
+        },
+      }));
+
+      if (paid) {
+        order.paymentStatus = 'paid_online';
+        if (order.pixTransaction) {
+          order.pixTransaction.status = 'PAID';
+        }
+        if (!silent) {
+          setStatusUpdateToast(
+            `✅ Pagamento Pix do Pedido #${order.orderNumber} (${formatBRL(order.totalCents)}) validado no Asaas (${asaasStatus})! Checkout liberado.`
+          );
+          setTimeout(() => setStatusUpdateToast(null), 5000);
+        }
+      } else if (!silent) {
+        setStatusUpdateToast(
+          `⏳ Consulta Asaas Pedido #${order.orderNumber}: Status "${asaasStatus}". Aguardando compensação do Pix para permitir o checkout.`
+        );
+        setTimeout(() => setStatusUpdateToast(null), 5000);
+      }
+
+      return paid;
+    } catch {
+      setAsaasPixValidationByOrder((prev) => ({
+        ...prev,
+        [order.id]: {
+          ...(prev[order.id] || { paid: false, asaasStatus: 'PENDING' }),
+          lastCheckedAt: nowLabel,
+          isChecking: false,
+        },
+      }));
+      return false;
+    }
+  };
+
+  const checkAsaasSubscriptionCheckoutStatus = async (silent = false): Promise<boolean> => {
+    const nowLabel = new Date().toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    setAsaasSubscriptionPixCheck((prev) => ({ ...prev, isChecking: true }));
+    try {
+      const res = await fetch(`/api/v1/asaas/subscription/${encodeURIComponent(tenant.slug)}/check-status`, {
+        headers: authSession?.token ? { Authorization: `Bearer ${authSession.token}` } : {},
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const isPaid = Boolean(data.paid || data.status === 'RECEIVED' || data.status === 'CONFIRMED');
+        setAsaasSubscriptionPixCheck({
+          paid: isPaid,
+          status: data.status || (isPaid ? 'RECEIVED' : 'PENDING'),
+          isChecking: false,
+          lastCheckedAt: nowLabel,
+          message: data.message,
+        });
+        if (isPaid && tenant.subscriptionStatus !== 'active') {
+          onUpdateTenant({ ...tenant, subscriptionStatus: 'active' });
+        }
+        if (!silent) {
+          setStatusUpdateToast(
+            isPaid
+              ? `✅ Assinatura Asaas de ${tenant.name} validada com status ${data.status || 'RECEIVED'}! Checkout concluído.`
+              : `⏳ Status da cobrança no Asaas: ${data.status || 'PENDING'}. Aguardando confirmação do pagamento Pix.`
+          );
+          setTimeout(() => setStatusUpdateToast(null), 5000);
+        }
+        return isPaid;
+      }
+    } catch {
+      // ignore error
+    }
+    setAsaasSubscriptionPixCheck((prev) => ({ ...prev, isChecking: false, lastCheckedAt: nowLabel }));
+    return false;
+  };
+
+  // Automatic polling for active Pix orders in KDS / Open Pix Checkout Validation Modal / Billing Tab
+  useEffect(() => {
+    if (pixValidationModalOrder) {
+      validateOrderPixWithAsaas(pixValidationModalOrder, true);
+      const timer = setInterval(() => {
+        validateOrderPixWithAsaas(pixValidationModalOrder, true);
+      }, 4000);
+      return () => clearInterval(timer);
+    }
+  }, [pixValidationModalOrder?.id, tenant.slug]);
+
+  useEffect(() => {
+    if (activeTab !== 'kds' && activeTab !== 'billing') return;
+
+    const runAutoValidation = () => {
+      if (activeTab === 'billing') {
+        checkAsaasSubscriptionCheckoutStatus(true);
+      }
+      if (activeTab === 'kds') {
+        const pendingPixOrders = orders.filter(
+          (o) =>
+            o.status !== 'delivered' &&
+            o.status !== 'cancelled' &&
+            isPixOrderPayment(o) &&
+            !isOrderPixPaidAndValidated(o)
+        );
+        pendingPixOrders.forEach((ord) => {
+          validateOrderPixWithAsaas(ord, true);
+        });
+      }
+    };
+
+    runAutoValidation();
+    const interval = setInterval(runAutoValidation, 6000);
+    return () => clearInterval(interval);
+  }, [activeTab, orders.length, tenant.slug]);
+
+  const handleConfirmPixWebhookSimulationForOrder = async (order: Order) => {
+    setIsSimulatingPixReceipt(true);
+    try {
+      const currentState = asaasPixValidationByOrder[order.id];
+      const txid = order.pixTransaction?.txid || currentState?.txid || `PIX_${order.id}`;
+      await fetch('/api/v1/webhooks/pix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          txid,
+          amountCents: order.totalCents,
+          payer: { name: order.customerName, phone: order.customerPhone },
+        }),
+      });
+      await validateOrderPixWithAsaas(order, false);
+    } catch {
+      // ignore
+    } finally {
+      setIsSimulatingPixReceipt(false);
+    }
+  };
+
+  const handleKdsStatusChange = async (order: Order, nextStatus: OrderStatus, bypassPixGate = false) => {
+    // Validação Automática de Pagamento Pix via Asaas antes de permitir o checkout / confirmação / conclusão
+    if (
+      !bypassPixGate &&
+      isPixOrderPayment(order) &&
+      (nextStatus === 'confirmed' || nextStatus === 'delivered') &&
+      !isOrderPixPaidAndValidated(order)
+    ) {
+      const isNowValidated = await validateOrderPixWithAsaas(order, true);
+      if (!isNowValidated) {
+        setPendingKdsTransitionStatus(nextStatus);
+        setPixValidationModalOrder(order);
+        setStatusUpdateToast(
+          `🔒 Checkout bloqueado: O pagamento Pix do Pedido #${order.orderNumber} ainda consta como PENDING no Asaas. Valide o recebimento antes de concluir!`
+        );
+        setTimeout(() => setStatusUpdateToast(null), 6000);
+        return;
+      }
+    }
+
     onUpdateOrderStatus(order.id, nextStatus);
-    setStatusUpdateToast(
-      `Status do Pedido #${order.orderNumber} alterado para "${nextStatus}". Notificação disparada no WhatsApp de ${order.customerName} via Evolution API!`
-    );
+
+    if (order.channel === 'IFOOD') {
+      try {
+        await fetch(`/api/v1/ifood/orders/${order.id}/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nextStatus,
+            tenantSlug: tenant.slug,
+            ifoodOrderId: order.ifoodOrderId || order.id,
+            orderType: order.type,
+          }),
+        });
+      } catch {
+        // Ignore network error in offline mode
+      }
+      const actionMap: Record<string, string> = {
+        confirmed: '/confirm (Confirmado no iFood)',
+        preparing: '/confirm (Em Preparo no iFood)',
+        ready: order.type === 'pickup' ? '/readyToPickup (Pronto p/ Retirada no iFood)' : '/dispatch (Despachado no iFood)',
+        delivered: 'Concluído no iFood',
+        cancelled: '/requestCancellation (Cancelado no iFood)',
+      };
+      setStatusUpdateToast(
+        `🔴 Pedido iFood #${order.ifoodDisplayId || order.orderNumber} sincronizado via API Oficial: ${actionMap[nextStatus] || nextStatus}!`
+      );
+    } else {
+      setStatusUpdateToast(
+        `Status do Pedido #${order.orderNumber} alterado para "${nextStatus}". Notificação disparada no WhatsApp de ${order.customerName} via Evolution API!`
+      );
+    }
     setTimeout(() => setStatusUpdateToast(null), 5000);
   };
 
-  // Live Sync & Walkthrough state
+  const handleQuickSimulateIfoodOrderInKds = async () => {
+    try {
+      const res = await fetch('/api/v1/ifood/simulate-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantSlug: tenant.slug,
+          merchantId: tenant.ifoodConfig?.merchantId || `merch_${tenant.slug}`,
+        }),
+      });
+      const data = await res.json();
+      if (data.order && onAddOrder) {
+        onAddOrder(data.order);
+        setStatusUpdateToast(
+          `🔴 Novo Pedido iFood #${data.order.ifoodDisplayId || data.order.orderNumber} (Código Coleta: ${data.order.ifoodPickupCode}) recebido no KDS!`
+        );
+        setTimeout(() => setStatusUpdateToast(null), 6000);
+      }
+    } catch {
+      // Ignore error
+    }
+  };
+
+  // Live Sync & Preview state
   const [liveSyncNotice, setLiveSyncNotice] = useState<string | null>(null);
   const [showLivePreviewSplit, setShowLivePreviewSplit] = useState(false);
-  const [showHowItWorksModal, setShowHowItWorksModal] = useState(false);
 
   // Product Filters & Bulk adjustments
   const [productSearchQuery, setProductSearchQuery] = useState('');
@@ -164,12 +563,14 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
   // Settings form state
   const [settingsName, setSettingsName] = useState(tenant.name);
+  const [settingsLogoUrl, setSettingsLogoUrl] = useState(tenant.logoUrl || '');
   const [settingsPhone, setSettingsPhone] = useState(tenant.phone);
   const [settingsAddress, setSettingsAddress] = useState(tenant.address);
   const [settingsHours, setSettingsHours] = useState(tenant.openingHoursText);
   const [settingsPrimaryColor, setSettingsPrimaryColor] = useState(tenant.primaryColor);
   const [settingsDeliveryFee, setSettingsDeliveryFee] = useState((tenant.deliveryFeeCents / 100).toFixed(2));
   const [settingsMinOrder, setSettingsMinOrder] = useState((tenant.minOrderCents / 100).toFixed(2));
+  const [settingsTablesCount, setSettingsTablesCount] = useState<number>(tenant.tablesCount || 12);
   const [settingsIsOpen, setSettingsIsOpen] = useState(tenant.isOpen);
   const [settingsSuccessNotice, setSettingsSuccessNotice] = useState<string | null>(null);
 
@@ -179,38 +580,52 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
   const [newZoneFee, setNewZoneFee] = useState('8.00');
   const [newZoneMinutes, setNewZoneMinutes] = useState('40');
 
-  // Pix Key Editor state (Cada restaurante edita sua própria chave Pix direta)
-  const [isEditingPixKey, setIsEditingPixKey] = useState(false);
-  const [pixKey, setPixKey] = useState(tenant.pixConfig?.pixKey || '');
-  const [pixAutoApproveWebhook, setPixAutoApproveWebhook] = useState(tenant.pixConfig?.autoApproveWebhook ?? false);
-  const [pixKeyType, setPixKeyType] = useState<PixGatewayConfig['pixKeyType']>(tenant.pixConfig?.pixKeyType || 'phone');
-  const [pixMerchantName, setPixMerchantName] = useState(tenant.pixConfig?.merchantName || tenant.name || 'MEU RESTAURANTE');
-  const [pixMerchantCity, setPixMerchantCity] = useState(tenant.pixConfig?.merchantCity || 'SAO PAULO');
-  const [pixBankName, setPixBankName] = useState(tenant.pixConfig?.bankName || 'Conta PJ');
-  const [pixProvider, setPixProvider] = useState<PixGatewayConfig['provider']>(tenant.pixConfig?.provider || 'direct_bank');
-  const [pixSaving, setPixSaving] = useState(false);
-  const [pixSaveNotice, setPixSaveNotice] = useState<string | null>(null);
+  // Pix Key & Beneficiary Name Editor state (Cada restaurante define sua própria Chave Pix e Nome do Beneficiário)
+  const [pixKey, setPixKey] = useState(
+    tenant.pixKey || tenant.pixConfig?.pixKey || tenant.phone || ''
+  );
+  const [pixKeyType, setPixKeyType] = useState<PixGatewayConfig['pixKeyType']>(
+    tenant.pixConfig?.pixKeyType || 'phone'
+  );
+  const [pixMerchantName, setPixMerchantName] = useState(
+    tenant.pixBeneficiaryName ||
+      tenant.pixConfig?.beneficiaryName ||
+      tenant.pixConfig?.merchantName ||
+      tenant.name ||
+      'MEU RESTAURANTE'
+  );
+  const [pixMerchantCity, setPixMerchantCity] = useState(
+    tenant.pixConfig?.merchantCity || 'SAO PAULO'
+  );
+  const [pixBankName, setPixBankName] = useState(
+    tenant.pixConfig?.bankName || 'Conta Bancária do Proprietário'
+  );
 
   useEffect(() => {
     setSettingsName(tenant.name);
+    setSettingsLogoUrl(tenant.logoUrl || '');
     setSettingsPhone(tenant.phone);
     setSettingsAddress(tenant.address);
     setSettingsHours(tenant.openingHoursText);
     setSettingsPrimaryColor(tenant.primaryColor);
     setSettingsDeliveryFee((tenant.deliveryFeeCents / 100).toFixed(2));
     setSettingsMinOrder((tenant.minOrderCents / 100).toFixed(2));
+    setSettingsTablesCount(tenant.tablesCount || 12);
     setSettingsIsOpen(tenant.isOpen);
     setDeliveryZones(tenant.deliveryZones || []);
 
-    // Sync Pix Config when tenant switches
-    setPixKey(tenant.pixConfig?.pixKey || '');
-    setPixAutoApproveWebhook(tenant.pixConfig?.autoApproveWebhook ?? false);
+    // Sync Pix Config when tenant switches or updates
+    setPixKey(tenant.pixKey || tenant.pixConfig?.pixKey || tenant.phone || '');
     setPixKeyType(tenant.pixConfig?.pixKeyType || 'phone');
-    setPixMerchantName(tenant.pixConfig?.merchantName || tenant.name || 'MEU RESTAURANTE');
+    setPixMerchantName(
+      tenant.pixBeneficiaryName ||
+        tenant.pixConfig?.beneficiaryName ||
+        tenant.pixConfig?.merchantName ||
+        tenant.name ||
+        'MEU RESTAURANTE'
+    );
     setPixMerchantCity(tenant.pixConfig?.merchantCity || 'SAO PAULO');
-    setPixBankName(tenant.pixConfig?.bankName || 'Conta PJ');
-    setPixProvider(tenant.pixConfig?.provider || 'direct_bank');
-    setIsEditingPixKey(false);
+    setPixBankName(tenant.pixConfig?.bankName || 'Conta Bancária do Proprietário');
   }, [tenant]);
 
   // Group orders by KDS status
@@ -225,29 +640,183 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     };
   }, [orders]);
 
-  // Dashboard Metrics
-  const dashboardMetrics = useMemo(() => {
-    const totalReceived = orders.length;
-    const completedOrders = orders.filter((o) => o.status === 'delivered');
-    const cancelledOrders = orders.filter((o) => o.status === 'cancelled');
+  // Real-time KDS SLA Timer (updates every 15 seconds)
+  const [kdsNowMs, setKdsNowMs] = useState<number>(() => Date.now());
+  const kdsOrderFirstSeenRef = React.useRef<Record<string, number>>({});
 
-    const totalConcludedRevenueCents = completedOrders.reduce((acc, o) => acc + o.totalCents, 0);
-    const averageTicketCents =
-      completedOrders.length > 0 ? Math.round(totalConcludedRevenueCents / completedOrders.length) : 0;
-    const cancellationRate = totalReceived > 0 ? (cancelledOrders.length / totalReceived) * 100 : 0;
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setKdsNowMs(Date.now());
+    }, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const getOrderKdsTimerVisuals = (order: Order) => {
+    const raw = (order.createdAt || '').trim();
+    let elapsedMinutes: number | null = null;
+
+    // 1. Check HH:MM or HH:MM:SS format (e.g., "19:42" or "20:15:30")
+    const timeMatch = raw.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (timeMatch && !raw.includes('-') && !raw.includes('/')) {
+      const hours = parseInt(timeMatch[1], 10);
+      const minutes = parseInt(timeMatch[2], 10);
+      const seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+      const orderDate = new Date(kdsNowMs);
+      orderDate.setHours(hours, minutes, seconds, 0);
+      let targetMs = orderDate.getTime();
+      // Handle midnight rollover if order was placed late yesterday
+      if (targetMs > kdsNowMs + 60000) {
+        targetMs -= 24 * 60 * 60 * 1000;
+      }
+      elapsedMinutes = Math.max(0, Math.floor((kdsNowMs - targetMs) / 60000));
+    }
+
+    // 2. Check ISO / full date string
+    if (elapsedMinutes === null && raw) {
+      const parsedMs = Date.parse(raw);
+      if (!isNaN(parsedMs)) {
+        elapsedMinutes = Math.max(0, Math.floor((kdsNowMs - parsedMs) / 60000));
+      }
+    }
+
+    // 3. Check relative string like "Há 12 min"
+    if (elapsedMinutes === null && raw) {
+      const relMatch = raw.match(/(\d+)\s*min/i);
+      if (relMatch) {
+        const baseMins = parseInt(relMatch[1], 10);
+        if (!kdsOrderFirstSeenRef.current[order.id]) {
+          kdsOrderFirstSeenRef.current[order.id] = Date.now() - baseMins * 60000;
+        }
+        elapsedMinutes = Math.max(
+          0,
+          Math.floor((kdsNowMs - kdsOrderFirstSeenRef.current[order.id]) / 60000)
+        );
+      }
+    }
+
+    // 4. Fallback to first-seen timestamp in session
+    if (elapsedMinutes === null) {
+      if (!kdsOrderFirstSeenRef.current[order.id]) {
+        kdsOrderFirstSeenRef.current[order.id] = Date.now();
+      }
+      elapsedMinutes = Math.max(
+        0,
+        Math.floor((kdsNowMs - kdsOrderFirstSeenRef.current[order.id]) / 60000)
+      );
+    }
+
+    const label =
+      elapsedMinutes === 0
+        ? 'Há < 1 min'
+        : elapsedMinutes === 1
+        ? 'Há 1 min'
+        : `Há ${elapsedMinutes} min`;
+
+    // Color tiers:
+    // 0-10 min (< 10): Verde (No prazo)
+    // 10-20 min (10 to 19): Amarelo (Atenção)
+    // 20+ min (>= 20): Vermelho (Crítico / Atrasado)
+    if (elapsedMinutes < 10) {
+      return {
+        elapsedMinutes,
+        label,
+        tier: 'green' as const,
+        tierLabel: '0-10 min',
+        cardBgClass: 'bg-emerald-50/90 border-emerald-300 hover:border-emerald-400',
+        dividerClass: 'border-emerald-200/80',
+        badgeClass: 'bg-emerald-600 text-white border-emerald-700',
+        dotClass: 'bg-emerald-200',
+      };
+    }
+
+    if (elapsedMinutes < 20) {
+      return {
+        elapsedMinutes,
+        label,
+        tier: 'yellow' as const,
+        tierLabel: '10-20 min',
+        cardBgClass: 'bg-amber-50/95 border-amber-300 hover:border-amber-400',
+        dividerClass: 'border-amber-200/80',
+        badgeClass: 'bg-amber-500 text-neutral-950 border-amber-600',
+        dotClass: 'bg-neutral-950',
+      };
+    }
 
     return {
-      totalReceived,
-      completedCount: completedOrders.length,
-      cancelledCount: cancelledOrders.length,
-      totalConcludedRevenueCents,
-      averageTicketCents,
-      cancellationRate,
+      elapsedMinutes,
+      label,
+      tier: 'red' as const,
+      tierLabel: '20+ min',
+      cardBgClass: 'bg-rose-50/95 border-rose-300 hover:border-rose-400',
+      dividerClass: 'border-rose-200/80',
+      badgeClass: 'bg-rose-600 text-white border-rose-700 animate-pulse',
+      dotClass: 'bg-white',
     };
-  }, [orders]);
+  };
 
   const formatBRL = (cents: number) => {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
+  };
+
+  const sortedCategories = useMemo(() => {
+    return [...categories].sort((a, b) => a.order - b.order);
+  }, [categories]);
+
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState<string>('');
+
+  const handleMoveCategoryOrder = (catId: string, direction: 'up' | 'down') => {
+    const idx = sortedCategories.findIndex((c) => c.id === catId);
+    if (idx < 0) return;
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= sortedCategories.length) return;
+
+    const reordered = [...sortedCategories];
+    const temp = reordered[idx];
+    reordered[idx] = reordered[swapIdx];
+    reordered[swapIdx] = temp;
+
+    const normalized = reordered.map((c, i) => ({ ...c, order: i + 1 }));
+    if (onImportCatalog) {
+      onImportCatalog(normalized, products, 'replace');
+    }
+    triggerSyncNotice(
+      `Categoria "${temp.name}" movida para a ${swapIdx + 1}ª posição do cardápio!`
+    );
+  };
+
+  const handleSaveCategoryRename = (catId: string) => {
+    const trimmed = editingCategoryName.trim();
+    if (!trimmed) {
+      setEditingCategoryId(null);
+      return;
+    }
+    const updated = sortedCategories.map((c, i) =>
+      c.id === catId ? { ...c, name: trimmed, order: i + 1 } : { ...c, order: i + 1 }
+    );
+    if (onImportCatalog) {
+      onImportCatalog(updated, products, 'replace');
+    }
+    setEditingCategoryId(null);
+    triggerSyncNotice(`Categoria renomeada para "${trimmed}" com sucesso!`);
+  };
+
+  const handleDeleteCategoryItem = (cat: Category) => {
+    const remainingCats = sortedCategories
+      .filter((c) => c.id !== cat.id)
+      .map((c, i) => ({ ...c, order: i + 1 }));
+    const fallbackCatId = remainingCats[0]?.id;
+    const updatedProducts = fallbackCatId
+      ? products.map((p) => (p.categoryId === cat.id ? { ...p, categoryId: fallbackCatId } : p))
+      : products.filter((p) => p.categoryId !== cat.id);
+
+    if (onImportCatalog) {
+      onImportCatalog(remainingCats, updatedProducts, 'replace');
+    }
+    if (selectedCategoryFilter === cat.id) {
+      setSelectedCategoryFilter('all');
+    }
+    triggerSyncNotice(`Categoria "${cat.name}" removida e cardápio reorganizado!`);
   };
 
   const filteredProducts = useMemo(() => {
@@ -261,10 +830,14 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     });
   }, [products, productSearchQuery, selectedCategoryFilter]);
 
-  const handleOpenAddProduct = () => {
+  const handleOpenAddProduct = (preselectCatId?: string) => {
     setEditingProductId(null);
     setProdName('');
-    setProdCategory(categories[0]?.id || '');
+    setProdCategory(
+      typeof preselectCatId === 'string' && preselectCatId
+        ? preselectCatId
+        : sortedCategories[0]?.id || categories[0]?.id || ''
+    );
     setProdDescription('');
     setProdPriceReal('34.90');
     setProdImageUrl('');
@@ -418,15 +991,54 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     let idxOptions = 8;
 
     if (hasHeader) {
-      const findCol = (keywords: string[], fallback: number) => {
-        const found = firstRowLower.findIndex((h) => keywords.some((kw) => h.includes(kw)));
-        return found >= 0 ? found : fallback;
+      const usedIndices = new Set<number>();
+      const findCol = (
+        exactNames: string[],
+        partialKeywords: string[],
+        excludeKeywords: string[],
+        fallback: number
+      ) => {
+        const exactIdx = firstRowLower.findIndex(
+          (h, idx) => !usedIndices.has(idx) && exactNames.includes(h)
+        );
+        if (exactIdx >= 0) {
+          usedIndices.add(exactIdx);
+          return exactIdx;
+        }
+        const partialIdx = firstRowLower.findIndex(
+          (h, idx) =>
+            !usedIndices.has(idx) &&
+            !excludeKeywords.some((ex) => h.includes(ex)) &&
+            partialKeywords.some((kw) => h.includes(kw))
+        );
+        if (partialIdx >= 0) {
+          usedIndices.add(partialIdx);
+          return partialIdx;
+        }
+        return fallback;
       };
+
       const hasProductCol = firstRowLower.some(
-        (h) => h.includes('nome_produto') || h === 'produto' || h === 'prato' || h === 'item'
+        (h) =>
+          h === 'nome_produto' ||
+          h === 'produto' ||
+          h === 'prato' ||
+          h === 'item' ||
+          (h.includes('produto') && !h.includes('total'))
       );
-      idxOrder = findCol(['ordem', 'order', 'posicao'], 0);
-      idxCategory = findCol(['categoria', 'category', 'secao'], firstRowLower.length === 1 ? 0 : 1);
+
+      idxOrder = findCol(
+        ['ordem_categoria', 'ordem', 'order', 'posicao'],
+        ['ordem', 'order', 'posicao'],
+        [],
+        0
+      );
+      idxCategory = findCol(
+        ['categoria', 'nome_categoria', 'category', 'secao'],
+        ['categoria', 'category', 'secao'],
+        ['ordem', 'order', 'posicao', 'id_'],
+        firstRowLower.length === 1 ? 0 : 1
+      );
 
       if (!hasProductCol && firstRowLower.length <= 3) {
         idxProductName = -1;
@@ -437,18 +1049,54 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
         idxImage = -1;
         idxOptions = -1;
       } else {
-        idxProductName = findCol(['nome_produto', 'produto', 'prato', 'nome', 'item'], 2);
-        idxDescription = findCol(['descricao', 'description', 'ingredientes', 'detalhe'], 3);
-        idxPrice = findCol(['preco', 'valor', 'price'], 4);
-        idxAvailable = findCol(['disponivel', 'ativo', 'status', 'available'], 5);
-        idxFeatured = findCol(['destaque', 'featured', 'promocao'], 6);
-        idxImage = findCol(['imagem', 'foto', 'image', 'url'], 7);
-        idxOptions = findCol(['adicionais', 'opcoes', 'complementos', 'options'], 8);
+        idxProductName = findCol(
+          ['nome_produto', 'produto', 'prato', 'nome', 'item'],
+          ['nome_produto', 'produto', 'prato', 'item', 'nome'],
+          ['categoria', 'category', 'ordem', 'order'],
+          2
+        );
+        idxDescription = findCol(
+          ['descricao', 'description', 'ingredientes', 'detalhe'],
+          ['descricao', 'description', 'ingredientes', 'detalhe'],
+          [],
+          3
+        );
+        idxPrice = findCol(
+          ['preco_brl', 'preco', 'valor', 'price'],
+          ['preco', 'valor', 'price'],
+          [],
+          4
+        );
+        idxAvailable = findCol(
+          ['disponivel', 'ativo', 'status', 'available'],
+          ['disponivel', 'ativo', 'status', 'available'],
+          [],
+          5
+        );
+        idxFeatured = findCol(
+          ['destaque', 'featured', 'promocao'],
+          ['destaque', 'featured', 'promocao'],
+          [],
+          6
+        );
+        idxImage = findCol(
+          ['imagem_url', 'imagem', 'foto', 'image', 'url'],
+          ['imagem', 'foto', 'image', 'url'],
+          [],
+          7
+        );
+        idxOptions = findCol(
+          ['adicionais', 'opcoes', 'complementos', 'options'],
+          ['adicionais', 'opcoes', 'complementos', 'options'],
+          [],
+          8
+        );
       }
     }
 
     const dataRows = hasHeader ? rawRows.slice(1) : rawRows;
     const previews: ParsedRowPreview[] = [];
+    const categoryOrderTracker = new Map<string, number>();
 
     dataRows.forEach((cols, idx) => {
       const rowNumber = hasHeader ? idx + 2 : idx + 1;
@@ -464,7 +1112,21 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       const imageUrl = getCol(idxImage);
       const optionsRaw = getCol(idxOptions);
 
-      const categoryOrder = !isNaN(Number(orderRaw)) && Number(orderRaw) > 0 ? parseInt(orderRaw, 10) : idx + 1;
+      const normCatKey = normalizeImportStr(categoryName);
+      const explicitOrder =
+        !isNaN(Number(orderRaw)) && Number(orderRaw) > 0 ? parseInt(orderRaw, 10) : null;
+
+      let categoryOrder = 1;
+      if (normCatKey) {
+        if (categoryOrderTracker.has(normCatKey)) {
+          categoryOrder = explicitOrder ?? categoryOrderTracker.get(normCatKey)!;
+        } else {
+          categoryOrder = explicitOrder ?? categoryOrderTracker.size + 1;
+          categoryOrderTracker.set(normCatKey, categoryOrder);
+        }
+      } else {
+        categoryOrder = explicitOrder ?? idx + 1;
+      }
 
       if (!categoryName && !productName) return;
 
@@ -558,29 +1220,55 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     setImportPreviewRows(previews);
   };
 
-  const handleImportFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [importUploadError, setImportUploadError] = useState<string | null>(null);
+
+  const handleImportFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = String(event.target?.result || '');
+    setImportUploadError(null);
+    try {
+      const content = await readUploadedSpreadsheetFile(file);
       handleProcessImportSpreadsheet(content, file.name);
-    };
-    reader.readAsText(file, 'UTF-8');
-    e.target.value = '';
+    } catch (err) {
+      setImportUploadError(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível ler o arquivo no celular. Selecione uma planilha (.CSV, .XLSX, .XLS ou .TXT).'
+      );
+    } finally {
+      e.target.value = '';
+    }
   };
 
-  const handleImportFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleImportFileDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDraggingImportFile(false);
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = String(event.target?.result || '');
+    setImportUploadError(null);
+    try {
+      const content = await readUploadedSpreadsheetFile(file);
       handleProcessImportSpreadsheet(content, file.name);
-    };
-    reader.readAsText(file, 'UTF-8');
+    } catch (err) {
+      setImportUploadError(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível ler o arquivo selecionado.'
+      );
+    }
+  };
+
+  const handleProductImageFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setProdImageUrl(await optimizeImageFile(file, { maxDimension: 960, quality: 0.78 }));
+      triggerSyncNotice('Imagem otimizada em WebP e pronta para salvar.');
+    } catch (error) {
+      triggerSyncNotice(error instanceof Error ? error.message : 'Não foi possível otimizar a imagem.');
+    } finally {
+      e.target.value = '';
+    }
   };
 
   const handleLoadSampleImportTable = () => {
@@ -637,38 +1325,103 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     handleProcessImportSpreadsheet(sampleCsv, 'cardapio-exemplo-importacao.csv');
   };
 
+  const organizedImportPreviewCategories = useMemo(() => {
+    const validRows = importPreviewRows.filter(
+      (r) => r.status === 'valid' || r.status === 'category_only'
+    );
+    const map = new Map<string, { name: string; order: number; count: number }>();
+    validRows.forEach((r) => {
+      const norm = normalizeImportStr(r.categoryName);
+      if (!map.has(norm)) {
+        map.set(norm, {
+          name: r.categoryName.trim(),
+          order: r.categoryOrder,
+          count: r.status === 'valid' ? 1 : 0,
+        });
+      } else {
+        const entry = map.get(norm)!;
+        if (r.status === 'valid') entry.count += 1;
+      }
+    });
+    return Array.from(map.values())
+      .sort((a, b) => a.order - b.order)
+      .map((item, idx) => ({ ...item, order: idx + 1 }));
+  }, [importPreviewRows]);
+
   const handleConfirmMenuImportModal = () => {
     const validRows = importPreviewRows.filter((r) => r.status === 'valid' || r.status === 'category_only');
     const validProductRows = importPreviewRows.filter((r) => r.status === 'valid');
     if (validRows.length === 0) return;
 
-    const baseCategories: Category[] = importMenuMode === 'replace' ? [] : [...categories];
-    const baseProducts: Product[] = importMenuMode === 'replace' ? [] : [...products];
+    const cleanedExistingCategories =
+      importMenuMode === 'replace'
+        ? []
+        : categories.filter((c) => {
+            const isNumericCorrupted = /^\d+$/.test(c.name.trim());
+            if (isNumericCorrupted) return false;
+            const hasProds = products.some((p) => p.categoryId === c.id);
+            const isImportedToo = validRows.some(
+              (r) => normalizeImportStr(r.categoryName) === normalizeImportStr(c.name)
+            );
+            return hasProds || isImportedToo;
+          });
+
+    const validExistingCatIds = new Set(cleanedExistingCategories.map((c) => c.id));
+    const baseCategories: Category[] = [...cleanedExistingCategories];
+    const baseProducts: Product[] =
+      importMenuMode === 'replace'
+        ? []
+        : products.filter((p) => validExistingCatIds.has(p.categoryId));
 
     const categoryMapByNormName = new Map<string, Category>();
     baseCategories.forEach((cat) => {
-      categoryMapByNormName.set(normalizeImportStr(cat.name), cat);
+      categoryMapByNormName.set(normalizeImportStr(cat.name), { ...cat });
     });
 
+    const importedOrderMap = new Map<string, number>();
     validRows.forEach((row) => {
+      const normCat = normalizeImportStr(row.categoryName);
+      if (!importedOrderMap.has(normCat)) {
+        importedOrderMap.set(normCat, row.categoryOrder || importedOrderMap.size + 1);
+      }
+    });
+
+    validRows.forEach((row, idx) => {
       const normCat = normalizeImportStr(row.categoryName);
       if (!categoryMapByNormName.has(normCat)) {
         const newCat: Category = {
-          id: `cat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          id: `cat_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
           name: row.categoryName.trim(),
-          order: row.categoryOrder || categoryMapByNormName.size + 1,
+          order: importedOrderMap.get(normCat) || categoryMapByNormName.size + 1,
         };
         categoryMapByNormName.set(normCat, newCat);
-        baseCategories.push(newCat);
       } else {
         const existingCat = categoryMapByNormName.get(normCat)!;
-        if (row.categoryOrder && importMenuMode === 'replace') {
-          existingCat.order = row.categoryOrder;
+        existingCat.name = row.categoryName.trim();
+        if (importedOrderMap.has(normCat)) {
+          existingCat.order = importedOrderMap.get(normCat)!;
         }
       }
     });
 
-    const finalCategories = [...baseCategories].sort((a, b) => a.order - b.order);
+    const allCats = Array.from(categoryMapByNormName.values());
+    allCats.sort((a, b) => {
+      const aInSheet = importedOrderMap.has(normalizeImportStr(a.name));
+      const bInSheet = importedOrderMap.has(normalizeImportStr(b.name));
+      if (aInSheet && !bInSheet) return -1;
+      if (!aInSheet && bInSheet) return 1;
+      return a.order - b.order;
+    });
+
+    const finalCategories: Category[] = allCats.map((cat, index) => ({
+      ...cat,
+      order: index + 1,
+    }));
+
+    finalCategories.forEach((cat) => {
+      categoryMapByNormName.set(normalizeImportStr(cat.name), cat);
+    });
+
     const finalProducts = [...baseProducts];
 
     validProductRows.forEach((row, idx) => {
@@ -677,12 +1430,13 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       const normProd = normalizeImportStr(row.productName);
 
       const existingProdIndex = finalProducts.findIndex(
-        (p) => p.categoryId === targetCat.id && normalizeImportStr(p.name) === normProd
+        (p) => normalizeImportStr(p.name) === normProd
       );
 
       if (existingProdIndex >= 0) {
         finalProducts[existingProdIndex] = {
           ...finalProducts[existingProdIndex],
+          categoryId: targetCat.id,
           name: row.productName.trim(),
           description: row.description.trim(),
           priceCents: row.priceCents,
@@ -709,6 +1463,11 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       }
     });
 
+    const catOrderById = new Map(finalCategories.map((c) => [c.id, c.order]));
+    finalProducts.sort(
+      (a, b) => (catOrderById.get(a.categoryId) ?? 999) - (catOrderById.get(b.categoryId) ?? 999)
+    );
+
     if (onImportCatalog) {
       onImportCatalog(finalCategories, finalProducts, importMenuMode);
     } else {
@@ -728,21 +1487,49 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
 
     triggerSyncNotice(
       importMenuMode === 'replace'
-        ? `Cardápio substituído com sucesso: ${finalCategories.length} categorias e ${finalProducts.length} produtos ativos em ${tenant.name}!`
-        : `Cardápio mesclado com sucesso: ${finalCategories.length} categorias e ${finalProducts.length} produtos sincronizados em ${tenant.name}!`
+        ? `Cardápio substituído e organizado: ${finalCategories.length} categorias (${finalCategories.map((c) => c.name).join(', ')}) e ${finalProducts.length} produtos ativos!`
+        : `Cardápio importado e organizado: ${finalCategories.length} categorias (${finalCategories.map((c) => c.name).join(', ')}) e ${finalProducts.length} produtos sincronizados!`
     );
 
     setIsImportMenuModalOpen(false);
   };
 
-  const handleSaveSettings = (e: React.FormEvent) => {
+  const handleRestaurantLogoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setSettingsLogoUrl(await optimizeImageFile(file, { maxDimension: 320, quality: 0.82 }));
+      triggerSyncNotice('Logo otimizada em WebP e pronta para salvar.');
+    } catch (error) {
+      triggerSyncNotice(error instanceof Error ? error.message : 'Não foi possível otimizar a logo.');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     const deliveryFeeCents = Math.round(parseFloat(settingsDeliveryFee.replace(',', '.')) * 100) || 0;
     const minOrderCents = Math.round(parseFloat(settingsMinOrder.replace(',', '.')) * 100) || 0;
 
+    const cleanPixKey = pixKey.trim() || settingsPhone.replace(/\D/g, '');
+    const cleanBeneficiary = (pixMerchantName.trim() || settingsName.trim() || 'MEU RESTAURANTE').slice(0, 60);
+
+    const updatedPixConfig: PixGatewayConfig = {
+      provider: 'direct_bank',
+      pixKey: cleanPixKey,
+      pixKeyType: pixKeyType,
+      beneficiaryName: cleanBeneficiary,
+      merchantName: cleanBeneficiary.slice(0, 25),
+      merchantCity: (pixMerchantCity.trim() || 'SAO PAULO').slice(0, 15).toUpperCase(),
+      bankName: pixBankName.trim() || 'Conta Bancária do Proprietário',
+      autoApproveWebhook: true,
+    };
+
     const updated: RestaurantTenant = {
       ...tenant,
       name: settingsName.trim(),
+      logoUrl: settingsLogoUrl.trim(),
       phone: settingsPhone.replace(/\D/g, ''),
       address: settingsAddress.trim(),
       openingHoursText: settingsHours.trim(),
@@ -750,63 +1537,58 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       deliveryFeeCents,
       minOrderCents,
       isOpen: settingsIsOpen,
+      tablesCount: settingsTablesCount,
       deliveryZones,
+      pixKey: cleanPixKey,
+      pixBeneficiaryName: cleanBeneficiary,
+      pixConfig: updatedPixConfig,
     };
 
     onUpdateTenant(updated);
-    setSettingsSuccessNotice('Configurações atualizadas com sucesso! As alterações já estão no ar.');
-    setTimeout(() => setSettingsSuccessNotice(null), 3500);
-  };
 
-  const handleSavePixConfig = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!pixKey.trim()) return;
-
-    setPixSaving(true);
     try {
-      const payload: PixGatewayConfig = {
-        provider: 'direct_bank',
-        pixKey: pixKey.trim(),
-        pixKeyType: pixKeyType,
-        merchantName: pixMerchantName.trim().slice(0, 25),
-        merchantCity: pixMerchantCity.trim().slice(0, 15).toUpperCase(),
-        bankName: pixBankName.trim() || 'Conta Bancária da Loja',
-        autoApproveWebhook: pixAutoApproveWebhook,
-      };
-
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (authSession?.token) {
         headers['Authorization'] = `Bearer ${authSession.token}`;
       }
-
-      const response = await fetch(`/api/v1/tenants/${tenant.slug}/pix-config`, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify(payload),
-      });
-      const responseData = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(responseData.error || 'Não foi possível salvar a configuração Pix.');
-
-      const updatedTenant: RestaurantTenant = {
-        ...tenant,
-        pixConfig: payload,
-      };
-
-      onUpdateTenant(updatedTenant);
-      setIsEditingPixKey(false);
-      setPixSaveNotice(`Chave Pix salva com sucesso para ${tenant.name}!`);
-      setStatusUpdateToast(`✅ Chave Pix de ${tenant.name} atualizada para "${pixKey.trim()}"!`);
-      setTimeout(() => {
-        setPixSaveNotice(null);
-        setStatusUpdateToast(null);
-      }, 5000);
-    } catch (err) {
-      console.error('Erro ao salvar Pix config:', err);
-      setStatusUpdateToast('Erro ao salvar chave Pix.');
-      setTimeout(() => setStatusUpdateToast(null), 3000);
-    } finally {
-      setPixSaving(false);
+      await Promise.all([
+        fetch(`/api/v1/tenants/${tenant.slug}/settings`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({
+            name: updated.name,
+            logoUrl: updated.logoUrl,
+            phone: updated.phone,
+            address: updated.address,
+            primaryColor: updated.primaryColor,
+            isOpen: updated.isOpen,
+            openingHoursText: updated.openingHoursText,
+            deliveryFeeCents: updated.deliveryFeeCents,
+            minOrderCents: updated.minOrderCents,
+            tablesCount: updated.tablesCount,
+            deliveryZones: updated.deliveryZones,
+            pixKey: cleanPixKey,
+            pixBeneficiaryName: cleanBeneficiary,
+            pixConfig: updatedPixConfig,
+          }),
+        }),
+        fetch(`/api/v1/tenants/${tenant.slug}/pix-config`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify(updatedPixConfig),
+        }),
+      ]);
+    } catch {
+      // Local state and localStorage are already updated
     }
+
+    setSettingsSuccessNotice(
+      `Configurações e Chave Pix (${cleanPixKey} · Beneficiário: ${cleanBeneficiary}) salvas com sucesso no restaurante atual!`
+    );
+    triggerSyncNotice(
+      `Chave Pix (${cleanPixKey}) e Nome do Beneficiário (${cleanBeneficiary}) atualizados para o checkout de ${updated.name}!`
+    );
+    setTimeout(() => setSettingsSuccessNotice(null), 4500);
   };
 
   const handleAddDeliveryZone = () => {
@@ -847,155 +1629,433 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
     setIsCategoryModalOpen(false);
   };
 
-  const handleSendTestWhatsApp = () => {
-    setTestMsgStatus('Enviando via Evolution API...');
-    setTimeout(() => {
-      setTestMsgStatus('Mensagem de teste enviada com sucesso no WhatsApp!');
-      setTimeout(() => setTestMsgStatus(null), 3000);
-    }, 800);
-  };
-
   return (
-    <div className="bg-neutral-50 border border-neutral-200 rounded-xl overflow-hidden min-h-[720px] flex flex-col">
-      {/* Top Header of the Restaurant Member Area */}
-      <div className="bg-white border-b border-neutral-200 px-6 py-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <div
-            className="w-10 h-10 rounded-lg text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0"
-            style={{ backgroundColor: tenant.primaryColor }}
-          >
-            {tenant.name.slice(0, 2).toUpperCase()}
-          </div>
-          <div>
-            <div className="flex items-center gap-2 text-xs text-neutral-500">
-              <span className="font-bold text-neutral-900">{tenant.name}</span>
-              <span aria-hidden="true">·</span>
-              <span className="font-mono text-[11px]">slug: {tenant.slug}</span>
-              <span aria-hidden="true">·</span>
-              <span className="text-emerald-700 font-medium">Assinatura R$ 129,90/mês (Ativa)</span>
+    <Suspense fallback={<ViewLoadingFallback />}>
+    <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden min-h-[720px] flex flex-col shadow-xs">
+      {/* Top Header: Dedicated Global Console for Super Admin vs Restaurant Profile for Tenants */}
+      {isSuperAdmin ? (
+        <div className="bg-slate-900 text-white border-b border-slate-800 px-6 py-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-base shadow-sm shrink-0 border border-indigo-400/30">
+              👑
             </div>
-            <div className="flex flex-wrap items-center gap-2 mt-1">
-              <span className="text-[11px] text-neutral-500 font-medium">Perfil RBAC:</span>
-              <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-100 p-0.5 text-[11px]">
-                <button
-                  type="button"
-                  onClick={() => setUserRole('owner')}
-                  className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
-                    userRole === 'owner'
-                      ? 'bg-white text-neutral-900 shadow-2xs font-semibold'
-                      : 'text-neutral-600 hover:text-neutral-900'
-                  }`}
-                >
-                  👑 Proprietário (Total)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setUserRole('manager')}
-                  className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
-                    userRole === 'manager'
-                      ? 'bg-white text-neutral-900 shadow-2xs font-semibold'
-                      : 'text-neutral-600 hover:text-neutral-900'
-                  }`}
-                >
-                  📋 Gerente
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setUserRole('kitchen');
-                    setActiveTab('kds');
-                  }}
-                  className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
-                    userRole === 'kitchen'
-                      ? 'bg-white text-neutral-900 shadow-2xs font-semibold'
-                      : 'text-neutral-600 hover:text-neutral-900'
-                  }`}
-                >
-                  🍳 Cozinha (KDS)
-                </button>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-sm sm:text-base font-bold text-white tracking-tight">
+                  Central Super Admin · Gestão Global da Plataforma
+                </h1>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 uppercase tracking-wider">
+                  Acesso Total Multi-Tenant
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 mt-0.5">
+                Acompanhamento de assinaturas, relatórios de vendas e configuração completa da aplicação e de qualquer restaurante.
+              </p>
+            </div>
+          </div>
+
+          {/* Global Restaurant Selector for Super Admin */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-2 bg-slate-800/90 border border-slate-700 rounded-xl px-3 py-1.5 text-xs">
+              <span className="text-slate-400 font-medium whitespace-nowrap">Restaurante em Foco:</span>
+              <select
+                value={tenant.slug}
+                onChange={(e) => {
+                  const found = (allTenants.length > 0 ? allTenants : [tenant]).find((t) => t.slug === e.target.value);
+                  if (found && onSelectTenant) onSelectTenant(found);
+                }}
+                className="bg-slate-900 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1 font-semibold focus:outline-none focus:border-indigo-500"
+              >
+                {(allTenants.length > 0 ? allTenants : [tenant]).map((t) => (
+                  <option key={t.slug} value={t.slug}>
+                    {t.name} ({t.slug})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+          </div>
+        </div>
+      ) : (
+        <div className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div
+              className="w-10 h-10 rounded-lg text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0"
+              style={{ backgroundColor: tenant.primaryColor }}
+            >
+              {tenant.name.slice(0, 2).toUpperCase()}
+            </div>
+            <div>
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <span className="font-bold text-slate-900">{tenant.name}</span>
+                <span aria-hidden="true">·</span>
+                <span className="text-blue-700 font-medium">Assinatura Ativa</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 mt-1">
+                <span className="text-[11px] text-slate-500 font-medium">Visualização da Equipe:</span>
+                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setUserRole('owner')}
+                    className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+                      userRole === 'owner'
+                        ? 'bg-white text-blue-700 shadow-2xs font-semibold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    👑 Proprietário (Total)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUserRole('manager')}
+                    className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+                      userRole === 'manager'
+                        ? 'bg-white text-blue-700 shadow-2xs font-semibold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    📋 Gerente
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUserRole('kitchen');
+                      setActiveTab('kds');
+                    }}
+                    className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+                      userRole === 'kitchen'
+                        ? 'bg-white text-blue-700 shadow-2xs font-semibold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    🍳 Cozinha (KDS)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUserRole('waiter');
+                      setActiveTab('tables');
+                    }}
+                    className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+                      userRole === 'waiter'
+                        ? 'bg-white text-blue-700 shadow-2xs font-semibold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    🧑‍🍳 Garçom (Salão)
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Tenant selector and WhatsApp Status */}
-        <div className="flex flex-wrap items-center gap-3">
-          {authSession && authSession.user.role !== 'SUPER_ADMIN' ? (
-            <div className="flex items-center gap-2 px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded-md text-xs text-emerald-900">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              <span>
-                RLS Isolado: <strong>{tenant.name}</strong> ({authSession.user.role})
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Botão para Configurar o Horário do Cardápio na Barra Superior */}
+            <button
+              type="button"
+              onClick={() => {
+                const raw = tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45';
+                setSettingsHours(raw);
+                setSettingsIsOpen(tenant.isOpen ?? true);
+                const match = raw.match(/^(.*?):\s*(\d{2}:\d{2})\s*(?:às|as|-|até)\s*(\d{2}:\d{2})$/i);
+                if (match) {
+                  setTopBarDaysPreset(match[1].trim());
+                  setTopBarOpenTime(match[2]);
+                  setTopBarCloseTime(match[3]);
+                }
+                setIsTopBarHoursModalOpen(true);
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-xs cursor-pointer transition-colors shadow-2xs group"
+              title="Clique para configurar o horário do cardápio e status Aberto/Fechado na barra superior"
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  tenant.isOpen ? 'bg-emerald-500 ring-2 ring-emerald-200' : 'bg-rose-500 ring-2 ring-rose-200'
+                }`}
+              />
+              <span className="font-semibold text-slate-800">
+                {tenant.isOpen ? 'Aberto' : 'Fechado'}
               </span>
-              {onOpenAuthPortal && (
+              <span className="text-slate-300">|</span>
+              <Clock className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <span className="text-slate-700 font-medium max-w-[200px] truncate">
+                {tenant.openingHoursText || 'Segunda a Domingo: 18:00 às 23:45'}
+              </span>
+              <Edit2 className="w-3 h-3 text-slate-400 group-hover:text-blue-600 ml-0.5 shrink-0" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsQrPairingModalOpen(true)}
+              className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200/80 rounded-lg text-xs cursor-pointer transition-colors shadow-2xs group"
+              title="Clique para abrir o Pareamento com Evolution API via QR Code na tela"
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  tenant.evolutionStatus === 'connected' ? 'bg-blue-500 ring-2 ring-blue-200' : 'bg-rose-500 ring-2 ring-rose-200 animate-pulse'
+                }`}
+              />
+              <span className="text-slate-700 font-medium group-hover:text-slate-900">
+                WhatsApp {tenant.evolutionStatus === 'connected' ? 'Conectado' : 'Desconectado'}
+              </span>
+              <QrCode className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-700 ml-0.5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const publicUrl =
+                  buildPublicMenuUrl(tenant.slug);
+                navigator.clipboard?.writeText(publicUrl).catch(() => {});
+                setPublicLinkCopied(true);
+                setTimeout(() => setPublicLinkCopied(false), 3000);
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                publicLinkCopied
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
+              }`}
+              title="Copiar link direto do cardápio digital para enviar aos clientes"
+            >
+              {publicLinkCopied ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Link Copiado!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Copiar Link do Cardápio</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== 'undefined') {
+                  const newUrl = buildPublicMenuPath(tenant.slug);
+                  window.history.pushState({ loja: tenant.slug }, '', newUrl);
+                }
+                if (onOpenPublicMenu) {
+                  onOpenPublicMenu();
+                }
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="px-3.5 py-1.5 text-xs font-semibold text-white rounded-lg shadow-xs transition-opacity hover:opacity-90 flex items-center gap-1.5 cursor-pointer"
+              style={{ backgroundColor: tenant.primaryColor }}
+            >
+              <span>Ver Cardápio Público</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Rápido de Configuração de Horário do Cardápio na Barra Superior */}
+      {isTopBarHoursModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center">
+                  <Clock className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Configurar Horário do Cardápio na Barra Superior
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Altere rapidamente o horário exibido no topo do cardápio digital e o status da loja
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTopBarHoursModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const updatedTenant: RestaurantTenant = {
+                  ...tenant,
+                  openingHoursText: settingsHours.trim() || `${topBarDaysPreset}: ${topBarOpenTime} às ${topBarCloseTime}`,
+                  isOpen: settingsIsOpen,
+                };
+                onUpdateTenant(updatedTenant);
+                try {
+                  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+                  if (authSession?.token) {
+                    headers['Authorization'] = `Bearer ${authSession.token}`;
+                  }
+                  await fetch(`/api/v1/tenants/${encodeURIComponent(tenant.slug)}/settings`, {
+                    method: 'PUT',
+                    headers,
+                    body: JSON.stringify({
+                      name: updatedTenant.name,
+                      phone: updatedTenant.phone,
+                      address: updatedTenant.address,
+                      primaryColor: updatedTenant.primaryColor,
+                      isOpen: updatedTenant.isOpen,
+                      openingHoursText: updatedTenant.openingHoursText,
+                      deliveryFeeCents: updatedTenant.deliveryFeeCents,
+                      minOrderCents: updatedTenant.minOrderCents,
+                      deliveryZones: updatedTenant.deliveryZones,
+                    }),
+                  });
+                } catch {
+                  // state updated locally
+                }
+                triggerSyncNotice(
+                  `Horário do cardápio atualizado na barra superior: "${updatedTenant.openingHoursText}" (${
+                    updatedTenant.isOpen ? 'Aberto' : 'Fechado'
+                  })!`
+                );
+                setIsTopBarHoursModalOpen(false);
+              }}
+              className="space-y-4"
+            >
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Status de Atendimento da Loja
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSettingsIsOpen(true)}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      settingsIsOpen
+                        ? 'bg-emerald-50 border-emerald-500 text-emerald-800 shadow-2xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span>Aberto (Recebendo Pedidos)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsIsOpen(false)}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      !settingsIsOpen
+                        ? 'bg-rose-50 border-rose-500 text-rose-800 shadow-2xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-rose-500" />
+                    <span>Fechado</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Dias de Funcionamento
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    'Segunda a Domingo',
+                    'Terça a Domingo',
+                    'Segunda a Sábado',
+                    'Quarta a Domingo',
+                    'Todos os dias',
+                  ].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => {
+                        setTopBarDaysPreset(preset);
+                        setSettingsHours(`${preset}: ${topBarOpenTime} às ${topBarCloseTime}`);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border cursor-pointer transition-colors ${
+                        topBarDaysPreset === preset
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Horário de Abertura
+                  </label>
+                  <input
+                    type="time"
+                    value={topBarOpenTime}
+                    onChange={(e) => {
+                      const nextOpen = e.target.value;
+                      setTopBarOpenTime(nextOpen);
+                      setSettingsHours(`${topBarDaysPreset}: ${nextOpen} às ${topBarCloseTime}`);
+                    }}
+                    className="w-full p-2 text-xs font-mono border border-slate-300 rounded-xl text-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Horário de Fechamento
+                  </label>
+                  <input
+                    type="time"
+                    value={topBarCloseTime}
+                    onChange={(e) => {
+                      const nextClose = e.target.value;
+                      setTopBarCloseTime(nextClose);
+                      setSettingsHours(`${topBarDaysPreset}: ${topBarOpenTime} às ${nextClose}`);
+                    }}
+                    className="w-full p-2 text-xs font-mono border border-slate-300 rounded-xl text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Texto Exibido na Barra Superior do Cardápio
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={settingsHours}
+                  onChange={(e) => setSettingsHours(e.target.value)}
+                  placeholder="Segunda a Domingo: 18:00 às 23:45"
+                  className="w-full p-2.5 text-xs border border-slate-300 rounded-xl text-slate-900 font-medium"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={onOpenAuthPortal}
-                  className="underline font-bold text-emerald-800 hover:text-emerald-950 ml-1"
+                  onClick={() => setIsTopBarHoursModalOpen(false)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
                 >
-                  Trocar Sessão JWT
+                  Cancelar
                 </button>
-              )}
-            </div>
-          ) : (
-            allTenants &&
-            allTenants.length > 1 &&
-            onSelectTenant && (
-              <div className="flex items-center gap-1.5 text-xs">
-                <span className="text-neutral-500">Trocar Loja (Super Admin):</span>
-                <select
-                  value={tenant.slug}
-                  onChange={(e) => {
-                    const found = allTenants.find((t) => t.slug === e.target.value);
-                    if (found) onSelectTenant(found);
-                  }}
-                  className="bg-neutral-100 border border-neutral-200 text-neutral-800 text-xs rounded-md px-2 py-1 font-medium"
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-xs cursor-pointer flex items-center gap-1.5"
                 >
-                  {allTenants.map((t) => (
-                    <option key={t.slug} value={t.slug}>
-                      {t.name} ({t.slug})
-                    </option>
-                  ))}
-                </select>
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Salvar Horário</span>
+                </button>
               </div>
-            )
-          )}
-
-          <button
-            type="button"
-            onClick={() => setIsQrPairingModalOpen(true)}
-            className="flex items-center gap-2 px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200/80 rounded-lg text-xs cursor-pointer transition-colors shadow-2xs group"
-            title="Clique para abrir o Pareamento com Evolution API via QR Code na tela"
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                tenant.evolutionStatus === 'connected' ? 'bg-emerald-500 ring-2 ring-emerald-200' : 'bg-rose-500 ring-2 ring-rose-200 animate-pulse'
-              }`}
-            />
-            <span className="text-neutral-700 font-medium group-hover:text-neutral-900">
-              WhatsApp {tenant.evolutionStatus === 'connected' ? 'Conectado' : 'Desconectado'}
-            </span>
-            <QrCode className="w-3.5 h-3.5 text-neutral-400 group-hover:text-neutral-700 ml-0.5" />
-          </button>
-
-          <a
-            href={`#cardapio-${tenant.slug}`}
-            onClick={(e) => {
-              e.preventDefault();
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-            className="px-3 py-1.5 text-xs font-semibold text-white rounded-lg shadow-xs transition-opacity hover:opacity-90"
-            style={{ backgroundColor: tenant.primaryColor }}
-          >
-            Ver Cardápio Público
-          </a>
+            </form>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Real-time Synchronization Notice */}
       {liveSyncNotice && (
-        <div className="bg-emerald-600 text-white px-6 py-2.5 text-xs font-medium flex items-center justify-between shadow-xs transition-all">
+        <div className="bg-blue-600 text-white px-6 py-2.5 text-xs font-medium flex items-center justify-between shadow-xs transition-all">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-200" />
+            <CheckCircle2 className="w-4 h-4 shrink-0 text-sky-200" />
             <span>{liveSyncNotice}</span>
           </div>
           <button
@@ -1008,7 +2068,7 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
       )}
 
       {/* Kitchen Mode Info Banner */}
-      {userRole === 'kitchen' && (
+      {!isSuperAdmin && userRole === 'kitchen' && (
         <div className="bg-amber-50 border-b border-amber-200 px-6 py-2.5 text-xs text-amber-900 flex items-center justify-between gap-3 font-medium">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 text-amber-700 shrink-0" />
@@ -1025,230 +2085,273 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
         </div>
       )}
 
-      {/* Tabs navigation */}
-      <div className="bg-white border-b border-neutral-200 px-6 flex gap-6 text-xs font-medium overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('menu')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
-            activeTab === 'menu'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
-          }`}
-        >
-          <Utensils className="w-4 h-4" />
-          <span>Cardápio &amp; Produtos</span>
-          <span className="bg-neutral-100 text-neutral-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono">
-            {products.length}
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('categories')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
-            activeTab === 'categories'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
-          }`}
-        >
-          <span>Categorias &amp; Grupos</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('kds')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
-            activeTab === 'kds'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
-          }`}
-        >
-          <LayoutGrid className="w-4 h-4" />
-          <span>Gestão de Pedidos (KDS)</span>
-          {ordersByStatus.received.length > 0 && (
-            <span className="bg-orange-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-mono">
-              {ordersByStatus.received.length}
+      {/* Waiter Mode Info Banner */}
+      {!isSuperAdmin && userRole === 'waiter' && (
+        <div className="bg-blue-50 border-b border-blue-200 px-6 py-2.5 text-xs text-blue-950 flex items-center justify-between gap-3 font-medium">
+          <div className="flex items-center gap-2">
+            <Utensils className="w-4 h-4 text-blue-700 shrink-0" />
+            <span>
+              <strong>Modo Garçom &amp; Salão (RBAC Ativo):</strong> Foco rápido no Mapa de Mesas, lançamento de comandas direto para o KDS e fechamento de conta com divisão por pessoa e 10%.
             </span>
-          )}
-        </button>
+          </div>
+          <button
+            onClick={() => setUserRole('owner')}
+            className="text-blue-800 underline text-[11px] hover:text-blue-950 font-semibold shrink-0"
+          >
+            Alternar para Dono
+          </button>
+        </div>
+      )}
 
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
-            activeTab === 'settings'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
-          }`}
-        >
-          <Settings className="w-4 h-4" />
-          <span>Configurações &amp; Identidade</span>
-        </button>
+      {/* Tabs navigation */}
+      <div className="bg-white border-b border-slate-200 px-4 sm:px-6 flex gap-4 sm:gap-6 text-xs font-medium overflow-x-auto">
+        {isSuperAdmin ? (
+          <>
+            <button
+              onClick={() => setActiveTab('super_subscriptions')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'super_subscriptions'
+                  ? 'border-indigo-600 text-indigo-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4 shrink-0" />
+              <span>Assinaturas &amp; Restaurantes</span>
+              <span className="bg-indigo-50 text-indigo-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">
+                {(allTenants.length > 0 ? allTenants : [tenant]).length}
+              </span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('billing')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
-            activeTab === 'billing'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
-          }`}
-        >
-          <CreditCard className="w-4 h-4" />
-          <span>Assinatura (R$ 129,90/mês)</span>
-        </button>
+            <button
+              onClick={() => setActiveTab('reports')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'reports'
+                  ? 'border-indigo-600 text-indigo-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4 shrink-0" />
+              <span>Relatórios dos Restaurantes</span>
+              <span className="bg-indigo-100 text-indigo-800 text-[9px] px-1.5 py-0.2 rounded font-semibold uppercase tracking-wider">
+                {tenant.name}
+              </span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('whatsapp')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
-            activeTab === 'whatsapp'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
-          }`}
-        >
-          <MessageSquare className="w-4 h-4" />
-          <span>WhatsApp (Evolution API)</span>
-        </button>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'settings'
+                  ? 'border-indigo-600 text-indigo-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Settings className="w-4 h-4 shrink-0" />
+              <span>Configurar Restaurante ({tenant.name})</span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('crm')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
-            activeTab === 'crm'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          <span>CRM &amp; Clientes</span>
-          <span className="bg-neutral-100 text-neutral-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono">
-            {customers.length}
-          </span>
-        </button>
+            <button
+              onClick={() => setActiveTab('whatsapp')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'whatsapp'
+                  ? 'border-indigo-600 text-indigo-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <MessageSquare className="w-4 h-4 shrink-0" />
+              <span>Configurações da Aplicação (Evolution API, n8n &amp; Banco)</span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('reports')}
-          className={`py-3 border-b-2 transition-colors flex items-center gap-2 ${
-            activeTab === 'reports'
-              ? 'border-neutral-900 text-neutral-900 font-semibold'
-              : 'border-transparent text-neutral-500 hover:text-neutral-800'
-          }`}
-        >
-          <BarChart3 className="w-4 h-4" />
-          <span>Dashboard &amp; Vendas</span>
-          <span className="bg-emerald-100 text-emerald-800 text-[9px] px-1.5 py-0.2 rounded font-semibold uppercase tracking-wider">
-            Auditado
-          </span>
-        </button>
+            <button
+              onClick={() => setActiveTab('ifood')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'ifood'
+                  ? 'border-red-600 text-red-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Bike className="w-4 h-4 shrink-0 text-red-600" />
+              <span>Integração iFood ({tenant.name})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('billing')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'billing'
+                  ? 'border-indigo-600 text-indigo-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <CreditCard className="w-4 h-4 shrink-0" />
+              <span>Faturamento &amp; Gateway Asaas</span>
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={() => setActiveTab('menu')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'menu' || activeTab === 'categories'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Utensils className="w-4 h-4 shrink-0" />
+              <span>Cardápio, Produtos &amp; Categorias</span>
+              <span className="bg-blue-50 text-blue-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">
+                {products.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('kds')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'kds'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <LayoutGrid className="w-4 h-4 shrink-0" />
+              <span>Gestão de Pedidos (KDS)</span>
+              {ordersByStatus.received.length > 0 && (
+                <span className="bg-blue-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-mono">
+                  {ordersByStatus.received.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('tables')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'tables'
+                  ? 'border-amber-600 text-amber-700 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Utensils className="w-4 h-4 shrink-0 text-amber-600" />
+              <span>Mesas &amp; Garçom (Salão)</span>
+              <span className="bg-amber-50 text-amber-800 border border-amber-200 text-[9px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wider">
+                PDV Mesa
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('ifood')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'ifood'
+                  ? 'border-red-600 text-red-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Bike className="w-4 h-4 shrink-0 text-red-600" />
+              <span>Integração iFood</span>
+              <span className="bg-red-50 text-red-700 border border-red-200 text-[9px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wider">
+                Hub KDS
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'settings'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Settings className="w-4 h-4 shrink-0" />
+              <span>Configurações &amp; Identidade</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('billing')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'billing'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <CreditCard className="w-4 h-4 shrink-0" />
+              <span>Assinatura (Anual R$ 99 / Mensal)</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('whatsapp')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'whatsapp'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <MessageSquare className="w-4 h-4 shrink-0" />
+              <span>WhatsApp &amp; Notificações</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('crm')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'crm'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Users className="w-4 h-4 shrink-0" />
+              <span>CRM &amp; Clientes</span>
+              <span className="bg-slate-100 text-slate-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono">
+                {customers.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('reports')}
+              className={`py-3 border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                activeTab === 'reports'
+                  ? 'border-blue-600 text-blue-600 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4 shrink-0" />
+              <span>Relatórios</span>
+              <span className="bg-blue-100 text-blue-800 text-[9px] px-1.5 py-0.2 rounded font-semibold uppercase tracking-wider">
+                Vendas &amp; Produtos
+              </span>
+            </button>
+          </>
+        )}
       </div>
 
       {/* Main Content Body */}
       <div className="p-6 flex-1 overflow-y-auto">
         {/* ============================================================== */}
-        {/* TAB 1: MENU & PRODUCTS CRUD                                    */}
+        {/* TAB 1: UNIFIED MENU, PRODUCTS & CATEGORIES CRUD                */}
         {/* ============================================================== */}
-        {activeTab === 'menu' && (
+        {(activeTab === 'menu' || activeTab === 'categories') && (
           <div className="space-y-5">
-            {/* Explanatory Banner & Interactive Architecture Guide: Como funciona a atualização dos dados por restaurante */}
-            <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-2xs space-y-4">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-neutral-100">
-                <div className="flex items-start gap-2.5">
-                  <div className="p-2 rounded-lg bg-orange-50 text-orange-700 mt-0.5 shrink-0">
-                    <Sparkles className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-neutral-900">
-                      Como Funciona a Atualização dos Dados do Cardápio por Restaurante
-                    </h3>
-                    <p className="text-xs text-neutral-600 mt-0.5">
-                      Entenda o ciclo completo de vida de uma alteração de cardápio no SaaS, desde a edição até a tela do cliente.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setShowHowItWorksModal(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors"
-                  >
-                    <HelpCircle className="w-3.5 h-3.5 text-neutral-500" />
-                    <span>Ver Arquitetura Técnica</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowLivePreviewSplit(!showLivePreviewSplit)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                      showLivePreviewSplit
-                        ? 'bg-neutral-900 text-white'
-                        : 'bg-orange-50 text-orange-900 hover:bg-orange-100 border border-orange-200'
-                    }`}
-                  >
-                    <Smartphone className="w-3.5 h-3.5" />
-                    <span>{showLivePreviewSplit ? 'Ocultar Celular do Cliente' : 'Modo Lado a Lado (Celular)'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* 4 Interactive Visual Pillars of Menu Updates */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-                <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                  <span className="font-mono text-[10px] text-neutral-400 font-bold">ETAPA 1</span>
-                  <p className="font-bold text-neutral-900 mt-1">1. Edição no Painel Web</p>
-                  <p className="text-[11px] text-neutral-600 mt-0.5 leading-relaxed">
-                    O lojista altera preços, descrições, fotos ou pausa pratos esgotados com apenas 1 clique no botão de status.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                  <span className="font-mono text-[10px] text-neutral-400 font-bold">ETAPA 2</span>
-                  <p className="font-bold text-neutral-900 mt-1">2. Isolamento via RLS</p>
-                  <p className="text-[11px] text-neutral-600 mt-0.5 leading-relaxed">
-                    A API grava no PostgreSQL usando Row-Level Security (<code className="bg-neutral-200 px-1 py-0.2 rounded font-mono text-[10px]">tenant_id</code>), blindando os dados contra outros restaurantes.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                  <span className="font-mono text-[10px] text-neutral-400 font-bold">ETAPA 3</span>
-                  <p className="font-bold text-neutral-900 mt-1">3. Propagação em Tempo Real</p>
-                  <p className="text-[11px] text-neutral-600 mt-0.5 leading-relaxed">
-                    O link público e os QR Codes dos clientes não usam cache estático defasado: o novo preço entra no ar imediatamente no celular do cliente.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                  <span className="font-mono text-[10px] text-neutral-400 font-bold">ETAPA 4</span>
-                  <p className="font-bold text-neutral-900 mt-1">4. Snapshot Imutável</p>
-                  <p className="text-[11px] text-neutral-600 mt-0.5 leading-relaxed">
-                    Mudar o preço hoje NÃO altera os pedidos já concluídos ontem: o histórico de faturamento e notas fiscais permanece 100% íntegro.
-                  </p>
-                </div>
-              </div>
-            </div>
-
             {/* Split Screen Container (if toggled) */}
             <div className={`grid gap-6 ${showLivePreviewSplit ? 'grid-cols-1 xl:grid-cols-12' : 'grid-cols-1'}`}>
               {/* Left Column: Product Management */}
               <div className={showLivePreviewSplit ? 'xl:col-span-7 space-y-4' : 'space-y-4'}>
                 {/* Search & Actions Toolbar */}
-                <div className="bg-white border border-neutral-200 rounded-lg p-3.5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="bg-white border border-slate-200 rounded-lg p-3.5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-2">
                     <div className="relative flex-1">
-                      <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                       <input
                         type="text"
                         placeholder="Buscar por prato ou ingrediente..."
                         value={productSearchQuery}
                         onChange={(e) => setProductSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-3 py-1.5 bg-neutral-50 border border-neutral-200 rounded-lg text-xs focus:bg-white focus:outline-neutral-900"
+                        className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:bg-white focus:outline-blue-600"
                       />
                     </div>
 
                     <select
                       value={selectedCategoryFilter}
                       onChange={(e) => setSelectedCategoryFilter(e.target.value)}
-                      className="bg-neutral-50 border border-neutral-200 text-neutral-800 text-xs rounded-lg px-2.5 py-1.5 font-medium"
+                      className="bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-lg px-2.5 py-1.5 font-medium"
                     >
                       <option value="all">Todas as Categorias ({products.length})</option>
-                      {categories.map((c) => (
+                      {sortedCategories.map((c, idx) => (
                         <option key={c.id} value={c.id}>
-                          {c.name} ({products.filter((p) => p.categoryId === c.id).length})
+                          {idx + 1}º - {c.name} ({products.filter((p) => p.categoryId === c.id).length})
                         </option>
                       ))}
                     </select>
@@ -1257,37 +2360,50 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
                     <button
                       type="button"
+                      onClick={() => setShowLivePreviewSplit(!showLivePreviewSplit)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                        showLivePreviewSplit
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-blue-50 text-blue-900 hover:bg-blue-100 border border-blue-200'
+                      }`}
+                    >
+                      <Smartphone className="w-3.5 h-3.5" />
+                      <span>{showLivePreviewSplit ? 'Ocultar Prévia Mobile' : 'Prévia Mobile'}</span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => setSpreadsheetModalTab('export')}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors"
                       title="Exportar categorias e produtos para planilha Excel / CSV ou baixar planilha modelo"
                     >
-                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-blue-700" />
                       <span>Exportar Planilha</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setIsImportMenuModalOpen(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-800 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 rounded-lg transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg transition-colors"
                       title="Abrir modal de Importação de Cardápio com upload de arquivo e pré-visualização da tabela"
                     >
-                      <Upload className="w-3.5 h-3.5 text-neutral-600" />
+                      <Upload className="w-3.5 h-3.5 text-slate-600" />
                       <span>Importação de Cardápio</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setIsBulkAdjustOpen(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
                       title="Aplicar aumento ou desconto percentual em massa"
                     >
-                      <Percent className="w-3.5 h-3.5 text-neutral-500" />
+                      <Percent className="w-3.5 h-3.5 text-slate-500" />
                       <span>Reajuste em Lote</span>
                     </button>
 
                     <button
-                      onClick={handleOpenAddProduct}
-                      className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors shadow-xs"
+                      onClick={() => handleOpenAddProduct()}
+                      className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs"
                     >
                       <Plus className="w-4 h-4" />
                       <span>Novo Produto</span>
@@ -1295,129 +2411,438 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                   </div>
                 </div>
 
-                {/* Products Table */}
-                <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden shadow-2xs">
-                  <div className="p-3.5 border-b border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                {/* Category Filter Quick Pills */}
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategoryFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors border ${
+                      selectedCategoryFilter === 'all'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    Todas as Categorias ({sortedCategories.length})
+                  </button>
+                  {sortedCategories.map((cat, idx) => {
+                    const count = products.filter((p) => p.categoryId === cat.id).length;
+                    const isSelected = selectedCategoryFilter === cat.id;
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setSelectedCategoryFilter(cat.id)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors border ${
+                          isSelected
+                            ? 'bg-neutral-900 text-white border-neutral-900'
+                            : 'bg-white text-neutral-700 border-neutral-200 hover:border-neutral-300'
+                        }`}
+                      >
+                        <span
+                          className={`text-[10px] font-mono px-1.5 py-0.2 rounded font-bold ${
+                            isSelected ? 'bg-white/20 text-white' : 'bg-neutral-100 text-neutral-600'
+                          }`}
+                        >
+                          {idx + 1}º
+                        </span>
+                        <span>{cat.name}</span>
+                        <span
+                          className={`text-[10px] font-mono ${
+                            isSelected ? 'text-neutral-300' : 'text-neutral-400'
+                          }`}
+                        >
+                          ({count})
+                        </span>
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => setIsCategoryModalOpen(true)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Nova Categoria</span>
+                  </button>
+                </div>
+
+                {/* Organized Products Grouped by Category */}
+                <div className="space-y-4">
+                  {(selectedCategoryFilter === 'all'
+                    ? sortedCategories
+                    : sortedCategories.filter((c) => c.id === selectedCategoryFilter)
+                  ).map((cat) => {
+                    const catIndex = sortedCategories.findIndex((c) => c.id === cat.id);
+                    const catProducts = filteredProducts.filter((p) => p.categoryId === cat.id);
+
+                    if (productSearchQuery.trim() !== '' && catProducts.length === 0) {
+                      return null;
+                    }
+
+                    return (
+                      <div
+                        key={cat.id}
+                        className="bg-white border border-neutral-200 rounded-xl overflow-hidden shadow-2xs"
+                      >
+                        {/* Category Section Header */}
+                        <div className="px-4 py-3 bg-neutral-900 text-white flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <span className="w-6 h-6 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-mono text-xs font-bold flex items-center justify-center">
+                              {catIndex + 1}º
+                            </span>
+                            {editingCategoryId === cat.id ? (
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="text"
+                                  value={editingCategoryName}
+                                  onChange={(e) => setEditingCategoryName(e.target.value)}
+                                  className="px-2 py-1 text-xs rounded bg-white text-neutral-900 font-bold outline-none"
+                                  autoFocus
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveCategoryRename(cat.id)}
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-bold"
+                                >
+                                  Salvar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingCategoryId(null)}
+                                  className="px-2 py-1 bg-neutral-700 hover:bg-neutral-600 text-neutral-200 rounded text-[11px]"
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            ) : (
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <h4 className="text-xs sm:text-sm font-bold text-white">
+                                    {cat.name}
+                                  </h4>
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-neutral-800 text-neutral-300 border border-neutral-700">
+                                    {catProducts.length} {catProducts.length === 1 ? 'item' : 'itens'}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={catIndex === 0}
+                              onClick={() => handleMoveCategoryOrder(cat.id, 'up')}
+                              className="p-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                              title="Subir posição desta categoria"
+                            >
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={catIndex === sortedCategories.length - 1}
+                              onClick={() => handleMoveCategoryOrder(cat.id, 'down')}
+                              className="p-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                              title="Descer posição desta categoria"
+                            >
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingCategoryId(cat.id);
+                                setEditingCategoryName(cat.name);
+                              }}
+                              className="p-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors cursor-pointer"
+                              title="Renomear categoria"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            {sortedCategories.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteCategoryItem(cat)}
+                                className="p-1.5 rounded bg-neutral-800 hover:bg-rose-600 text-neutral-300 hover:text-white transition-colors cursor-pointer"
+                                title="Remover categoria"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddProduct(cat.id)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition-colors ml-1 cursor-pointer"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>Adicionar Item</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {catProducts.length === 0 ? (
+                          <div className="p-5 text-center text-xs text-neutral-500 flex flex-col sm:flex-row items-center justify-between gap-2 bg-neutral-50/50">
+                            <span>Nenhum prato cadastrado na categoria <strong>{cat.name}</strong>.</span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenAddProduct(cat.id)}
+                                className="px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-[11px] font-semibold"
+                              >
+                                + Cadastrar 1º Prato em {cat.name}
+                              </button>
+                              {sortedCategories.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteCategoryItem(cat)}
+                                  className="px-2.5 py-1.5 text-rose-600 hover:bg-rose-50 rounded-lg text-[11px] font-semibold"
+                                >
+                                  Remover Categoria Vazia
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                              <thead className="bg-neutral-50 border-b border-neutral-200 text-neutral-600 font-semibold">
+                                <tr>
+                                  <th className="p-3 text-left">Foto / Nome do Produto</th>
+                                  <th className="p-3 text-right">Preço</th>
+                                  <th className="p-3 text-center">Status no Menu</th>
+                                  <th className="p-3 text-right">Ações</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-neutral-200">
+                                {catProducts.map((prod) => (
+                                  <tr key={prod.id} className="hover:bg-neutral-50/60 transition-colors">
+                                    <td className="p-3 flex items-center gap-3">
+                                      {prod.imageUrl ? (
+                                        <img
+                                          src={prod.imageUrl}
+                                          alt={prod.name}
+                                          loading="lazy"
+                                          decoding="async"
+                                          className="w-11 h-11 rounded-lg object-cover bg-neutral-100 shrink-0"
+                                        />
+                                      ) : (
+                                        <div className="w-11 h-11 rounded-lg bg-neutral-100 flex items-center justify-center text-[10px] text-neutral-400 shrink-0">
+                                          Sem foto
+                                        </div>
+                                      )}
+                                      <div>
+                                        <p className="font-bold text-neutral-900">{prod.name}</p>
+                                        <p className="text-[11px] text-neutral-500 truncate max-w-xs">
+                                          {prod.description}
+                                        </p>
+                                        {prod.optionGroups && prod.optionGroups.length > 0 && (
+                                          <p className="text-[10px] text-emerald-700 font-medium mt-0.5">
+                                            {prod.optionGroups.length} grupo(s) de adicionais
+                                          </p>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="p-3 text-right font-mono font-bold text-neutral-900 tabular-nums">
+                                      {formatBRL(prod.priceCents)}
+                                    </td>
+                                    <td className="p-3 text-center">
+                                      <button
+                                        onClick={() => handleToggleProductWithNotice(prod.id)}
+                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${
+                                          prod.isAvailable
+                                            ? 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                                            : 'bg-rose-50 text-rose-800 hover:bg-rose-100'
+                                        }`}
+                                        title="Clique para alternar disponibilidade imediata no cardápio do cliente"
+                                      >
+                                        <span
+                                          className={`w-1.5 h-1.5 rounded-full ${
+                                            prod.isAvailable ? 'bg-emerald-500' : 'bg-rose-500'
+                                          }`}
+                                        />
+                                        {prod.isAvailable ? 'Disponível' : 'Pausado (Esgotado)'}
+                                      </button>
+                                    </td>
+                                    <td className="p-3 text-right">
+                                      <div className="flex items-center justify-end gap-1">
+                                        <button
+                                          onClick={() => handleOpenEditProduct(prod)}
+                                          className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded transition-colors"
+                                          title="Editar Produto"
+                                        >
+                                          <Edit2 className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          onClick={() => handleDuplicateProduct(prod)}
+                                          className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded transition-colors"
+                                          title="Duplicar Produto para criar variação rápida"
+                                        >
+                                          <Copy className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            onDeleteProduct(prod.id);
+                                            triggerSyncNotice(`Prato "${prod.name}" removido do cardápio.`);
+                                          }}
+                                          className="p-1.5 text-rose-600 hover:text-rose-900 hover:bg-rose-50 rounded transition-colors"
+                                          title="Excluir Produto"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Unified Categories Overview & Order Card (Integrated into the same tab) */}
+                <div className="bg-white border border-neutral-200 rounded-xl p-5 space-y-4 shadow-2xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-neutral-200">
                     <div>
-                      <h4 className="text-xs font-bold text-neutral-900">
-                        Cardápio Oficial de {tenant.name}
-                      </h4>
-                      <p className="text-[11px] text-neutral-500">
-                        Clique em &quot;Disponível / Pausado&quot; para esgotar itens rapidamente na hora do rush.
+                      <h3 className="text-sm font-bold text-neutral-900">Categorias do Cardápio</h3>
+                      <p className="text-xs text-neutral-500">
+                        Organize a ordem de exibição das categorias no cardápio digital ou crie novas categorias.
                       </p>
                     </div>
-
-                    <div className="text-[11px] text-neutral-500 font-mono">
-                      Exibindo {filteredProducts.length} de {products.length} itens
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsImportMenuModalOpen(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-800 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-neutral-600" />
+                        <span>Importar Cardápio</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSpreadsheetModalTab('export')}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Exportar (.CSV)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsCategoryModalOpen(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Nova Categoria</span>
+                      </button>
                     </div>
                   </div>
 
-                  {filteredProducts.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-neutral-500">
-                      Nenhum produto encontrado com os filtros atuais.
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead className="bg-neutral-50 border-b border-neutral-200 text-neutral-700 font-semibold">
-                          <tr>
-                            <th className="p-3 text-left">Foto / Nome do Produto</th>
-                            <th className="p-3 text-left">Categoria</th>
-                            <th className="p-3 text-right">Preço</th>
-                            <th className="p-3 text-center">Status no Menu</th>
-                            <th className="p-3 text-right">Ações</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-neutral-200">
-                          {filteredProducts.map((prod) => {
-                            const categoryObj = categories.find((c) => c.id === prod.categoryId);
-                            return (
-                              <tr key={prod.id} className="hover:bg-neutral-50/60 transition-colors">
-                                <td className="p-3 flex items-center gap-3">
-                                  {prod.imageUrl ? (
-                                    <img
-                                      src={prod.imageUrl}
-                                      alt={prod.name}
-                                      className="w-11 h-11 rounded-lg object-cover bg-neutral-100 shrink-0"
-                                    />
-                                  ) : (
-                                    <div className="w-11 h-11 rounded-lg bg-neutral-100 flex items-center justify-center text-[10px] text-neutral-400 shrink-0">
-                                      Sem foto
-                                    </div>
-                                  )}
-                                  <div>
-                                    <p className="font-bold text-neutral-900">{prod.name}</p>
-                                    <p className="text-[11px] text-neutral-500 truncate max-w-xs">
-                                      {prod.description}
-                                    </p>
-                                    {prod.optionGroups && prod.optionGroups.length > 0 && (
-                                      <p className="text-[10px] text-neutral-400 mt-0.5">
-                                        {prod.optionGroups.length} grupo(s) de adicionais
-                                      </p>
-                                    )}
-                                  </div>
-                                </td>
-                                <td className="p-3 text-neutral-600 font-medium">
-                                  {categoryObj ? categoryObj.name : 'Geral'}
-                                </td>
-                                <td className="p-3 text-right font-mono font-bold text-neutral-900 tabular-nums">
-                                  {formatBRL(prod.priceCents)}
-                                </td>
-                                <td className="p-3 text-center">
+                  <div className="space-y-2.5">
+                    {sortedCategories.map((cat, idx) => {
+                      const catProducts = products.filter((p) => p.categoryId === cat.id);
+                      return (
+                        <div
+                          key={cat.id}
+                          className="p-3.5 border border-neutral-200 rounded-xl flex flex-col gap-2 text-xs hover:border-neutral-300 transition-colors bg-neutral-50/40"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="w-6 h-6 rounded-lg bg-neutral-900 text-white font-mono text-[11px] font-bold flex items-center justify-center shrink-0">
+                                {idx + 1}º
+                              </span>
+                              {editingCategoryId === cat.id ? (
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="text"
+                                    value={editingCategoryName}
+                                    onChange={(e) => setEditingCategoryName(e.target.value)}
+                                    className="px-2 py-1 text-xs border border-neutral-300 rounded bg-white text-neutral-900 font-bold"
+                                    autoFocus
+                                  />
                                   <button
-                                    onClick={() => handleToggleProductWithNotice(prod.id)}
-                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${
-                                      prod.isAvailable
-                                        ? 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-                                        : 'bg-rose-50 text-rose-800 hover:bg-rose-100'
-                                    }`}
-                                    title="Clique para alternar disponibilidade imediata no cardápio do cliente"
+                                    type="button"
+                                    onClick={() => handleSaveCategoryRename(cat.id)}
+                                    className="px-2 py-1 bg-emerald-600 text-white rounded text-[11px] font-bold cursor-pointer"
                                   >
-                                    <span
-                                      className={`w-1.5 h-1.5 rounded-full ${
-                                        prod.isAvailable ? 'bg-emerald-500' : 'bg-rose-500'
-                                      }`}
-                                    />
-                                    {prod.isAvailable ? 'Disponível' : 'Pausado (Esgotado)'}
+                                    Salvar
                                   </button>
-                                </td>
-                                <td className="p-3 text-right">
-                                  <div className="flex items-center justify-end gap-1">
-                                    <button
-                                      onClick={() => handleOpenEditProduct(prod)}
-                                      className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded transition-colors"
-                                      title="Editar Produto"
-                                    >
-                                      <Edit2 className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDuplicateProduct(prod)}
-                                      className="p-1.5 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded transition-colors"
-                                      title="Duplicar Produto para criar variação rápida"
-                                    >
-                                      <Copy className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        if (confirm(`Tem certeza que deseja excluir "${prod.name}" do cardápio?`)) {
-                                          onDeleteProduct(prod.id);
-                                          triggerSyncNotice(`Prato "${prod.name}" removido do cardápio.`);
-                                        }
-                                      }}
-                                      className="p-1.5 text-rose-600 hover:text-rose-900 hover:bg-rose-50 rounded transition-colors"
-                                      title="Excluir Produto"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingCategoryId(null)}
+                                    className="px-2 py-1 bg-neutral-200 text-neutral-700 rounded text-[11px] cursor-pointer"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="font-bold text-neutral-900 break-words">{cat.name}</span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0 ml-auto">
+                              <span className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-mono font-semibold mr-1">
+                                {catProducts.length} {catProducts.length === 1 ? 'item' : 'itens'}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={idx === 0}
+                                onClick={() => handleMoveCategoryOrder(cat.id, 'up')}
+                                className="p-1 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/70 rounded disabled:opacity-30 cursor-pointer"
+                                title="Subir posição"
+                              >
+                                <ChevronUp className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={idx === sortedCategories.length - 1}
+                                onClick={() => handleMoveCategoryOrder(cat.id, 'down')}
+                                className="p-1 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/70 rounded disabled:opacity-30 cursor-pointer"
+                                title="Descer posição"
+                              >
+                                <ChevronDown className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingCategoryId(cat.id);
+                                  setEditingCategoryName(cat.name);
+                                }}
+                                className="p-1 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/70 rounded cursor-pointer"
+                                title="Renomear categoria"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              {sortedCategories.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteCategoryItem(cat)}
+                                  className="p-1 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded cursor-pointer"
+                                  title="Remover categoria"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {catProducts.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-1 border-t border-neutral-200/70">
+                              {catProducts.map((p) => (
+                                <span
+                                  key={p.id}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-neutral-200 text-[10px] text-neutral-700"
+                                >
+                                  <span className="font-medium">{p.name}</span>
+                                  <span className="font-mono text-neutral-400">{formatBRL(p.priceCents)}</span>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
@@ -1441,6 +2866,8 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                       tenant={tenant}
                       categories={categories}
                       products={products}
+                      onUpdateTenant={onUpdateTenant}
+                      canConfigureSchedule={true}
                       onOrderCreated={() => {
                         triggerSyncNotice('Pedido de teste recebido pelo cardápio sincronizado!');
                       }}
@@ -1530,158 +2957,6 @@ export const RestaurantAdminView: React.FC<RestaurantAdminViewProps> = ({
                 </div>
               </div>
             )}
-
-            {/* Technical Architecture Modal for Menu Updates */}
-            {showHowItWorksModal && (
-              <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-                <div className="bg-white rounded-xl max-w-2xl w-full p-6 shadow-2xl border border-neutral-200 space-y-4 max-h-[85vh] overflow-y-auto">
-                  <div className="flex items-center justify-between pb-3 border-b border-neutral-200">
-                    <div className="flex items-center gap-2">
-                      <ShieldCheck className="w-5 h-5 text-emerald-600" />
-                      <h3 className="text-sm font-bold text-neutral-900">
-                        Arquitetura de Atualização do Cardápio por Restaurante
-                      </h3>
-                    </div>
-                    <button
-                      onClick={() => setShowHowItWorksModal(false)}
-                      className="text-neutral-400 hover:text-neutral-700"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  <div className="space-y-3 text-xs text-neutral-700 leading-relaxed">
-                    <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                      <p className="font-bold text-neutral-900">1. Por que um restaurante nunca altera o cardápio de outro?</p>
-                      <p className="mt-1">
-                        O SaaS utiliza <strong>Row-Level Security (RLS)</strong> no PostgreSQL. Em cada requisição de alteração de produto, o backend extrai o <code className="bg-neutral-200 px-1 py-0.2 rounded font-mono text-[11px]">tenant_id</code> do JWT assinado e executa:
-                      </p>
-                      <pre className="bg-neutral-900 text-neutral-100 p-2.5 rounded font-mono text-[11px] mt-1.5 overflow-x-auto">
-{`SET LOCAL app.current_tenant_id = 'tenant_brasas_01';
-UPDATE products SET price_cents = 3990, is_available = true 
-WHERE id = 'prod_smash_bacon' AND tenant_id = current_setting('app.current_tenant_id');`}
-                      </pre>
-                      <p className="mt-1 text-neutral-600 text-[11px]">
-                        Mesmo que um invasor tente enviar o ID de produto de outro restaurante, a política RLS retorna 0 linhas afetadas no banco de dados.
-                      </p>
-                    </div>
-
-                    <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                      <p className="font-bold text-neutral-900">2. Como o celular do cliente atualiza tão rápido?</p>
-                      <p className="mt-1">
-                        O cardápio público consulta a rota <code className="bg-neutral-200 px-1 py-0.2 rounded font-mono text-[11px]">GET /api/v1/tenants/:slug/products</code>. O servidor responde com cabeçalhos HTTP inteligentes:
-                      </p>
-                      <pre className="bg-neutral-900 text-neutral-100 p-2.5 rounded font-mono text-[11px] mt-1.5 overflow-x-auto">
-{`Cache-Control: public, max-age=15, stale-while-revalidate=60
-ETag: "catalog_version_1729482930"`}
-                      </pre>
-                      <p className="mt-1 text-neutral-600 text-[11px]">
-                        Assim, quando o lojista altera o preço ou pausa um item, a versão do catálogo é incrementada e o celular do cliente busca a versão fresca em no máximo 15 segundos ou sob revalidação automática ao adicionar itens ao carrinho.
-                      </p>
-                    </div>
-
-                    <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                      <p className="font-bold text-neutral-900">3. Princípio do Snapshot Imutável de Pedidos</p>
-                      <p className="mt-1">
-                        Quando um cliente fecha um pedido de um Smash Burger a R$ 34,90, o sistema grava uma cópia física exata de todos os itens na tabela <code className="bg-neutral-200 px-1 py-0.2 rounded font-mono text-[11px]">order_items</code>. Se amanhã o dono aumentar o prato para R$ 42,00, a tabela de produtos muda, mas o pedido passado mantém R$ 34,90 intactos.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end pt-3 border-t border-neutral-200 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setShowHowItWorksModal(false)}
-                      className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white font-semibold rounded-lg shadow-xs"
-                    >
-                      Fechar Explicação
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ============================================================== */}
-        {/* TAB 2: CATEGORIES & OPTION GROUPS                              */}
-        {/* ============================================================== */}
-        {activeTab === 'categories' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-6 bg-white border border-neutral-200 rounded-lg p-5 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-neutral-200">
-                <div>
-                  <h3 className="text-sm font-bold text-neutral-900">Categorias do Cardápio</h3>
-                  <p className="text-xs text-neutral-500">Organize como os itens aparecem no cardápio web ou exporte/importe por planilha.</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsImportMenuModalOpen(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-800 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 rounded-lg transition-colors"
-                  >
-                    <Upload className="w-3.5 h-3.5 text-neutral-600" />
-                    <span>Importar Cardápio</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSpreadsheetModalTab('export')}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors"
-                  >
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
-                    <span>Exportar (.CSV)</span>
-                  </button>
-                  <button
-                    onClick={() => setIsCategoryModalOpen(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Nova Categoria</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {categories.map((cat, idx) => (
-                  <div
-                    key={cat.id}
-                    className="p-3 border border-neutral-200 rounded-lg flex items-center justify-between text-xs hover:border-neutral-300 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono text-neutral-400 font-bold">{idx + 1}</span>
-                      <span className="font-semibold text-neutral-900">{cat.name}</span>
-                    </div>
-                    <span className="text-[11px] text-neutral-500 font-mono">
-                      {products.filter((p) => p.categoryId === cat.id).length} itens
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="lg:col-span-6 bg-white border border-neutral-200 rounded-lg p-5 space-y-4">
-              <div className="pb-3 border-b border-neutral-200">
-                <h3 className="text-sm font-bold text-neutral-900">Como Atualizar Adicionais &amp; Variações</h3>
-                <p className="text-xs text-neutral-500">
-                  Os adicionais são associados aos produtos (ex: &quot;Ponto da Carne&quot;, &quot;Molho Extra&quot;, &quot;Borda Recheada&quot;).
-                </p>
-              </div>
-
-              <div className="p-4 bg-neutral-50 rounded-lg text-xs space-y-2 text-neutral-700 leading-relaxed border border-neutral-200">
-                <p className="font-semibold text-neutral-900">Regras de negócio suportadas:</p>
-                <p>&bull; <strong>Seleção Obrigatória (Ex: Ponto da Carne):</strong> Mínimo 1, Máximo 1.</p>
-                <p>&bull; <strong>Adicionais Pagos Opcionais (Ex: Fatias de Bacon):</strong> Mínimo 0, Máximo 3 com valor unitário adicional em centavos.</p>
-                <p>&bull; <strong>Recálculo no Servidor:</strong> O carrinho valida rigorosamente cada adicional no backend para evitar adulteração de preço.</p>
-              </div>
-
-              <button
-                onClick={handleOpenAddProduct}
-                className="w-full py-2.5 px-3 text-xs font-semibold text-neutral-800 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors flex items-center justify-center gap-2"
-              >
-                <span>Criar Prato com Grupos de Adicionais</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
           </div>
         )}
 
@@ -1689,11 +2964,52 @@ ETag: "catalog_version_1729482930"`}
         {/* TAB 3: SETTINGS & BRAND IDENTITY                               */}
         {/* ============================================================== */}
         {activeTab === 'settings' && (
+          <div className="space-y-5">
+            {isSuperAdmin && (
+              <div className="bg-indigo-950 text-white border border-indigo-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-300">
+                    <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                    <span>MODO SUPER ADMIN · CONFIGURAÇÃO DIRETA DO RESTAURANTE</span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Você está editando as configurações de <strong>{tenant.name}</strong> (<code className="text-indigo-200">{tenant.slug}</code>). Qualquer alteração abaixo é aplicada imediatamente ao restaurante selecionado.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <select
+                    value={tenant.slug}
+                    onChange={(e) => {
+                      const found = (allTenants.length > 0 ? allTenants : [tenant]).find((t) => t.slug === e.target.value);
+                      if (found && onSelectTenant) onSelectTenant(found);
+                    }}
+                    className="bg-slate-900 border border-indigo-700 text-white text-xs rounded-lg px-3 py-1.5 font-semibold"
+                  >
+                    {(allTenants.length > 0 ? allTenants : [tenant]).map((t) => (
+                      <option key={t.slug} value={t.slug}>
+                        Trocar: {t.name} ({t.slug})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('super_subscriptions')}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                  >
+                    Ver Todos
+                  </button>
+                </div>
+              </div>
+            )}
+
           <div className="max-w-3xl bg-white border border-neutral-200 rounded-lg p-6 space-y-6">
             <div>
-              <h3 className="text-sm font-bold text-neutral-900">Configurações Gerais do Restaurante</h3>
+              <h3 className="text-sm font-bold text-neutral-900">
+                {isSuperAdmin ? `Configurações do Restaurante: ${tenant.name}` : 'Configurações Gerais do Restaurante'}
+              </h3>
               <p className="text-xs text-neutral-500">
-                Altere dados cadastrais, horários de atendimento, taxa de entrega padrão e a cor da sua marca.
+                Altere dados cadastrais, horários de atendimento, taxa de entrega padrão, chave Pix e a cor da marca.
               </p>
             </div>
 
@@ -1705,6 +3021,67 @@ ETag: "catalog_version_1729482930"`}
             )}
 
             <form onSubmit={handleSaveSettings} className="space-y-4">
+              {/* Restaurant Logo / Image Editor */}
+              <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-xl flex flex-col sm:flex-row sm:items-center gap-4">
+                <div
+                  className="w-16 h-16 rounded-xl flex items-center justify-center text-white font-extrabold text-lg shrink-0 overflow-hidden shadow-xs border border-neutral-200"
+                  style={{ backgroundColor: settingsPrimaryColor || '#2563EB' }}
+                >
+                  {settingsLogoUrl ? (
+                    <img
+                      src={settingsLogoUrl}
+                      alt={settingsName || 'Logo do Restaurante'}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    (settingsName || tenant.name || 'AL').slice(0, 2).toUpperCase()
+                  )}
+                </div>
+
+                <div className="flex-1 space-y-2 min-w-0">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-900">
+                      Imagem / Logo do Restaurante
+                    </label>
+                    <p className="text-[11px] text-neutral-500">
+                      Exibida no topo do Cardápio Digital, na demonstração e no painel do restaurante.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 transition-colors">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Enviar Foto / Logo</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleRestaurantLogoFileChange}
+                        className="hidden"
+                      />
+                    </label>
+
+                    <input
+                      type="text"
+                      value={settingsLogoUrl.startsWith('data:') ? '' : settingsLogoUrl}
+                      onChange={(e) => setSettingsLogoUrl(e.target.value)}
+                      placeholder="Ou cole a URL da imagem (https://...)"
+                      className="flex-1 min-w-[180px] p-1.5 text-xs bg-white border border-neutral-300 rounded-lg text-neutral-900"
+                    />
+
+                    {settingsLogoUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setSettingsLogoUrl('')}
+                        className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-semibold cursor-pointer inline-flex items-center gap-1 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Remover</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-neutral-700 mb-1">Nome Fantasia do Estabelecimento</label>
@@ -1794,6 +3171,126 @@ ETag: "catalog_version_1729482930"`}
                   placeholder="Terça a Domingo: 18:00 às 23:30"
                   className="w-full p-2.5 text-xs border border-neutral-200 rounded-lg text-neutral-900"
                 />
+              </div>
+
+              {/* Configuração de Mesas & QR Code do Salão para Este Restaurante */}
+              <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-xl space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="space-y-0.5">
+                    <h4 className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                      <QrCode className="w-4 h-4 text-amber-700" />
+                      <span>Configuração de Mesas &amp; QR Codes do Salão</span>
+                    </h4>
+                    <p className="text-[11px] text-amber-800">
+                      Configure a quantidade de mesas do restaurante e gere os QR Codes individuais para colocar nos displays de acrílico.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('tables')}
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer shrink-0"
+                  >
+                    <QrCode className="w-3.5 h-3.5" />
+                    <span>Ver &amp; Imprimir QR Codes das Mesas</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center pt-2 border-t border-amber-200/80">
+                  <div className="sm:col-span-5">
+                    <label className="block text-xs font-semibold text-neutral-800 mb-1">
+                      Quantidade de Mesas no Salão
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={settingsTablesCount}
+                        onChange={(e) => setSettingsTablesCount(Math.max(1, Math.min(100, Number(e.target.value) || 12)))}
+                        className="w-24 p-2 text-xs border border-amber-300 rounded-lg bg-white text-neutral-900 font-mono font-bold"
+                      />
+                      <span className="text-xs text-neutral-600">mesas ativas</span>
+                    </div>
+                  </div>
+
+                  <div className="sm:col-span-7 bg-white p-2.5 rounded-lg border border-amber-200 text-xs space-y-1">
+                    <span className="text-[10px] uppercase font-bold text-neutral-500 block">
+                      Link do QR Code de Mesa deste Restaurante:
+                    </span>
+                    <p className="font-mono text-[11px] text-amber-900 truncate">
+                      {buildPublicTableUrl(tenant.slug, '01')}
+                    </p>
+                    <p className="text-[10px] text-neutral-500">
+                      Ao ler o QR Code com o celular, o cardápio abre automaticamente configurado para a mesa do cliente com 0% taxa de entrega.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Direct Pix Credentials Section inside Settings Form */}
+              <div className="pt-4 border-t border-neutral-200 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
+                      <QrCode className="w-4 h-4 text-emerald-600" />
+                      <span>Dados de Recebimento Pix Direto do Restaurante (Checkout do Consumidor)</span>
+                    </h4>
+                    <p className="text-[11px] text-neutral-500 mt-0.5">
+                      Defina a <strong>Chave Pix</strong> e o <strong>Nome do Beneficiário</strong> deste restaurante. O QR Code Pix dinâmico gerado no checkout do consumidor utiliza essas chaves para que 100% do pagamento caia diretamente na conta do proprietário.
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 shrink-0">
+                    100% Direto na Conta do Proprietário
+                  </span>
+                </div>
+
+                <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl grid grid-cols-1 md:grid-cols-12 gap-3">
+                  <div className="md:col-span-3">
+                    <label className="block text-xs font-semibold text-neutral-800 mb-1">
+                      Tipo de Chave Pix
+                    </label>
+                    <select
+                      value={pixKeyType}
+                      onChange={(e) => setPixKeyType(e.target.value as PixGatewayConfig['pixKeyType'])}
+                      className="w-full p-2.5 text-xs border border-neutral-300 rounded-lg bg-white text-neutral-900 font-medium focus:border-emerald-600 outline-none"
+                    >
+                      <option value="cnpj">CNPJ</option>
+                      <option value="cpf">CPF</option>
+                      <option value="email">E-mail</option>
+                      <option value="phone">Celular / Telefone</option>
+                      <option value="random">Chave Aleatória (EVP)</option>
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-5">
+                    <label className="block text-xs font-semibold text-neutral-800 mb-1">
+                      Chave Pix
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={pixKey}
+                      onChange={(e) => setPixKey(e.target.value)}
+                      placeholder="Ex: 12.345.678/0001-90, email@loja.com ou +5511999999999"
+                      className="w-full p-2.5 text-xs border border-neutral-300 rounded-lg bg-white text-neutral-900 font-mono focus:border-emerald-600 outline-none"
+                    />
+                  </div>
+
+                  <div className="md:col-span-4">
+                    <label className="block text-xs font-semibold text-neutral-800 mb-1">
+                      Nome do Beneficiário
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={60}
+                      value={pixMerchantName}
+                      onChange={(e) => setPixMerchantName(e.target.value)}
+                      placeholder="Nome do Proprietário ou Razão Social"
+                      className="w-full p-2.5 text-xs border border-neutral-300 rounded-lg bg-white text-neutral-900 font-medium focus:border-emerald-600 outline-none"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Delivery Zones by Neighborhood Section */}
@@ -1928,323 +3425,84 @@ ETag: "catalog_version_1729482930"`}
               </div>
             </form>
 
-            {/* PIX GATEWAY & WEBHOOK AUTOMATION CARD (Passo 2) */}
-            <div className="bg-gradient-to-br from-emerald-50 via-white to-neutral-50 border border-emerald-200 rounded-xl p-5 shadow-2xs space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-emerald-100">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shadow-xs shrink-0">
-                    <Zap className="w-4 h-4 fill-current" />
-                  </div>
+            {isSuperAdmin && (
+              <div className="pt-4 border-t border-slate-200 space-y-4">
+                <div className="flex items-center justify-between">
                   <div>
-                    <h4 className="text-sm font-bold text-neutral-900 flex items-center gap-1.5">
-                      <span>Chave Pix Direta do Restaurante &amp; QR Code Oficial (Passo 2)</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-200">
-                        100% Direto na Conta da Loja · 0% Comissão
-                      </span>
+                    <h4 className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-indigo-600" />
+                      <span>Parâmetros Técnicos &amp; Assinatura do Restaurante (Exclusivo Super Admin)</span>
                     </h4>
-                    <p className="text-xs text-neutral-500">
-                      Cada cliente paga o Pix diretamente na conta bancária do seu restaurante. A Aladay não intermedeia suas vendas (o Asaas é usado apenas na assinatura de R$ 129,90/mês).
+                    <p className="text-[11px] text-slate-500">
+                      Configure diretamente a instância Evolution API, status da assinatura e webhook n8n deste restaurante.
                     </p>
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-                      if (authSession?.token) {
-                        headers['Authorization'] = `Bearer ${authSession.token}`;
-                      }
-                      const res = await fetch('/api/v1/pix/simulate-payment', {
-                        method: 'POST',
-                        headers,
-                        body: JSON.stringify({ orderId: orders[0]?.id || 'ord_1042' }),
-                      });
-                      if (res.ok) {
-                        setStatusUpdateToast(
-                          `⚡ Pagamento Pix Direto confirmado! Pedido #${orders[0]?.orderNumber || 1042} aprovado e enviado para a cozinha!`
-                        );
-                        setTimeout(() => setStatusUpdateToast(null), 6000);
-                      }
-                    } catch (e) {
-                      console.error(e);
-                    }
-                  }}
-                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition-colors shrink-0"
-                >
-                  <Zap className="w-3.5 h-3.5 fill-current" />
-                  <span>Simular Pagamento do Cliente (R$ 85,80)</span>
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                {/* 1: Conta Bancária de Destino */}
-                <div className="p-3 bg-white border border-neutral-200 rounded-lg space-y-1">
-                  <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider block">Destino dos Pedidos</span>
-                  <p className="font-bold text-neutral-900 flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>{tenant.pixConfig?.bankName || 'Conta Bancária da Loja'}</span>
-                    <span className="text-[10px] text-emerald-700 font-semibold">· 100% Direto</span>
-                  </p>
-                </div>
-
-                {/* 2: Chave Pix da Loja (Editável por cada restaurante) */}
-                <div
-                  className={`p-3 bg-white border rounded-lg space-y-2 transition-all ${
-                    isEditingPixKey
-                      ? 'md:col-span-3 border-emerald-400 ring-2 ring-emerald-500/10 shadow-sm'
-                      : 'border-neutral-200 hover:border-emerald-300'
-                  }`}
-                >
-                  {!isEditingPixKey ? (
-                    <>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider block">
-                          Chave Pix da Loja
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setIsEditingPixKey(true)}
-                          className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded transition-colors flex items-center gap-1 cursor-pointer"
-                          title="Editar chave Pix deste restaurante"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                          <span>Editar Chave</span>
-                        </button>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono">
-                          {tenant.pixConfig?.pixKeyType || 'telefone'}
-                        </span>
-                        <p className="font-mono font-bold text-neutral-900 text-xs truncate">
-                          {tenant.pixConfig?.pixKey || 'Chave Pix não configurada'}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center justify-between text-[10px] text-neutral-500 pt-1 border-t border-neutral-100">
-                        <span className="truncate">
-                          Titular:{' '}
-                          <strong className="text-neutral-700">
-                            {tenant.pixConfig?.merchantName || tenant.name}
-                          </strong>{' '}
-                          · {tenant.pixConfig?.merchantCity || 'SAO PAULO'}
-                        </span>
-                        <span className="text-emerald-700 font-medium shrink-0 flex items-center gap-0.5">
-                          <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
-                          BACEN EMV
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <form onSubmit={handleSavePixConfig} className="space-y-3">
-                      <div className="flex items-center justify-between pb-2 border-b border-emerald-100">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                          <span className="font-bold text-neutral-900 text-xs">
-                            Configurar Chave Pix Direta &amp; Conta Bancária de {tenant.name}
-                          </span>
-                        </div>
-                        <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded">
-                          100% Direto na Sua Conta
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 text-xs">
-                        <div>
-                          <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                            Tipo de Chave
-                          </label>
-                          <select
-                            value={pixKeyType}
-                            onChange={(e) => setPixKeyType(e.target.value as any)}
-                            className="w-full p-2 bg-neutral-50 border border-neutral-300 rounded text-xs text-neutral-900 font-medium focus:bg-white focus:border-emerald-500 outline-none"
-                          >
-                            <option value="phone">Celular / Telefone (+55)</option>
-                            <option value="cnpj">CNPJ (Pessoa Jurídica)</option>
-                            <option value="email">E-mail</option>
-                            <option value="cpf">CPF (Pessoa Física)</option>
-                            <option value="random">Chave Aleatória (EVP)</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                            Chave Pix do Restaurante
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            placeholder={
-                              pixKeyType === 'cnpj'
-                                ? '12.345.678/0001-90'
-                                : pixKeyType === 'email'
-                                ? 'financeiro@restaurante.com.br'
-                                : pixKeyType === 'cpf'
-                                ? '123.456.789-00'
-                                : pixKeyType === 'random'
-                                ? '123e4567-e89b-12d3-a456-426614174000'
-                                : '+55 11 98765-4321'
-                            }
-                            value={pixKey}
-                            onChange={(e) => setPixKey(e.target.value)}
-                            className="w-full p-2 bg-neutral-50 border border-neutral-300 rounded text-xs text-neutral-900 font-mono focus:bg-white focus:border-emerald-500 outline-none"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                            Titular da Conta (máx. 25 car.)
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            maxLength={25}
-                            placeholder="Nome / Razão Social"
-                            value={pixMerchantName}
-                            onChange={(e) => setPixMerchantName(e.target.value)}
-                            className="w-full p-2 bg-neutral-50 border border-neutral-300 rounded text-xs text-neutral-900 font-medium focus:bg-white focus:border-emerald-500 outline-none"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                            Cidade da Conta (máx. 15 car.)
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            maxLength={15}
-                            placeholder="SAO PAULO"
-                            value={pixMerchantCity}
-                            onChange={(e) => setPixMerchantCity(e.target.value.toUpperCase())}
-                            className="w-full p-2 bg-neutral-50 border border-neutral-300 rounded text-xs text-neutral-900 font-medium uppercase focus:bg-white focus:border-emerald-500 outline-none"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 text-xs">
-                        <div>
-                          <label className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                            Instituição Bancária da Loja (Apenas Identificação)
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="Ex: Nubank PJ, Banco Inter, Itaú Empresas, Sicredi..."
-                            value={pixBankName}
-                            onChange={(e) => setPixBankName(e.target.value)}
-                            className="w-full p-2 bg-neutral-50 border border-neutral-300 rounded text-xs text-neutral-900 font-medium focus:bg-white focus:border-emerald-500 outline-none"
-                          />
-                        </div>
-
-                        <div className="flex items-center gap-2 pt-4">
-                          <label className="flex items-center gap-2 cursor-pointer text-[11px] text-neutral-700 font-medium">
-                            <input
-                              type="checkbox"
-                              checked={pixAutoApproveWebhook}
-                              onChange={(e) => setPixAutoApproveWebhook(e.target.checked)}
-                              className="w-4 h-4 text-emerald-600 rounded accent-emerald-600"
-                            />
-                            <span>Confirmar pagamentos automaticamente após receber webhook Pix autenticado</span>
-                          </label>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between pt-2 border-t border-neutral-200">
-                        <span className="text-[10px] text-neutral-500">
-                          Ao salvar, os QR Codes de pedidos dos clientes apontarão direto para esta chave.
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setIsEditingPixKey(false);
-                              setPixKey(tenant.pixConfig?.pixKey || '');
-                            }}
-                            className="px-3 py-1.5 text-xs font-semibold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded transition-colors"
-                          >
-                            Cancelar
-                          </button>
-                          <button
-                            type="submit"
-                            disabled={pixSaving}
-                            className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded transition-colors flex items-center gap-1.5 shadow-xs disabled:opacity-50"
-                          >
-                            {pixSaving ? (
-                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Check className="w-3.5 h-3.5" />
-                            )}
-                            <span>{pixSaving ? 'Salvando...' : 'Salvar Chave Pix'}</span>
-                          </button>
-                        </div>
-                      </div>
-                    </form>
-                  )}
-                </div>
-
-                {/* 3: Aprovação no KDS */}
-                <div className="p-3 bg-white border border-neutral-200 rounded-lg space-y-1">
-                  <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider block">Aprovação no KDS</span>
-                  <p className="font-bold text-emerald-700 flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5 text-emerald-600" />
-                    Instantânea (Move para Cozinha)
-                  </p>
-                </div>
-              </div>
-
-              {/* DIRECT PIX MODEL & CLOUDFLARE DOMAIN INTEGRATION */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                {/* Direct Pix Explanation */}
-                <div className="p-3.5 bg-white border border-neutral-200 rounded-lg space-y-1.5">
-                  <div className="flex items-center justify-between font-semibold text-neutral-800">
-                    <span className="flex items-center gap-1.5">
-                      <Zap className="w-3.5 h-3.5 text-emerald-600 fill-current" />
-                      Modelo de Recebimento Direto (Cliente &rarr; Restaurante)
-                    </span>
-                    <span className="text-[10px] text-emerald-700 font-mono bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                      0% Taxa Aladay
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-neutral-500">
-                    O QR Code Pix gerado no checkout do cardápio usa o padrão EMV do Banco Central com a chave acima. O dinheiro vai direto do banco do cliente para o banco do restaurante, sem passar pelo Asaas.
-                  </p>
-                  <div className="flex items-center justify-between pt-1 border-t border-neutral-100 text-[11px]">
-                    <span className="text-neutral-500">Assinatura Mensal da Plataforma (R$ 129,90):</span>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('billing')}
-                      className="text-emerald-700 hover:text-emerald-900 font-bold underline cursor-pointer"
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-indigo-50/50 border border-indigo-200 rounded-xl p-4 text-xs">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Status da Assinatura</label>
+                    <select
+                      value={tenant.subscriptionStatus || 'active'}
+                      onChange={(e) => {
+                        const nextStatus = e.target.value as 'active' | 'trial' | 'past_due' | 'suspended';
+                        onUpdateTenant({
+                          ...tenant,
+                          subscriptionStatus: nextStatus,
+                          trialEndsAt:
+                            nextStatus === 'trial'
+                              ? new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString()
+                              : tenant.trialEndsAt,
+                        });
+                        setSettingsSuccessNotice(`Status da assinatura de ${tenant.name} atualizado para "${nextStatus}"!`);
+                        setTimeout(() => setSettingsSuccessNotice(null), 4000);
+                      }}
+                      className="w-full p-2 border border-slate-300 rounded-lg bg-white text-slate-900 font-semibold"
                     >
-                      Gerenciada via Asaas na aba Assinatura &rarr;
-                    </button>
+                      <option value="active">Ativa (Liberada)</option>
+                      <option value="trial">Teste Grátis (15 Dias)</option>
+                      <option value="past_due">Inadimplente / Vencida</option>
+                      <option value="suspended">Suspensa / Bloqueada</option>
+                    </select>
                   </div>
-                </div>
 
-                {/* Cloudflare DNS & Proxy Box */}
-                <div className="p-3.5 bg-white border border-neutral-200 rounded-lg space-y-1.5">
-                  <div className="flex items-center justify-between font-semibold text-neutral-800">
-                    <span className="flex items-center gap-1.5">
-                      <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
-                      Domínio Oficial &amp; Cloudflare
-                    </span>
-                    <span className="text-[10px] text-blue-800 font-bold bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                      aladay.com.br
-                    </span>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Instância Evolution API</label>
+                    <input
+                      type="text"
+                      value={tenant.evolutionInstanceId || ''}
+                      onChange={(e) =>
+                        onUpdateTenant({
+                          ...tenant,
+                          evolutionInstanceId: e.target.value,
+                        })
+                      }
+                      placeholder="Ex: aladay"
+                      className="w-full p-2 border border-slate-300 rounded-lg bg-white text-slate-900 font-mono"
+                    />
                   </div>
-                  <p className="text-[11px] text-neutral-500">
-                    Apontamento DNS com Nuvem Laranja ativa (Proxy, WAF, SSL Full Strict e WebSockets KDS).
-                  </p>
-                  <div className="flex items-center justify-between pt-1 border-t border-neutral-100 text-[11px] font-mono">
-                    <span className="text-neutral-600">Cardápio Público do Restaurante:</span>
-                    <span className="text-emerald-700 font-bold">
-                      https://aladay.com.br/{tenant.slug}
-                    </span>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Status WhatsApp</label>
+                    <select
+                      value={tenant.evolutionStatus || 'disconnected'}
+                      onChange={(e) =>
+                        onUpdateTenant({
+                          ...tenant,
+                          evolutionStatus: e.target.value as 'connected' | 'connecting' | 'disconnected',
+                        })
+                      }
+                      className="w-full p-2 border border-slate-300 rounded-lg bg-white text-slate-900 font-semibold"
+                    >
+                      <option value="connected">Conectado</option>
+                      <option value="connecting">Conectando</option>
+                      <option value="disconnected">Desconectado</option>
+                    </select>
                   </div>
                 </div>
               </div>
-            </div>
+            )}
+          </div>
           </div>
         )}
 
@@ -2270,30 +3528,62 @@ ETag: "catalog_version_1729482930"`}
               </div>
             )}
 
-            {/* Explanatory Header */}
-            <div className="bg-white border border-neutral-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
-              <div>
-                <h3 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
-                  <LayoutGrid className="w-4 h-4 text-orange-600" />
-                  <span>Quadro KDS em Tempo Real com Notificação WhatsApp</span>
-                </h3>
-                <p className="text-xs text-neutral-500 mt-0.5">
-                  Ao avançar o status no Kanban, o sistema dispara automaticamente uma mensagem formatada para o WhatsApp do cliente via Evolution API (instância <code className="font-mono text-neutral-800 font-bold">{tenant.evolutionInstanceId || 'aladay'}</code>).
-                </p>
+            {/* Explanatory Header & SLA Color Legend */}
+            <div className="bg-white border border-neutral-200 rounded-xl p-4 space-y-3 shadow-2xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
+                    <LayoutGrid className="w-4 h-4 text-orange-600" />
+                    <span>Quadro KDS em Tempo Real com Contador de Tempo &amp; Notificação WhatsApp</span>
+                  </h3>
+                  <p className="text-xs text-neutral-500 mt-0.5">
+                    {isSuperAdmin ? (
+                      <>
+                        Ao avançar o status no Kanban, o sistema dispara automaticamente uma mensagem formatada para o WhatsApp do cliente via Evolution API (instância <code className="font-mono text-neutral-800 font-bold">{tenant.evolutionInstanceId || 'aladay'}</code>).
+                      </>
+                    ) : (
+                      'Ao avançar o status do pedido, o cliente recebe automaticamente uma notificação no WhatsApp.'
+                    )}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  {isSuperAdmin && (
+                    <button
+                      type="button"
+                      onClick={handleQuickSimulateIfoodOrderInKds}
+                      className="text-xs font-bold text-white bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+                      title="Injetar um pedido iFood de teste imediatamente no KDS"
+                    >
+                      <Bike className="w-3.5 h-3.5" />
+                      <span>+ Simular Pedido iFood</span>
+                    </button>
+                  )}
+                  <span className="text-xs text-neutral-500 font-mono bg-neutral-100 px-2.5 py-1.5 rounded-lg">
+                    {orders.length} pedidos hoje
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('whatsapp')}
-                  className="text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors"
-                  title="Configurar e testar textos das mensagens de notificação"
-                >
-                  <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Ajustar Textos WhatsApp</span>
-                </button>
-                <span className="text-xs text-neutral-500 font-mono bg-neutral-100 px-2.5 py-1.5 rounded-lg">
-                  {orders.length} pedidos hoje
+
+              {/* SLA Visual Timer Legend */}
+              <div className="pt-2.5 border-t border-neutral-100 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <span className="font-semibold text-neutral-600 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>Indicador Visual de Tempo de Espera (SLA por Pedido):</span>
                 </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 border border-emerald-300 text-emerald-900 font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span>0–10 min (No Prazo)</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-50 border border-amber-300 text-amber-900 font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    <span>10–20 min (Atenção)</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-rose-50 border border-rose-300 text-rose-900 font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping" />
+                    <span>20+ min (Crítico)</span>
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -2309,80 +3599,166 @@ ETag: "catalog_version_1729482930"`}
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-                  {ordersByStatus.received.map((order) => (
-                    <div
-                      key={order.id}
-                      className="border border-amber-300 bg-amber-50/40 rounded-xl p-3 space-y-2 shadow-2xs hover:border-amber-400 transition-colors"
-                    >
-                      <div className="flex justify-between items-start">
-                        <span className="text-xs font-mono font-bold text-neutral-900">
-                          #{order.orderNumber}
-                        </span>
-                        <span className="text-[10px] text-neutral-500 font-mono">{order.createdAt}</span>
-                      </div>
-
-                      <div>
-                        <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
-                        <p className="text-[11px] text-neutral-600 font-mono">+{order.customerPhone}</p>
-                        <p className="text-[11px] text-neutral-600 mt-0.5">
-                          {order.type === 'delivery' ? '🛵 Entrega' : '🛍️ Retirada'} · {order.items.length} itens
-                        </p>
-                      </div>
-
-                      <div className="flex justify-between items-center text-xs font-mono font-bold text-neutral-900 pt-1">
-                        <span>{formatBRL(order.totalCents)}</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${
-                          order.paymentStatus === 'paid_online'
-                            ? 'bg-emerald-100 text-emerald-800 font-bold border border-emerald-200'
-                            : 'bg-amber-100 text-amber-900'
-                        }`}>
-                          {order.paymentStatus === 'paid_online' && <Zap className="w-2.5 h-2.5 text-emerald-600 fill-current" />}
-                          {order.paymentStatus === 'paid_online' ? '⚡ Pix Pago Online' : order.paymentMethod}
-                        </span>
-                      </div>
-
-                      {/* Card Action Buttons */}
-                      <div className="pt-2 border-t border-amber-200 flex flex-col gap-1.5">
-                        <div className="flex gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleKdsStatusChange(order, 'confirmed')}
-                            className="flex-1 py-1.5 px-2 text-[11px] font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs"
-                          >
-                            <Check className="w-3 h-3 text-emerald-400" />
-                            <span>Confirmar Pedido</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleKdsStatusChange(order, 'cancelled')}
-                            className="py-1.5 px-2 text-[11px] font-semibold text-rose-700 bg-rose-100 hover:bg-rose-200 rounded-lg transition-colors"
-                            title="Recusar pedido"
-                          >
-                            Recusar
-                          </button>
+                  {ordersByStatus.received.map((order) => {
+                    const timer = getOrderKdsTimerVisuals(order);
+                    return (
+                      <div
+                        key={order.id}
+                        className={`border rounded-xl p-3 space-y-2 shadow-2xs transition-colors ${timer.cardBgClass}`}
+                      >
+                        <div className="flex justify-between items-start gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-mono font-bold text-neutral-900">
+                              #{order.ifoodDisplayId || order.orderNumber}
+                            </span>
+                            {order.channel === 'IFOOD' ? (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider bg-red-600 text-white shadow-2xs">
+                                iFood
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-800">
+                                Direto 0%
+                              </span>
+                            )}
+                            {order.ifoodPickupCode && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-red-50 text-red-800 border border-red-200">
+                                Coleta: {order.ifoodPickupCode}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border shadow-2xs ${timer.badgeClass}`}
+                              title={`Recebido às ${order.createdAt} (${timer.label})`}
+                            >
+                              <Clock className="w-2.5 h-2.5 shrink-0" />
+                              <span>{timer.label}</span>
+                            </span>
+                            <span className="text-[10px] text-neutral-500 font-mono">{order.createdAt}</span>
+                          </div>
                         </div>
 
-                        <div className="flex gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setTrackingOrderModal(order)}
-                            className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-white border border-neutral-300 hover:bg-neutral-50 rounded flex items-center justify-center gap-1"
-                          >
-                            <Clock className="w-3 h-3 text-amber-600" />
-                            <span>Rastrear (Cliente)</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPrintingOrder(order)}
-                            className="p-1 text-neutral-600 bg-white border border-neutral-300 hover:bg-neutral-50 rounded"
-                            title="Imprimir comanda térmica"
-                          >
-                            <Printer className="w-3 h-3" />
-                          </button>
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
+                            {order.tableNumber && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                🍽️ MESA {order.tableNumber}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-neutral-600 font-mono">+{order.customerPhone}</p>
+                          <p className="text-[11px] text-neutral-600 mt-0.5">
+                            {order.type === 'dine_in'
+                              ? `🍽️ Salão (Mesa ${order.tableNumber || '01'})${order.waiterName ? ` · Garçom: ${order.waiterName}` : ''}`
+                              : order.type === 'delivery'
+                              ? '🛵 Entrega'
+                              : '🛍️ Retirada'}{' '}
+                            · {order.items.length} itens
+                          </p>
+                        </div>
+
+                        <div className="flex justify-between items-center text-xs font-mono font-bold text-neutral-900 pt-1">
+                          <span>{formatBRL(order.totalCents)}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${
+                            isOrderPixPaidAndValidated(order) && isPixOrderPayment(order)
+                              ? 'bg-emerald-100 text-emerald-800 font-bold border border-emerald-200'
+                              : isPixOrderPayment(order)
+                              ? 'bg-amber-100 text-amber-900 font-bold border border-amber-300'
+                              : 'bg-white/80 text-neutral-800 border border-neutral-200'
+                          }`}>
+                            {isPixOrderPayment(order) ? (
+                              isOrderPixPaidAndValidated(order) ? (
+                                <>
+                                  <Zap className="w-2.5 h-2.5 text-emerald-600 fill-current" />
+                                  <span>Pix Validado (Asaas RECEIVED)</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Clock className="w-2.5 h-2.5 text-amber-700" />
+                                  <span>Pix Pendente (Validar no Asaas)</span>
+                                </>
+                              )
+                            ) : (
+                              order.paymentMethod
+                            )}
+                          </span>
+                        </div>
+
+                        {/* Card Action Buttons */}
+                        <div className={`pt-2 border-t ${timer.dividerClass} flex flex-col gap-1.5`}>
+                          {isPixOrderPayment(order) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPendingKdsTransitionStatus('confirmed');
+                                setPixValidationModalOrder(order);
+                              }}
+                              className={`w-full py-1.5 px-2 text-[10px] font-bold rounded-lg transition-colors flex items-center justify-center gap-1 border cursor-pointer ${
+                                isOrderPixPaidAndValidated(order)
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                                  : 'bg-amber-500 hover:bg-amber-600 text-neutral-950 border-amber-600 shadow-2xs'
+                              }`}
+                            >
+                              <QrCode className="w-3 h-3 shrink-0" />
+                              <span>
+                                {isOrderPixPaidAndValidated(order)
+                                  ? 'Comprovante Pix Validado no Asaas'
+                                  : 'Validar Pagamento Pix no Asaas p/ Checkout'}
+                              </span>
+                            </button>
+                          )}
+
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleKdsStatusChange(order, 'confirmed')}
+                              className="flex-1 py-1.5 px-2 text-[11px] font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer"
+                            >
+                              {isPixOrderPayment(order) && !isOrderPixPaidAndValidated(order) ? (
+                                <>
+                                  <Lock className="w-3 h-3 text-amber-400" />
+                                  <span>Validar Pix &amp; Confirmar</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-400" />
+                                  <span>Confirmar Pedido</span>
+                                </>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleKdsStatusChange(order, 'cancelled')}
+                              className="py-1.5 px-2 text-[11px] font-semibold text-rose-700 bg-rose-100 hover:bg-rose-200 rounded-lg transition-colors"
+                              title="Recusar pedido"
+                            >
+                              Recusar
+                            </button>
+                          </div>
+
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setTrackingOrderModal(order)}
+                              className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-white border border-neutral-300 hover:bg-neutral-50 rounded flex items-center justify-center gap-1"
+                            >
+                              <Clock className="w-3 h-3 text-amber-600" />
+                              <span>Rastrear (Cliente)</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPrintingOrder(order)}
+                              className="p-1 text-neutral-600 bg-white border border-neutral-300 hover:bg-neutral-50 rounded"
+                              title="Imprimir comanda térmica"
+                            >
+                              <Printer className="w-3 h-3" />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {ordersByStatus.received.length === 0 && (
                     <p className="text-xs text-neutral-400 text-center pt-10">Nenhum pedido pendente.</p>
                   )}
@@ -2400,60 +3776,91 @@ ETag: "catalog_version_1729482930"`}
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-                  {[...ordersByStatus.confirmed, ...ordersByStatus.preparing].map((order) => (
-                    <div
-                      key={order.id}
-                      className="border border-neutral-200 bg-white rounded-xl p-3 space-y-2 shadow-2xs hover:border-neutral-300 transition-colors"
-                    >
-                      <div className="flex justify-between items-start">
-                        <span className="text-xs font-mono font-bold text-neutral-900">
-                          #{order.orderNumber}
-                        </span>
-                        <span className="text-[10px] text-neutral-500 font-mono">{order.createdAt}</span>
-                      </div>
-
-                      <div>
-                        <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
-                        <div className="text-[11px] text-neutral-600 mt-1 space-y-0.5">
-                          {order.items.map((i, idx) => (
-                            <p key={idx} className="truncate">
-                              • {i.quantity}x {i.productName}
-                            </p>
-                          ))}
+                  {[...ordersByStatus.confirmed, ...ordersByStatus.preparing].map((order) => {
+                    const timer = getOrderKdsTimerVisuals(order);
+                    return (
+                      <div
+                        key={order.id}
+                        className={`border rounded-xl p-3 space-y-2 shadow-2xs transition-colors ${timer.cardBgClass}`}
+                      >
+                        <div className="flex justify-between items-start gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-mono font-bold text-neutral-900">
+                              #{order.ifoodDisplayId || order.orderNumber}
+                            </span>
+                            {order.channel === 'IFOOD' && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider bg-red-600 text-white">
+                                iFood
+                              </span>
+                            )}
+                            {order.ifoodPickupCode && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-red-50 text-red-800 border border-red-200">
+                                Coleta: {order.ifoodPickupCode}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border shadow-2xs ${timer.badgeClass}`}
+                              title={`Recebido às ${order.createdAt} (${timer.label})`}
+                            >
+                              <Clock className="w-2.5 h-2.5 shrink-0" />
+                              <span>{timer.label}</span>
+                            </span>
+                            <span className="text-[10px] text-neutral-500 font-mono">{order.createdAt}</span>
+                          </div>
                         </div>
-                      </div>
 
-                      <div className="pt-2 border-t border-neutral-100 flex flex-col gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleKdsStatusChange(order, 'ready')}
-                          className="w-full py-1.5 px-2 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs"
-                        >
-                          <Bike className="w-3 h-3" />
-                          <span>Pronto / Despachar</span>
-                        </button>
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
+                            {order.tableNumber && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                🍽️ MESA {order.tableNumber}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-neutral-700 mt-1 space-y-0.5">
+                            {order.items.map((i, idx) => (
+                              <p key={idx} className="truncate">
+                                • {i.quantity}x {i.productName}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
 
-                        <div className="flex gap-1">
+                        <div className={`pt-2 border-t ${timer.dividerClass} flex flex-col gap-1.5`}>
                           <button
                             type="button"
-                            onClick={() => setTrackingOrderModal(order)}
-                            className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-neutral-50 hover:bg-neutral-100 rounded flex items-center justify-center gap-1 border border-neutral-200"
+                            onClick={() => handleKdsStatusChange(order, 'ready')}
+                            className="w-full py-1.5 px-2 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs"
                           >
-                            <Clock className="w-3 h-3 text-blue-600" />
-                            <span>Rastrear (Cliente)</span>
+                            <Bike className="w-3 h-3" />
+                            <span>Pronto / Despachar</span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => setPrintingOrder(order)}
-                            className="p-1 text-neutral-600 bg-neutral-50 hover:bg-neutral-100 rounded border border-neutral-200"
-                            title="Imprimir comanda térmica"
-                          >
-                            <Printer className="w-3 h-3" />
-                          </button>
+
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setTrackingOrderModal(order)}
+                              className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-white hover:bg-neutral-50 rounded flex items-center justify-center gap-1 border border-neutral-200"
+                            >
+                              <Clock className="w-3 h-3 text-blue-600" />
+                              <span>Rastrear (Cliente)</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPrintingOrder(order)}
+                              className="p-1 text-neutral-600 bg-white hover:bg-neutral-50 rounded border border-neutral-200"
+                              title="Imprimir comanda térmica"
+                            >
+                              <Printer className="w-3 h-3" />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {ordersByStatus.confirmed.length + ordersByStatus.preparing.length === 0 && (
                     <p className="text-xs text-neutral-400 text-center pt-10">Cozinha liberada.</p>
                   )}
@@ -2471,56 +3878,118 @@ ETag: "catalog_version_1729482930"`}
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-                  {ordersByStatus.ready.map((order) => (
-                    <div
-                      key={order.id}
-                      className="border border-purple-200 bg-purple-50/20 rounded-xl p-3 space-y-2 shadow-2xs hover:border-purple-300 transition-colors"
-                    >
-                      <div className="flex justify-between items-start">
-                        <span className="text-xs font-mono font-bold text-neutral-900">
-                          #{order.orderNumber}
-                        </span>
-                        <span className="text-[10px] text-neutral-500 font-mono">{order.createdAt}</span>
-                      </div>
+                  {ordersByStatus.ready.map((order) => {
+                    const timer = getOrderKdsTimerVisuals(order);
+                    return (
+                      <div
+                        key={order.id}
+                        className={`border rounded-xl p-3 space-y-2 shadow-2xs transition-colors ${timer.cardBgClass}`}
+                      >
+                        <div className="flex justify-between items-start gap-1.5">
+                          <span className="text-xs font-mono font-bold text-neutral-900">
+                            #{order.orderNumber}
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border shadow-2xs ${timer.badgeClass}`}
+                              title={`Recebido às ${order.createdAt} (${timer.label})`}
+                            >
+                              <Clock className="w-2.5 h-2.5 shrink-0" />
+                              <span>{timer.label}</span>
+                            </span>
+                            <span className="text-[10px] text-neutral-500 font-mono">{order.createdAt}</span>
+                          </div>
+                        </div>
 
-                      <div>
-                        <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
-                        <p className="text-[11px] text-neutral-600">
-                          {order.type === 'delivery' ? `🛵 ${order.deliveryAddress || 'Entrega'}` : '🛍️ Retirada no balcão'}
-                        </p>
-                      </div>
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-xs font-bold text-neutral-900">{order.customerName}</p>
+                            {order.tableNumber && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                🍽️ MESA {order.tableNumber}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-neutral-700">
+                            {order.type === 'dine_in'
+                              ? `🍽️ Servir na Mesa ${order.tableNumber || '01'}${order.waiterName ? ` (${order.waiterName})` : ''}`
+                              : order.type === 'delivery'
+                              ? `🛵 ${order.deliveryAddress || 'Entrega'}`
+                              : '🛍️ Retirada no balcão'}
+                          </p>
+                        </div>
 
-                      <div className="pt-2 border-t border-purple-100 flex flex-col gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleKdsStatusChange(order, 'delivered')}
-                          className="w-full py-1.5 px-2 text-[11px] font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs"
-                        >
-                          <PackageCheck className="w-3.5 h-3.5" />
-                          <span>Concluir e Entregar</span>
-                        </button>
+                        <div className={`pt-2 border-t ${timer.dividerClass} flex flex-col gap-1.5`}>
+                          {isPixOrderPayment(order) && (
+                            <div className="flex items-center justify-between px-2 py-1 rounded bg-white/90 border border-neutral-200 text-[10px]">
+                              <span className="font-semibold text-neutral-700 flex items-center gap-1">
+                                <QrCode className="w-3 h-3 text-blue-600" />
+                                <span>Status Pix Asaas:</span>
+                              </span>
+                              {isOrderPixPaidAndValidated(order) ? (
+                                <span className="font-bold text-emerald-700 flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                  <span>RECEIVED (Liberado)</span>
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPendingKdsTransitionStatus('delivered');
+                                    setPixValidationModalOrder(order);
+                                  }}
+                                  className="font-bold text-amber-700 underline hover:text-amber-900 cursor-pointer"
+                                >
+                                  PENDING · Validar Agora
+                                </button>
+                              )}
+                            </div>
+                          )}
 
-                        <div className="flex gap-1">
                           <button
                             type="button"
-                            onClick={() => setTrackingOrderModal(order)}
-                            className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-white hover:bg-neutral-50 rounded flex items-center justify-center gap-1 border border-neutral-200"
+                            onClick={() => handleKdsStatusChange(order, 'delivered')}
+                            className={`w-full py-1.5 px-2 text-[11px] font-bold text-white rounded-lg transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer ${
+                              isPixOrderPayment(order) && !isOrderPixPaidAndValidated(order)
+                                ? 'bg-amber-600 hover:bg-amber-700'
+                                : 'bg-emerald-700 hover:bg-emerald-800'
+                            }`}
                           >
-                            <Clock className="w-3 h-3 text-purple-600" />
-                            <span>Rastrear (Cliente)</span>
+                            {isPixOrderPayment(order) && !isOrderPixPaidAndValidated(order) ? (
+                              <>
+                                <Lock className="w-3.5 h-3.5" />
+                                <span>Validar Pix no Asaas p/ Checkout</span>
+                              </>
+                            ) : (
+                              <>
+                                <PackageCheck className="w-3.5 h-3.5" />
+                                <span>Concluir Checkout e Entregar</span>
+                              </>
+                            )}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => setPrintingOrder(order)}
-                            className="p-1 text-neutral-600 bg-white hover:bg-neutral-50 rounded border border-neutral-200"
-                            title="Imprimir comanda térmica"
-                          >
-                            <Printer className="w-3 h-3" />
-                          </button>
+
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setTrackingOrderModal(order)}
+                              className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-white hover:bg-neutral-50 rounded flex items-center justify-center gap-1 border border-neutral-200"
+                            >
+                              <Clock className="w-3 h-3 text-purple-600" />
+                              <span>Rastrear (Cliente)</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPrintingOrder(order)}
+                              className="p-1 text-neutral-600 bg-white hover:bg-neutral-50 rounded border border-neutral-200"
+                              title="Imprimir comanda térmica"
+                            >
+                              <Printer className="w-3 h-3" />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {ordersByStatus.ready.length === 0 && (
                     <p className="text-xs text-neutral-400 text-center pt-10">Nenhum pedido aguardando saída.</p>
                   )}
@@ -2538,37 +4007,47 @@ ETag: "catalog_version_1729482930"`}
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                  {ordersByStatus.delivered.map((order) => (
-                    <div
-                      key={order.id}
-                      className="border border-neutral-200 bg-neutral-50 rounded-xl p-2.5 text-xs text-neutral-600 space-y-1.5 hover:border-neutral-300 transition-colors"
-                    >
-                      <div className="flex justify-between items-center font-mono">
-                        <span className="font-bold text-neutral-900">#{order.orderNumber}</span>
-                        <span className="tabular-nums font-semibold">{formatBRL(order.totalCents)}</span>
-                      </div>
-                      <p className="text-[11px] truncate font-medium text-neutral-800">{order.customerName}</p>
+                  {ordersByStatus.delivered.map((order) => {
+                    const timer = getOrderKdsTimerVisuals(order);
+                    return (
+                      <div
+                        key={order.id}
+                        className={`border rounded-xl p-2.5 text-xs text-neutral-700 space-y-1.5 transition-colors ${timer.cardBgClass}`}
+                      >
+                        <div className="flex justify-between items-center font-mono gap-1">
+                          <span className="font-bold text-neutral-900">#{order.orderNumber}</span>
+                          <span
+                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${timer.badgeClass}`}
+                            title={`Recebido às ${order.createdAt} (${timer.label})`}
+                          >
+                            <Clock className="w-2.5 h-2.5 shrink-0" />
+                            <span>{timer.label}</span>
+                          </span>
+                          <span className="tabular-nums font-semibold text-neutral-900">{formatBRL(order.totalCents)}</span>
+                        </div>
+                        <p className="text-[11px] truncate font-medium text-neutral-800">{order.customerName}</p>
 
-                      <div className="flex gap-1 pt-1 border-t border-neutral-200">
-                        <button
-                          type="button"
-                          onClick={() => setTrackingOrderModal(order)}
-                          className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-white hover:bg-neutral-100 rounded flex items-center justify-center gap-1 border border-neutral-200"
-                        >
-                          <Clock className="w-3 h-3 text-emerald-600" />
-                          <span>Ver Rastreio</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPrintingOrder(order)}
-                          className="p-1 text-neutral-600 bg-white hover:bg-neutral-100 rounded border border-neutral-200"
-                          title="Reimprimir comanda"
-                        >
-                          <Printer className="w-3 h-3" />
-                        </button>
+                        <div className={`flex gap-1 pt-1 border-t ${timer.dividerClass}`}>
+                          <button
+                            type="button"
+                            onClick={() => setTrackingOrderModal(order)}
+                            className="flex-1 py-1 px-1.5 text-[10px] font-medium text-neutral-700 bg-white hover:bg-neutral-100 rounded flex items-center justify-center gap-1 border border-neutral-200"
+                          >
+                            <Clock className="w-3 h-3 text-emerald-600" />
+                            <span>Ver Rastreio</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPrintingOrder(order)}
+                            className="p-1 text-neutral-600 bg-white hover:bg-neutral-100 rounded border border-neutral-200"
+                            title="Reimprimir comanda"
+                          >
+                            <Printer className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {ordersByStatus.delivered.length === 0 && (
                     <p className="text-xs text-neutral-400 text-center pt-10">Nenhum pedido finalizado ainda.</p>
                   )}
@@ -2579,22 +4058,452 @@ ETag: "catalog_version_1729482930"`}
         )}
 
         {/* ============================================================== */}
-        {/* TAB 5: WHATSAPP EVOLUTION API                                  */}
+        {/* TAB SUPER ADMIN: ACOMPANHAMENTO DE ASSINATURAS & RESTAURANTES  */}
+        {/* ============================================================== */}
+        {activeTab === 'super_subscriptions' && isSuperAdmin && (
+          <div className="space-y-6">
+            {superAdminActionNotice && (
+              <div className="p-3.5 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-900 font-semibold flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span>{superAdminActionNotice}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSuperAdminActionNotice(null)}
+                  className="text-indigo-500 hover:text-indigo-800"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Global SaaS KPIs */}
+            {(() => {
+              const rawTenantsToInspect = allTenants.length > 0 ? allTenants : [tenant];
+              const tenantsToInspect = rawTenantsToInspect.filter(
+                (t) =>
+                  t.slug.toLowerCase() !== 'aladay' &&
+                  t.id !== 'tenant_aladay_01' &&
+                  !(t.phone || '').replace(/\D/g, '').includes('9131976334')
+              );
+              const activeCount = tenantsToInspect.filter(
+                (t) =>
+                  t.subscriptionStatus === 'active' ||
+                  t.asaasSubscription?.status === 'ACTIVE' ||
+                  (!t.subscriptionStatus && !t.trialEndsAt)
+              ).length;
+              const trialCount = tenantsToInspect.filter((t) => t.subscriptionStatus === 'trial').length;
+              const overdueCount = tenantsToInspect.filter(
+                (t) => t.subscriptionStatus === 'past_due' || t.subscriptionStatus === 'suspended'
+              ).length;
+              const estimatedMrrCents = activeCount * 12990;
+
+              const totalPlatformOrders = tenantsToInspect.reduce((acc, t) => {
+                const cat = catalogsByTenant[t.slug];
+                return acc + (cat ? cat.orderIds.length : t.slug === tenant.slug ? orders.length : 0);
+              }, 0);
+
+              const totalPlatformGmvCents = tenantsToInspect.reduce((acc, t) => {
+                const cat = catalogsByTenant[t.slug];
+                if (cat) {
+                  return (
+                    acc +
+                    cat.orderIds.reduce((sum, id) => {
+                      const ord = cat.ordersById[id];
+                      return ord && ord.status !== 'cancelled' ? sum + (ord.totalCents || 0) : sum;
+                    }, 0)
+                  );
+                }
+                return acc;
+              }, 0);
+
+              const filteredTenants = tenantsToInspect.filter((t) => {
+                const q = superAdminSearch.trim().toLowerCase();
+                const matchesQuery =
+                  !q ||
+                  t.name.toLowerCase().includes(q) ||
+                  t.slug.toLowerCase().includes(q) ||
+                  (t.phone || '').toLowerCase().includes(q);
+                if (!matchesQuery) return false;
+                if (superAdminStatusFilter === 'all') return true;
+                const status = t.subscriptionStatus || 'active';
+                if (superAdminStatusFilter === 'past_due') {
+                  return status === 'past_due' || status === 'suspended';
+                }
+                return status === superAdminStatusFilter;
+              });
+
+              return (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs">
+                      <span className="text-xs font-semibold text-slate-500 block">
+                        Total de Restaurantes na Plataforma
+                      </span>
+                      <p className="text-2xl font-bold font-mono text-slate-900 mt-1.5">
+                        {tenantsToInspect.length}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        {activeCount} assinaturas ativas • {trialCount} em teste grátis
+                      </p>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs">
+                      <span className="text-xs font-semibold text-slate-500 block">
+                        Receita Recorrente Mensal (MRR)
+                      </span>
+                      <p className="text-2xl font-bold font-mono text-emerald-700 mt-1.5">
+                        {formatBRL(estimatedMrrCents)}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Baseado nas assinaturas ativas (Asaas)
+                      </p>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs">
+                      <span className="text-xs font-semibold text-slate-500 block">
+                        Volume de Vendas dos Restaurantes
+                      </span>
+                      <p className="text-2xl font-bold font-mono text-blue-700 mt-1.5">
+                        {formatBRL(totalPlatformGmvCents)}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        {totalPlatformOrders} pedidos processados na plataforma
+                      </p>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs">
+                      <span className="text-xs font-semibold text-slate-500 block">
+                        Assinaturas Pendentes / Expiradas
+                      </span>
+                      <p className="text-2xl font-bold font-mono text-rose-600 mt-1.5">
+                        {overdueCount}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Controle de bloqueio automático ativo
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Restaurants & Subscriptions Management Table */}
+                  <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                      <div>
+                        <h2 className="text-base font-bold text-slate-900">
+                          Acompanhamento de Assinaturas, Relatórios e Configurações dos Restaurantes
+                        </h2>
+                        <p className="text-xs text-slate-500">
+                          Selecione qualquer restaurante para configurar sua conta, gerenciar sua assinatura ou visualizar seus relatórios de vendas.
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="relative">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            value={superAdminSearch}
+                            onChange={(e) => setSuperAdminSearch(e.target.value)}
+                            placeholder="Buscar restaurante ou slug..."
+                            className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:border-indigo-500"
+                          />
+                        </div>
+
+                        <select
+                          value={superAdminStatusFilter}
+                          onChange={(e) => setSuperAdminStatusFilter(e.target.value as any)}
+                          className="p-1.5 text-xs border border-slate-200 rounded-lg bg-white font-medium text-slate-700"
+                        >
+                          <option value="all">Todos os Status</option>
+                          <option value="active">Assinatura Ativa</option>
+                          <option value="trial">Em Teste Grátis (15d)</option>
+                          <option value="past_due">Inadimplentes / Suspensos</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="border border-slate-200 rounded-xl overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
+                          <tr>
+                            <th className="p-3">Restaurante / Slug</th>
+                            <th className="p-3">Status da Assinatura</th>
+                            <th className="p-3">Instância WhatsApp &amp; Pix</th>
+                            <th className="p-3 text-right">Pedidos &amp; Vendas</th>
+                            <th className="p-3">Controle de Assinatura</th>
+                            <th className="p-3 text-right">Acesso Total (Super Admin)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200">
+                          {filteredTenants.map((itemTenant) => {
+                            const isSelected = itemTenant.slug === tenant.slug;
+                            const cat = catalogsByTenant[itemTenant.slug];
+                            const tenantOrdersCount = cat
+                              ? cat.orderIds.length
+                              : itemTenant.slug === tenant.slug
+                              ? orders.length
+                              : 0;
+                            const tenantRevenueCents = cat
+                              ? cat.orderIds.reduce((sum, id) => {
+                                  const o = cat.ordersById[id];
+                                  return o && o.status !== 'cancelled' ? sum + (o.totalCents || 0) : sum;
+                                }, 0)
+                              : itemTenant.slug === tenant.slug
+                              ? orders.filter((o) => o.status !== 'cancelled').reduce((s, o) => s + o.totalCents, 0)
+                              : 0;
+
+                            const subStatus = itemTenant.subscriptionStatus || 'active';
+
+                            return (
+                              <tr
+                                key={itemTenant.slug}
+                                className={`transition-colors ${
+                                  isSelected ? 'bg-indigo-50/50' : 'hover:bg-slate-50'
+                                }`}
+                              >
+                                <td className="p-3">
+                                  <div className="flex items-center gap-2.5">
+                                    <div
+                                      className="w-8 h-8 rounded-lg text-white flex items-center justify-center font-bold text-xs shrink-0 overflow-hidden"
+                                      style={{ backgroundColor: itemTenant.primaryColor || '#2563EB' }}
+                                    >
+                                      {itemTenant.logoUrl ? (
+                                        <img
+                                          src={itemTenant.logoUrl}
+                                          alt={itemTenant.name}
+                                          loading="lazy"
+                                          decoding="async"
+                                          className="w-full h-full object-cover"
+                                        />
+                                      ) : (
+                                        itemTenant.name.slice(0, 2).toUpperCase()
+                                      )}
+                                    </div>
+                                    <div>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="font-bold text-slate-900">{itemTenant.name}</span>
+                                        {isSelected && (
+                                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-600 text-white">
+                                            Em foco
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-[11px] font-mono text-slate-500">
+                                        slug: {itemTenant.slug} {itemTenant.phone ? `• ${itemTenant.phone}` : ''}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </td>
+
+                                <td className="p-3">
+                                  {subStatus === 'active' && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                      <span>Assinatura Ativa</span>
+                                    </span>
+                                  )}
+                                  {subStatus === 'trial' && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-sky-50 text-sky-800 border border-sky-200">
+                                      <Clock className="w-3.5 h-3.5 text-sky-600" />
+                                      <span>Teste Grátis (15 Dias)</span>
+                                    </span>
+                                  )}
+                                  {(subStatus === 'past_due' || subStatus === 'suspended') && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                      <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                                      <span>{subStatus === 'suspended' ? 'Suspensa' : 'Inadimplente / Expirada'}</span>
+                                    </span>
+                                  )}
+                                </td>
+
+                                <td className="p-3">
+                                  <div className="space-y-0.5 text-[11px]">
+                                    <div className="flex items-center gap-1.5">
+                                      <span
+                                        className={`w-2 h-2 rounded-full ${
+                                          itemTenant.evolutionStatus === 'connected' ? 'bg-emerald-500' : 'bg-amber-500'
+                                        }`}
+                                      />
+                                      <span className="font-mono text-slate-700">
+                                        Instância: <strong>{itemTenant.evolutionInstanceId || itemTenant.slug}</strong>
+                                      </span>
+                                    </div>
+                                    <p className="text-slate-500">
+                                      Pix:{' '}
+                                      {itemTenant.pixKey || itemTenant.pixConfig?.pixKey ? (
+                                        <span className="text-emerald-700 font-medium">Configurado</span>
+                                      ) : (
+                                        <span className="text-amber-700">Pendente</span>
+                                      )}
+                                    </p>
+                                  </div>
+                                </td>
+
+                                <td className="p-3 text-right font-mono">
+                                  <p className="font-bold text-slate-900">{formatBRL(tenantRevenueCents)}</p>
+                                  <p className="text-[11px] text-slate-500">{tenantOrdersCount} pedidos</p>
+                                </td>
+
+                                <td className="p-3">
+                                  <select
+                                    value={subStatus}
+                                    onChange={(e) => {
+                                      const nextStatus = e.target.value as 'active' | 'trial' | 'past_due' | 'suspended';
+                                      const updated: RestaurantTenant = {
+                                        ...itemTenant,
+                                        subscriptionStatus: nextStatus,
+                                        trialEndsAt:
+                                          nextStatus === 'trial'
+                                            ? new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString()
+                                            : itemTenant.trialEndsAt,
+                                      };
+                                      if (onSelectTenant) onSelectTenant(updated);
+                                      onUpdateTenant(updated);
+                                      setSuperAdminActionNotice(
+                                        `Status da assinatura de "${itemTenant.name}" alterado para "${nextStatus}".`
+                                      );
+                                    }}
+                                    className="p-1.5 text-[11px] border border-slate-300 rounded-lg bg-white text-slate-800 font-semibold"
+                                  >
+                                    <option value="active">Ativar Assinatura</option>
+                                    <option value="trial">Liberar Teste 15d</option>
+                                    <option value="past_due">Marcar Inadimplente</option>
+                                    <option value="suspended">Suspender Acesso</option>
+                                  </select>
+                                </td>
+
+                                <td className="p-3 text-right">
+                                  <div className="inline-flex flex-wrap justify-end gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (onSelectTenant) onSelectTenant(itemTenant);
+                                        setActiveTab('reports');
+                                      }}
+                                      className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                                    >
+                                      <BarChart3 className="w-3.5 h-3.5" />
+                                      <span>Relatórios</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (onSelectTenant) onSelectTenant(itemTenant);
+                                        setActiveTab('settings');
+                                      }}
+                                      className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                                    >
+                                      <Settings className="w-3.5 h-3.5" />
+                                      <span>Configurar</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (onSelectTenant) onSelectTenant(itemTenant);
+                                        setActiveTab('whatsapp');
+                                      }}
+                                      className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                                    >
+                                      <MessageSquare className="w-3.5 h-3.5" />
+                                      <span>Infra &amp; WhatsApp</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (onSelectTenant) onSelectTenant(itemTenant);
+                                        setActiveTab('billing');
+                                      }}
+                                      className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                                    >
+                                      <CreditCard className="w-3.5 h-3.5" />
+                                      <span>Asaas</span>
+                                    </button>
+
+                                    {onDeleteTenant && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          onDeleteTenant(itemTenant.slug);
+                                          setSuperAdminActionNotice(
+                                            `Restaurante "${itemTenant.name}" (slug: ${itemTenant.slug}) excluído da plataforma e do banco de dados PostgreSQL.`
+                                          );
+                                        }}
+                                        title={`Excluir restaurante ${itemTenant.name} e apagar dados do banco`}
+                                        className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                        <span>Excluir</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* TAB 5: WHATSAPP EVOLUTION API & INFRASTRUCTURE                 */}
         {/* ============================================================== */}
         {activeTab === 'whatsapp' && (
-          <WhatsAppAutomationView
-            tenant={tenant}
-            orders={orders}
-            onUpdateTenant={onUpdateTenant}
-            onSimulateEvolutionReconnect={onSimulateEvolutionReconnect}
-            authSession={authSession}
-          />
+          <div className="space-y-4">
+            {isSuperAdmin && (
+              <div className="bg-indigo-950 text-white border border-indigo-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-300">
+                    <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                    <span>CONFIGURAÇÕES DA APLICAÇÃO, EVOLUTION API, N8N &amp; BANCO POSTGRESQL</span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Gerencie servidores, fluxos do n8n, banco de dados e pareamento WhatsApp do restaurante em foco: <strong>{tenant.name}</strong> (<code className="text-indigo-200">{tenant.slug}</code>).
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <select
+                    value={tenant.slug}
+                    onChange={(e) => {
+                      const found = (allTenants.length > 0 ? allTenants : [tenant]).find((t) => t.slug === e.target.value);
+                      if (found && onSelectTenant) onSelectTenant(found);
+                    }}
+                    className="bg-slate-900 border border-indigo-700 text-white text-xs rounded-lg px-3 py-1.5 font-semibold"
+                  >
+                    {(allTenants.length > 0 ? allTenants : [tenant]).map((t) => (
+                      <option key={t.slug} value={t.slug}>
+                        Restaurante: {t.name} ({t.slug})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            <WhatsAppAutomationView
+              tenant={tenant}
+              orders={orders}
+              onUpdateTenant={onUpdateTenant}
+              onSimulateEvolutionReconnect={onSimulateEvolutionReconnect}
+              authSession={authSession}
+            />
+          </div>
         )}
 
         {/* ============================================================== */}
         {/* TAB 6: CRM & CLIENTES ISOLADOS COM HISTÓRICO DE PEDIDOS        */}
         {/* ============================================================== */}
-        {activeTab === 'crm' && (
+        {activeTab === 'crm' && !isSuperAdmin && (
           <CrmCustomerManagementView
             tenant={tenant}
             orders={orders}
@@ -2604,26 +4513,233 @@ ETag: "catalog_version_1729482930"`}
         )}
 
         {/* ============================================================== */}
-        {/* TAB 7: DASHBOARD GERENCIAL COM FÓRMULAS AUDITADAS              */}
+        {/* TAB 7: RELATÓRIOS DE VENDAS POR DIA E PRODUTOS MAIS VENDIDOS   */}
         {/* ============================================================== */}
         {activeTab === 'reports' && (
-          <AuditedDashboardView
-            tenant={tenant}
-            orders={orders}
-            onNavigateToTab={(tab) => {
-              if (tab === 'crm') setActiveTab('crm');
-              if (tab === 'kds') setActiveTab('kds');
-              if (tab === 'menu') setActiveTab('menu');
-            }}
-            onPrintOrder={(order) => setPrintingOrder(order)}
-          />
+          <div className="space-y-4">
+            {isSuperAdmin && (
+              <div className="bg-indigo-950 text-white border border-indigo-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-300">
+                    <BarChart3 className="w-4 h-4 text-indigo-400" />
+                    <span>ACOMPANHAMENTO DE RELATÓRIOS DOS RESTAURANTES (SUPER ADMIN)</span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Visualizando relatórios de vendas por dia e produtos mais vendidos de: <strong>{tenant.name}</strong> (<code className="text-indigo-200">{tenant.slug}</code>).
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <select
+                    value={tenant.slug}
+                    onChange={(e) => {
+                      const found = (allTenants.length > 0 ? allTenants : [tenant]).find((t) => t.slug === e.target.value);
+                      if (found && onSelectTenant) onSelectTenant(found);
+                    }}
+                    className="bg-slate-900 border border-indigo-700 text-white text-xs rounded-lg px-3 py-1.5 font-semibold"
+                  >
+                    {(allTenants.length > 0 ? allTenants : [tenant]).map((t) => (
+                      <option key={t.slug} value={t.slug}>
+                        Analisar: {t.name} ({t.slug})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('super_subscriptions')}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                  >
+                    Todos os Restaurantes
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <AuditedDashboardView
+              tenant={tenant}
+              orders={orders}
+              products={products}
+              onNavigateToTab={
+                isSuperAdmin
+                  ? undefined
+                  : (tab) => {
+                      if (tab === 'crm') setActiveTab('crm');
+                      if (tab === 'kds') setActiveTab('kds');
+                      if (tab === 'menu') setActiveTab('menu');
+                    }
+              }
+              onPrintOrder={(order) => setPrintingOrder(order)}
+            />
+          </div>
         )}
 
         {/* ============================================================== */}
         {/* TAB 8: BILLING & SUBSCRIPTION (R$ 129,90/mês via Asaas)       */}
         {/* ============================================================== */}
         {activeTab === 'billing' && (
-          <AsaasSubscriptionBillingView tenant={tenant} onUpdateTenant={onUpdateTenant} />
+          <div className="space-y-4">
+            {isSuperAdmin && (
+              <div className="bg-indigo-950 text-white border border-indigo-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-300">
+                    <CreditCard className="w-4 h-4 text-indigo-400" />
+                    <span>GESTÃO DE ASSINATURA ASAAS DO RESTAURANTE (SUPER ADMIN)</span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Gerenciando plano e faturas Asaas de: <strong>{tenant.name}</strong> (<code className="text-indigo-200">{tenant.slug}</code>).
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <select
+                    value={tenant.slug}
+                    onChange={(e) => {
+                      const found = (allTenants.length > 0 ? allTenants : [tenant]).find((t) => t.slug === e.target.value);
+                      if (found && onSelectTenant) onSelectTenant(found);
+                    }}
+                    className="bg-slate-900 border border-indigo-700 text-white text-xs rounded-lg px-3 py-1.5 font-semibold"
+                  >
+                    {(allTenants.length > 0 ? allTenants : [tenant]).map((t) => (
+                      <option key={t.slug} value={t.slug}>
+                        Restaurante: {t.name} ({t.slug})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* Barra de Validação Automática de Pagamento Pix (Integração Asaas) */}
+            <div className="bg-white border border-blue-200 rounded-xl p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start sm:items-center gap-3">
+                <div
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                    asaasSubscriptionPixCheck.paid
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+                      : 'bg-amber-50 border-amber-200 text-amber-600'
+                  }`}
+                >
+                  <QrCode className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h4 className="text-xs font-bold text-slate-900">
+                      Validação Automática de Pagamento Pix (Consulta de Status Asaas)
+                    </h4>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border ${
+                        asaasSubscriptionPixCheck.paid
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : 'bg-amber-50 text-amber-800 border-amber-200'
+                      }`}
+                    >
+                      Status Asaas: {asaasSubscriptionPixCheck.status}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 mt-0.5">
+                    {asaasSubscriptionPixCheck.paid
+                      ? 'Recebimento Pix validado automaticamente na API do Asaas. Checkout da assinatura liberado!'
+                      : 'O sistema consulta automaticamente o status da cobrança no Asaas para validar o recebimento antes de permitir o checkout.'}
+                    {asaasSubscriptionPixCheck.lastCheckedAt && (
+                      <span className="ml-1.5 font-mono text-[10px] text-slate-400">
+                        (Última consulta: {asaasSubscriptionPixCheck.lastCheckedAt})
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={asaasSubscriptionPixCheck.isChecking}
+                onClick={() => checkAsaasSubscriptionCheckoutStatus(false)}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white flex items-center gap-1.5 shrink-0 cursor-pointer shadow-2xs"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 ${asaasSubscriptionPixCheck.isChecking ? 'animate-spin' : ''}`}
+                />
+                <span>
+                  {asaasSubscriptionPixCheck.isChecking
+                    ? 'Consultando Asaas...'
+                    : 'Validar Status Pix no Asaas'}
+                </span>
+              </button>
+            </div>
+
+            <AsaasSubscriptionBillingView
+              tenant={tenant}
+              onUpdateTenant={onUpdateTenant}
+              isSuperAdmin={isSuperAdmin}
+              authToken={authSession?.token}
+            />
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* TAB 9: INTEGRAÇÃO OFICIAL IFOOD PARTNER API                    */}
+        {/* ============================================================== */}
+        {activeTab === 'ifood' && (
+          <div className="space-y-4">
+            {isSuperAdmin && (
+              <div className="bg-indigo-950 text-white border border-indigo-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-300">
+                    <Bike className="w-4 h-4 text-red-400" />
+                    <span>GESTÃO DE INTEGRAÇÃO IFOOD DO RESTAURANTE (SUPER ADMIN)</span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Configurando vínculo Merchant ID e Webhook iFood para: <strong>{tenant.name}</strong> (<code className="text-indigo-200">{tenant.slug}</code>).
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <select
+                    value={tenant.slug}
+                    onChange={(e) => {
+                      const found = (allTenants.length > 0 ? allTenants : [tenant]).find((t) => t.slug === e.target.value);
+                      if (found && onSelectTenant) onSelectTenant(found);
+                    }}
+                    className="bg-slate-900 border border-indigo-700 text-white text-xs rounded-lg px-3 py-1.5 font-semibold"
+                  >
+                    {(allTenants.length > 0 ? allTenants : [tenant]).map((t) => (
+                      <option key={t.slug} value={t.slug}>
+                        Restaurante: {t.name} ({t.slug})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            <IfoodIntegrationView
+              tenant={tenant}
+              orders={orders}
+              products={products}
+              isSuperAdmin={isSuperAdmin}
+              onUpdateTenant={onUpdateTenant}
+              onInjectOrder={(newOrder) => {
+                if (onAddOrder) onAddOrder(newOrder);
+              }}
+              onNavigateToTab={(tab) => setActiveTab(tab)}
+            />
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* TAB 10: CONTROLE DE SALÃO, MESAS & GARÇOM                      */}
+        {/* ============================================================== */}
+        {activeTab === 'tables' && (
+          <TableWaiterManagementView
+            tenant={tenant}
+            orders={orders}
+            products={products}
+            categories={categories}
+            onAddOrder={(newOrder) => {
+              if (onAddOrder) onAddOrder(newOrder);
+            }}
+            onUpdateOrderStatus={onUpdateOrderStatus}
+            onUpdateTenant={onUpdateTenant}
+          />
         )}
       </div>
 
@@ -2699,11 +4815,49 @@ ETag: "catalog_version_1729482930"`}
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 mb-1">URL da Imagem do Prato</label>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-medium text-neutral-700">
+                    Foto do Prato (Upload do Celular ou Link URL)
+                  </label>
+                  <label className="relative inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg transition-colors cursor-pointer overflow-hidden shadow-2xs">
+                    <Upload className="w-3.5 h-3.5 shrink-0" />
+                    <span>Enviar Foto do Celular</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleProductImageFileUpload}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                  </label>
+                </div>
+
+                {prodImageUrl && (
+                  <div className="flex items-center gap-3 p-2 bg-neutral-50 border border-neutral-200 rounded-lg">
+                    <img
+                      src={prodImageUrl}
+                      alt="Prévia do prato"
+                      decoding="async"
+                      className="w-12 h-12 rounded-lg object-cover bg-neutral-200 shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[11px] font-semibold text-emerald-800">
+                        Imagem carregada e pronta para o cardápio
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setProdImageUrl('')}
+                        className="text-[11px] text-rose-600 hover:underline font-medium"
+                      >
+                        Remover foto
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <input
                   type="text"
-                  placeholder="https://... ou caminho de imagem"
+                  placeholder="Ou cole o link https://... da imagem"
                   value={prodImageUrl}
                   onChange={(e) => setProdImageUrl(e.target.value)}
                   className="w-full p-2.5 text-xs border border-neutral-200 rounded-lg text-neutral-900 font-mono text-[11px]"
@@ -2765,7 +4919,7 @@ ETag: "catalog_version_1729482930"`}
                     </div>
 
                     <div className="space-y-1">
-                      {grp.items.map((item, iIdx) => (
+                      {grp.items.map((item) => (
                         <div key={item.id} className="flex items-center justify-between text-[11px]">
                           <span>• {item.name}</span>
                           <span className="font-mono text-neutral-500 tabular-nums">
@@ -2889,6 +5043,282 @@ ETag: "catalog_version_1729482930"`}
       )}
 
       {/* ============================================================== */}
+      {/* MODAL DE VALIDAÇÃO DE PAGAMENTO PIX & CHECKOUT (ASAAS API)     */}
+      {/* ============================================================== */}
+      {pixValidationModalOrder && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in">
+          {(() => {
+            const modalOrder =
+              orders.find((o) => o.id === pixValidationModalOrder.id) || pixValidationModalOrder;
+            const validationState = asaasPixValidationByOrder[modalOrder.id];
+            const isPaidValidated = isOrderPixPaidAndValidated(modalOrder);
+            const asaasStatusLabel =
+              validationState?.asaasStatus || (isPaidValidated ? 'RECEIVED' : 'PENDING');
+            const pixPayload =
+              validationState?.pixCopiaECola || modalOrder.pixTransaction?.pixCopiaECola || '';
+
+            return (
+              <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+                {/* Header */}
+                <div className="bg-slate-900 text-white px-5 py-4 flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center border ${
+                        isPaidValidated
+                          ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300'
+                          : 'bg-amber-500/20 border-amber-400/40 text-amber-300'
+                      }`}
+                    >
+                      <QrCode className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold">
+                          Validação de Pagamento Pix &bull; Checkout Asaas
+                        </h3>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-800 text-sky-300 border border-slate-700">
+                          Pedido #{modalOrder.orderNumber}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-300">
+                        Consulta automática de status de cobrança no Asaas antes de liberar o checkout
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPixValidationModalOrder(null)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Body */}
+                <div className="p-5 overflow-y-auto space-y-4 flex-1">
+                  {/* Status Banner */}
+                  <div
+                    className={`p-3.5 rounded-xl border flex items-start justify-between gap-3 ${
+                      isPaidValidated
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                        : 'bg-amber-50 border-amber-300 text-amber-950'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      {isPaidValidated ? (
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                      ) : (
+                        <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5 animate-pulse" />
+                      )}
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-extrabold">
+                            {isPaidValidated
+                              ? 'Pagamento Pix Confirmado pelo Asaas!'
+                              : 'Aguardando Confirmação de Recebimento no Asaas'}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
+                              isPaidValidated
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-amber-500 text-neutral-950'
+                            }`}
+                          >
+                            ASAAS: {asaasStatusLabel}
+                          </span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed">
+                          {validationState?.message ||
+                            (isPaidValidated
+                              ? 'O recebimento foi validado automaticamente na consulta de cobrança do Asaas. O checkout deste pedido já está liberado.'
+                              : 'O sistema consulta automaticamente o status da cobrança Pix a cada 4 segundos. O botão de checkout será liberado assim que o status mudar para RECEIVED ou CONFIRMED.')}
+                        </p>
+                        {validationState?.lastCheckedAt && (
+                          <p className="text-[10px] font-mono opacity-75">
+                            Última verificação automática no Asaas: {validationState.lastCheckedAt}
+                            {validationState.txid ? ` · TXID: ${validationState.txid}` : ''}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={validationState?.isChecking}
+                      onClick={() => validateOrderPixWithAsaas(modalOrder, false)}
+                      className="px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 text-[11px] font-bold flex items-center gap-1 shrink-0 cursor-pointer shadow-2xs"
+                    >
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 text-blue-600 ${
+                          validationState?.isChecking ? 'animate-spin' : ''
+                        }`}
+                      />
+                      <span>Consultar</span>
+                    </button>
+                  </div>
+
+                  {/* Order Summary */}
+                  <div className="grid grid-cols-2 gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+                    <div>
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold block">
+                        Cliente
+                      </span>
+                      <span className="font-bold text-slate-900">{modalOrder.customerName}</span>
+                      <span className="block text-[11px] font-mono text-slate-500">
+                        +{modalOrder.customerPhone}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold block">
+                        Valor da Cobrança Pix
+                      </span>
+                      <span className="text-base font-black font-mono text-blue-700">
+                        {formatBRL(modalOrder.totalCents)}
+                      </span>
+                      <span className="block text-[10px] text-slate-500">
+                        {modalOrder.items.length} {modalOrder.items.length === 1 ? 'item' : 'itens'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* QR Code & Pix Copia e Cola */}
+                  {!isPaidValidated && (
+                    <div className="p-4 bg-white border border-slate-200 rounded-xl space-y-3">
+                      <div className="flex flex-col sm:flex-row items-center gap-4">
+                        <div className="w-36 h-36 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center p-2 shrink-0">
+                          {validationState?.pixQrDataUrl ? (
+                            <img
+                              src={validationState.pixQrDataUrl}
+                              alt="QR Code Pix Asaas"
+                              className="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <QrCode className="w-12 h-12 text-slate-300" />
+                          )}
+                        </div>
+                        <div className="flex-1 space-y-2 w-full">
+                          <label className="block text-[11px] font-bold text-slate-800">
+                            Código Pix Copia e Cola da Cobrança:
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              readOnly
+                              value={pixPayload || 'Gerando payload Pix...'}
+                              className="flex-1 p-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-mono text-slate-700 select-all"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!pixPayload) return;
+                                navigator.clipboard?.writeText(pixPayload).catch(() => {});
+                                setCopiedPixCheckoutCode(true);
+                                setTimeout(() => setCopiedPixCheckoutCode(false), 2500);
+                              }}
+                              className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold rounded-lg flex items-center gap-1 shrink-0 cursor-pointer"
+                            >
+                              {copiedPixCheckoutCode ? (
+                                <>
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>Copiado</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3.5 h-3.5" />
+                                  <span>Copiar</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-slate-500 leading-relaxed">
+                            Assim que o cliente concluir o pagamento no app do banco, o Asaas atualiza o status para{' '}
+                            <code className="font-mono font-bold text-slate-700">RECEIVED</code> e libera o checkout automaticamente.
+                          </p>
+                        </div>
+                      </div>
+
+                      {isSuperAdmin && (
+                        <div className="pt-2 border-t border-slate-100 flex justify-end">
+                          <button
+                            type="button"
+                            disabled={isSimulatingPixReceipt}
+                            onClick={() => handleConfirmPixWebhookSimulationForOrder(modalOrder)}
+                            className="px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Zap className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>
+                              {isSimulatingPixReceipt
+                                ? 'Simulando liquidação no Asaas...'
+                                : 'Simular Recebimento Pix no Asaas (Webhook RECEIVED)'}
+                            </span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer with Gated Checkout Action */}
+                <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-2.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setPixValidationModalOrder(null)}
+                    className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-200/70 cursor-pointer"
+                  >
+                    Fechar
+                  </button>
+
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      disabled={validationState?.isChecking}
+                      onClick={() => validateOrderPixWithAsaas(modalOrder, false)}
+                      className="flex-1 sm:flex-initial px-3.5 py-2.5 rounded-xl text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 ${validationState?.isChecking ? 'animate-spin' : ''}`}
+                      />
+                      <span>Verificar Status Asaas</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={!isPaidValidated}
+                      onClick={() => {
+                        handleKdsStatusChange(modalOrder, pendingKdsTransitionStatus, true);
+                        setPixValidationModalOrder(null);
+                      }}
+                      className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                        isPaidValidated
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm cursor-pointer'
+                          : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                      }`}
+                    >
+                      {isPaidValidated ? (
+                        <>
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>
+                            {pendingKdsTransitionStatus === 'confirmed'
+                              ? 'Confirmar Pedido (Pix Validado)'
+                              : 'Liberar e Concluir Checkout'}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <Lock className="w-3.5 h-3.5" />
+                          <span>Aguardando Validação Asaas...</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* ============================================================== */}
       {/* WHATSAPP QR PAIRING MODAL (ON-SCREEN CAMERA SCAN)              */}
       {/* ============================================================== */}
       <WhatsAppQrPairingModal
@@ -2896,6 +5326,7 @@ ETag: "catalog_version_1729482930"`}
         onClose={() => setIsQrPairingModalOpen(false)}
         tenant={tenant}
         onTenantUpdated={onUpdateTenant}
+        isSuperAdmin={authSession?.user?.role === 'SUPER_ADMIN'}
       />
 
       {/* ============================================================== */}
@@ -3037,6 +5468,13 @@ ETag: "catalog_version_1729482930"`}
                   </button>
                 </div>
 
+                {importUploadError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{importUploadError}</span>
+                  </div>
+                )}
+
                 <div
                   onDragOver={(e) => {
                     e.preventDefault();
@@ -3050,24 +5488,16 @@ ETag: "catalog_version_1729482930"`}
                       : 'border-neutral-300 bg-neutral-50 hover:border-neutral-400'
                   }`}
                 >
-                  <input
-                    ref={importFileInputRef}
-                    type="file"
-                    accept=".csv,.tsv,.txt"
-                    onChange={handleImportFileUpload}
-                    className="hidden"
-                  />
-
                   <div className="flex items-center gap-3.5 text-center sm:text-left">
                     <div className="w-11 h-11 rounded-xl bg-white border border-neutral-200 flex items-center justify-center text-neutral-700 shadow-2xs shrink-0">
                       <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
                     </div>
                     <div>
                       <p className="text-xs font-bold text-neutral-900">
-                        Selecione a planilha do seu computador ou arraste o arquivo aqui
+                        Toque em &ldquo;Upload de Arquivo&rdquo; para selecionar do seu celular ou computador
                       </p>
                       <p className="text-[11px] text-neutral-500 mt-0.5">
-                        Formatos aceitos: <strong>.CSV</strong>, <strong>.TSV</strong> ou <strong>.TXT</strong> (separados por ponto e vírgula <code className="bg-neutral-200 px-1 rounded">;</code> ou vírgula <code className="bg-neutral-200 px-1 rounded">,</code>)
+                        Formatos aceitos no celular e PC: <strong>.CSV</strong>, <strong>.XLSX</strong>, <strong>.XLS</strong>, <strong>.TSV</strong> ou <strong>.TXT</strong>
                       </p>
                       {importFileName && (
                         <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-900">
@@ -3078,20 +5508,22 @@ ETag: "catalog_version_1729482930"`}
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => importFileInputRef.current?.click()}
-                      className="flex items-center gap-2 px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold rounded-lg transition-colors shadow-xs"
-                    >
-                      <Upload className="w-4 h-4" />
+                  <div className="flex flex-wrap items-center justify-center gap-2 shrink-0">
+                    <label className="relative inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold rounded-lg transition-colors shadow-xs cursor-pointer overflow-hidden">
+                      <Upload className="w-4 h-4 shrink-0" />
                       <span>Upload de Arquivo</span>
-                    </button>
+                      <input
+                        ref={importFileInputRef}
+                        type="file"
+                        onChange={handleImportFileUpload}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      />
+                    </label>
 
                     <button
                       type="button"
                       onClick={handleLoadSampleImportTable}
-                      className="px-3 py-2.5 bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 text-xs font-semibold rounded-lg transition-colors"
+                      className="px-3 py-2.5 bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
                     >
                       Carregar Exemplo
                     </button>
@@ -3153,6 +5585,29 @@ ETag: "catalog_version_1729482930"`}
                   </div>
                 ) : (
                   <div className="border border-neutral-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+                    {organizedImportPreviewCategories.length > 0 && (
+                      <div className="px-4 py-3 bg-emerald-50/40 border-b border-neutral-200 space-y-2">
+                        <p className="text-[11px] font-bold text-neutral-800">
+                          Ordem de Cadastro das Categorias Identificadas na Planilha:
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {organizedImportPreviewCategories.map((cat) => (
+                            <div
+                              key={cat.name}
+                              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-emerald-200 shadow-2xs text-xs"
+                            >
+                              <span className="w-5 h-5 rounded-full bg-neutral-900 text-white font-mono text-[10px] font-bold flex items-center justify-center">
+                                {cat.order}º
+                              </span>
+                              <span className="font-bold text-neutral-900">{cat.name}</span>
+                              <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-semibold">
+                                {cat.count} {cat.count === 1 ? 'item' : 'itens'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <div className="max-h-72 overflow-y-auto">
                       <table className="w-full text-xs">
                         <thead className="bg-neutral-100 border-b border-neutral-200 text-neutral-700 sticky top-0 z-10">
@@ -3372,5 +5827,6 @@ ETag: "catalog_version_1729482930"`}
         }}
       />
     </div>
+    </Suspense>
   );
 };

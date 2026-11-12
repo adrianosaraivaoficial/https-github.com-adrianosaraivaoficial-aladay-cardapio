@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /auth
+Disallow: /api/
+Disallow: /calculator
+Disallow: /diagrams
+Disallow: /kickoff
+Disallow: /tracking
+Disallow: /whatsapp
+
+Sitemap: https://aladay.com.br/sitemap.xml

@@ -1,7 +1,7 @@
 export type OrderStatus = 'received' | 'confirmed' | 'preparing' | 'ready' | 'delivered' | 'cancelled';
 export type PaymentStatus = 'pending' | 'paid_on_delivery' | 'paid_online' | 'cancelled';
 export type WhatsAppStatus = 'queued' | 'sending' | 'sent' | 'delivered' | 'failed';
-export type UserRole = 'owner' | 'manager' | 'kitchen';
+export type UserRole = 'owner' | 'manager' | 'waiter' | 'kitchen';
 
 export interface MemberSession {
   userId: string;
@@ -45,6 +45,24 @@ export interface Category {
   order: number;
 }
 
+export interface LegacyTenantCatalog {
+  categories: Category[];
+  products: Product[];
+  orders: Order[];
+}
+
+export interface NormalizedTenantCatalog {
+  schemaVersion: 3;
+  categoriesById: Record<string, Category>;
+  categoryIds: string[];
+  productsById: Record<string, Product>;
+  productIds: string[];
+  productIdsByCategory: Record<string, string[]>;
+  ordersById: Record<string, Order>;
+  orderIds: string[];
+  updatedAt: number;
+}
+
 export interface DeliveryZone {
   id: string;
   name: string;
@@ -81,10 +99,29 @@ export interface RestaurantTenant {
   botClosedHoursMessage?: string;
   botHumanHandoffMessage?: string;
   statusNotificationTemplates?: StatusNotificationTemplates;
+  pixKey?: string;
+  pixBeneficiaryName?: string;
   pixConfig?: PixGatewayConfig;
   asaasSubscription?: AsaasSubscriptionData;
   subscriptionStatus?: 'active' | 'trial' | 'past_due' | 'suspended';
   trialEndsAt?: string;
+  ifoodConfig?: IfoodIntegrationConfig;
+  tablesCount?: number;
+  serviceFeePercent?: number;
+}
+
+export interface IfoodIntegrationConfig {
+  enabled: boolean;
+  merchantId: string;
+  status: 'connected' | 'pending_authorization' | 'disconnected';
+  userCode?: string;
+  authorizationCodeVerifier?: string;
+  verificationUrlComplete?: string;
+  autoAcceptOrders: boolean;
+  syncCatalogPrices: boolean;
+  commissionPercent: number;
+  lastPollingAt?: string;
+  webhookUrl?: string;
 }
 
 export type AsaasBillingType = 'PIX' | 'CREDIT_CARD' | 'BOLETO';
@@ -110,6 +147,8 @@ export interface AsaasInvoice {
   billingType: AsaasBillingType;
   invoiceUrl?: string;
   bankSlipUrl?: string;
+  boletoBarcode?: string;
+  boletoUrl?: string;
   pixCopiaECola?: string;
   pixQrCodeBase64?: string;
   description: string;
@@ -120,8 +159,10 @@ export interface AsaasSubscriptionData {
   tenantSlug: string;
   customer: AsaasCustomer;
   planName: string;
-  value: number; // 129.90
-  cycle: 'MONTHLY';
+  value: number; // 99.00 (Anual no Cartão) or 129.90 (Mensal)
+  cycle: 'MONTHLY' | 'YEARLY';
+  monthlyEquivalentValue?: number;
+  installmentCount?: number;
   status: AsaasSubscriptionStatus;
   billingType: AsaasBillingType;
   nextDueDate: string;
@@ -175,7 +216,10 @@ export interface Order {
   tenantSlug?: string;
   customerName: string;
   customerPhone: string;
-  type: 'delivery' | 'pickup';
+  type: 'delivery' | 'pickup' | 'dine_in';
+  tableNumber?: string;
+  waiterName?: string;
+  serviceFeeCents?: number;
   deliveryAddress?: string;
   deliveryZoneName?: string;
   estimatedMinutes?: number;
@@ -187,6 +231,10 @@ export interface Order {
   paymentStatus: PaymentStatus;
   paymentMethod: string;
   whatsAppStatus: WhatsAppStatus;
+  channel?: 'DIRECT' | 'IFOOD';
+  ifoodOrderId?: string;
+  ifoodDisplayId?: string;
+  ifoodPickupCode?: string;
   pixTransaction?: PixTransaction;
   whatsAppLogs: Array<{
     timestamp: string;
@@ -204,6 +252,10 @@ export interface PixTransaction {
   orderId: string;
   tenantSlug: string;
   amountCents: number;
+  pixKey?: string;
+  beneficiaryName?: string;
+  merchantName?: string;
+  merchantCity?: string;
   pixCopiaECola: string;
   qrCodeBase64?: string;
   status: 'PENDING' | 'PAID' | 'EXPIRED' | 'CANCELLED';
@@ -217,6 +269,7 @@ export interface PixGatewayConfig {
   provider: 'direct_bank' | 'openpix' | 'mercadopago' | 'asaas' | 'efi' | 'manual';
   pixKey: string;
   pixKeyType: 'cpf' | 'cnpj' | 'email' | 'phone' | 'random';
+  beneficiaryName?: string;
   merchantName: string;
   merchantCity: string;
   bankName?: string;
@@ -286,7 +339,7 @@ export interface SubscriptionInfo {
 export interface WebhookLogEvent {
   id: string;
   timestamp: string;
-  source: 'evolution' | 'n8n' | 'system' | 'pix_gateway' | 'auth_guard' | 'asaas';
+  source: 'evolution' | 'n8n' | 'system' | 'pix_gateway' | 'auth_guard' | 'asaas' | 'ifood';
   eventType: string;
   instance: string;
   senderPhone?: string;
@@ -357,4 +410,9 @@ export interface EvolutionQrConnectResponse {
   batteryLevel?: number;
   serverUrl?: string;
   lastSync?: string;
+  remoteFetched?: boolean;
+  remoteErrorReason?: string;
+  remoteErrorMessage?: string;
+  normalizedPhone?: string;
 }
+

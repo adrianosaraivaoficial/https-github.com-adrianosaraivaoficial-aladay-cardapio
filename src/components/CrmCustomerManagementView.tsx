@@ -2,7 +2,6 @@ import React, { useState, useMemo } from 'react';
 import {
   Users,
   Search,
-  Filter,
   MessageSquare,
   Receipt,
   Clock,
@@ -11,20 +10,12 @@ import {
   ShieldAlert,
   ArrowUpDown,
   Download,
-  Calendar,
-  CreditCard,
-  Bike,
-  ShoppingBag,
-  ExternalLink,
   X,
   FileText,
   Printer,
   ChevronRight,
   Sparkles,
-  Phone,
   UserCheck,
-  Tag,
-  AlertCircle,
 } from 'lucide-react';
 import { CustomerRecord, Order, RestaurantTenant } from '../types';
 

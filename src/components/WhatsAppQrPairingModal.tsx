@@ -8,17 +8,11 @@ import {
   AlertTriangle,
   Copy,
   Check,
-  Server,
   Zap,
   ShieldCheck,
-  Radio,
   Sliders,
-  ExternalLink,
-  HelpCircle,
   X,
-  BatteryCharging,
-  Wifi,
-  PhoneCall
+  BatteryCharging
 } from 'lucide-react';
 import { RestaurantTenant, EvolutionQrConnectResponse } from '../types';
 
@@ -27,6 +21,7 @@ interface WhatsAppQrPairingModalProps {
   isOpen: boolean;
   onClose: () => void;
   onTenantUpdated: (updatedTenant: RestaurantTenant) => void;
+  isSuperAdmin?: boolean;
 }
 
 export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
@@ -34,8 +29,17 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
   isOpen,
   onClose,
   onTenantUpdated,
+  isSuperAdmin = false,
 }) => {
   const [activeTab, setActiveTab] = useState<'qrcode' | 'pairing_code' | 'config'>('qrcode');
+
+  // Redireciona restaurantes para o QR Code caso tentem acessar abas técnicas
+  useEffect(() => {
+    if (!isSuperAdmin && activeTab === 'config') {
+      setActiveTab('qrcode');
+    }
+  }, [isSuperAdmin, activeTab]);
+
   const [loading, setLoading] = useState(false);
   const [pairingData, setPairingData] = useState<EvolutionQrConnectResponse | null>(null);
   const [secondsRemaining, setSecondsRemaining] = useState(40);
@@ -45,16 +49,29 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
   const [isSimulatingScan, setIsSimulatingScan] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
 
-  // Phone input for pairing code alternative
-  const [phoneInput, setPhoneInput] = useState(tenant.phone || '5511987654321');
+  const normalizeBrPhone = useCallback((raw?: string) => {
+    const digits = String(raw || '').replace(/\D/g, '').replace(/^0+/, '');
+    if (!digits) return '';
+    if (digits.length === 10 || digits.length === 11) {
+      return `55${digits}`;
+    }
+    return digits;
+  }, []);
 
-  // VPS Evolution API Config State
+  // Phone input for pairing code alternative
+  const [phoneInput, setPhoneInput] = useState(() => normalizeBrPhone(tenant.phone || ''));
+
+  useEffect(() => {
+    if (tenant.phone) {
+      setPhoneInput(normalizeBrPhone(tenant.phone));
+    }
+  }, [tenant.phone, normalizeBrPhone]);
+
+  // VPS Evolution API Config State (Keys are stored in server .env)
   const [vpsUrl, setVpsUrl] = useState(
     tenant.evolutionApiUrl || ''
   );
-  const [vpsApiKey, setVpsApiKey] = useState(
-    tenant.evolutionApiKey || ''
-  );
+  const [vpsApiKey, setVpsApiKey] = useState('');
   const [instanceName, setInstanceName] = useState(
     tenant.evolutionInstanceId || 'aladay'
   );
@@ -66,14 +83,17 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
   // Timer reference for QR countdown
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Fetch fresh QR code
-  const fetchQrCode = useCallback(async (isManualRefresh = false) => {
+  // Fetch fresh QR code & 8-digit pairing code
+  const fetchQrCode = useCallback(async (isManualRefresh = false, overridePhone?: string) => {
     if (isConnected && !isManualRefresh) return;
     setLoading(true);
     setErrorNotice(null);
 
     try {
-      const res = await fetch(`/api/v1/evolution/instance/${instanceId}/connect`);
+      const cleanPhone = normalizeBrPhone(overridePhone ?? phoneInput ?? tenant.phone);
+      const res = await fetch(
+        `/api/v1/evolution/instance/${encodeURIComponent(instanceId)}/connect?number=${encodeURIComponent(cleanPhone)}`
+      );
       if (res.ok) {
         const data: EvolutionQrConnectResponse = await res.json();
         setPairingData(data);
@@ -86,7 +106,7 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [instanceId, isConnected]);
+  }, [instanceId, isConnected, phoneInput, tenant.phone, normalizeBrPhone]);
 
   // Check instance status
   const checkStatus = useCallback(async () => {
@@ -224,24 +244,35 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
     e.preventDefault();
     setSavingConfig(true);
     try {
+      const token = (() => {
+        try {
+          const raw = localStorage.getItem('aladay_auth_session_v1');
+          return raw ? JSON.parse(raw)?.token : null;
+        } catch {
+          return null;
+        }
+      })();
       const res = await fetch(`/api/v1/tenants/${tenant.slug}/evolution-config`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
-          evolutionApiUrl: vpsUrl.trim(),
-          evolutionApiKey: vpsApiKey.trim(),
+          evolutionApiUrl: vpsUrl.trim() || undefined,
+          evolutionApiKey: vpsApiKey.trim() || undefined,
           evolutionInstanceId: instanceName.trim(),
         }),
       });
       if (res.ok) {
         const updated: RestaurantTenant = {
           ...tenant,
-          evolutionApiUrl: vpsUrl.trim(),
-          evolutionApiKey: vpsApiKey.trim(),
           evolutionInstanceId: instanceName.trim(),
+          evolutionApiKeyConfigured: true,
         };
+        setVpsApiKey('');
         onTenantUpdated(updated);
-        setSuccessToast('Configurações da Evolution API salvas com sucesso!');
+        setSuccessToast('Configurações da Evolution API salvas de forma segura no servidor (.env)!');
         setTimeout(() => setSuccessToast(null), 3500);
         setActiveTab('qrcode');
         fetchQrCode(true);
@@ -267,12 +298,20 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-bold tracking-tight">Pareamento de WhatsApp</h3>
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
-                  Evolution API v2
-                </span>
+                {isSuperAdmin && (
+                  <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                    Evolution API v2
+                  </span>
+                )}
               </div>
               <p className="text-xs text-neutral-400">
-                Instância: <code className="font-mono text-emerald-300 font-semibold">{instanceId}</code> &bull; {tenant.name}
+                {isSuperAdmin ? (
+                  <>
+                    Instância: <code className="font-mono text-emerald-300 font-semibold">{instanceId}</code> &bull; {tenant.name}
+                  </>
+                ) : (
+                  <>{tenant.name} &bull; Atendimento Oficial</>
+                )}
               </p>
             </div>
           </div>
@@ -337,21 +376,37 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
             <Smartphone className="w-3.5 h-3.5" />
             <span>Código de Pareamento (8 Dígitos)</span>
           </button>
-          <button
-            onClick={() => setActiveTab('config')}
-            className={`pb-2.5 px-3 font-semibold transition-colors border-b-2 flex items-center gap-1.5 ${
-              activeTab === 'config'
-                ? 'border-neutral-900 text-neutral-900'
-                : 'border-transparent text-neutral-500 hover:text-neutral-800'
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>Servidor Evolution (VPS)</span>
-          </button>
+          {isSuperAdmin && (
+            <button
+              onClick={() => setActiveTab('config')}
+              className={`pb-2.5 px-3 font-semibold transition-colors border-b-2 flex items-center gap-1.5 ${
+                activeTab === 'config'
+                  ? 'border-neutral-900 text-neutral-900'
+                  : 'border-transparent text-neutral-500 hover:text-neutral-800'
+              }`}
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span>Servidor Evolution (VPS)</span>
+            </button>
+          )}
         </div>
 
         {/* Main Content Body */}
         <div className="p-5 sm:p-6 space-y-6">
+          {!isSuperAdmin && (
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center justify-between gap-2 shadow-2xs">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>
+                  <strong>Configuração Automática Ativa:</strong> A plataforma gerencia todos os servidores e integrações nos bastidores.
+                </span>
+              </div>
+              <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-100 text-blue-800 px-2 py-0.5 rounded shrink-0">
+                100% Automático
+              </span>
+            </div>
+          )}
+
           {/* TAB 1: QR CODE PAIRING (ON SCREEN) */}
           {activeTab === 'qrcode' && (
             <div>
@@ -366,7 +421,13 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
                       WhatsApp Pareado e Operando em Tempo Real!
                     </h4>
                     <p className="text-xs text-emerald-700 max-w-md mx-auto mt-1">
-                      A instância <code className="font-mono font-bold bg-emerald-100/70 px-1.5 py-0.5 rounded text-emerald-900">{instanceId}</code> está conectada via Baileys e pronta para enviar cardápios e notificações de pedidos do KDS.
+                      {isSuperAdmin ? (
+                        <>
+                          A instância <code className="font-mono font-bold bg-emerald-100/70 px-1.5 py-0.5 rounded text-emerald-900">{instanceId}</code> está conectada via Baileys e pronta para enviar cardápios e notificações de pedidos do KDS.
+                        </>
+                      ) : (
+                        'O WhatsApp do seu restaurante está conectado e pronto para enviar o cardápio digital e avisos de pedidos aos clientes.'
+                      )}
                     </p>
                   </div>
 
@@ -532,41 +593,43 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
                       </div>
                     </div>
 
-                    {/* Simulation Button for testing without 2nd phone */}
-                    <div className="pt-2 border-t border-neutral-100">
-                      <div className="p-3 bg-neutral-900 text-white rounded-xl space-y-2">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold flex items-center gap-1.5 text-emerald-400">
-                            <Zap className="w-3.5 h-3.5 fill-current" />
-                            Ambiente de Demonstração / Teste
-                          </span>
-                          <span className="text-[10px] bg-neutral-800 text-neutral-300 px-1.5 py-0.5 rounded font-mono">
-                            1 Clique
-                          </span>
+                    {/* Simulation Button for testing without 2nd phone (Somente Super Admin) */}
+                    {isSuperAdmin && (
+                      <div className="pt-2 border-t border-neutral-100">
+                        <div className="p-3 bg-neutral-900 text-white rounded-xl space-y-2">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-bold flex items-center gap-1.5 text-emerald-400">
+                              <Zap className="w-3.5 h-3.5 fill-current" />
+                              Ambiente de Demonstração / Teste
+                            </span>
+                            <span className="text-[10px] bg-neutral-800 text-neutral-300 px-1.5 py-0.5 rounded font-mono">
+                              1 Clique
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-neutral-300">
+                            Sem um segundo celular em mãos? Clique abaixo para simular a leitura do QR Code e conectar imediatamente a instância <code className="font-mono text-emerald-300 font-bold">{instanceId}</code>.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleSimulateScan}
+                            disabled={isSimulatingScan}
+                            className="w-full py-2 px-3 text-xs font-bold text-neutral-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-xs disabled:opacity-50"
+                          >
+                            {isSimulatingScan ? (
+                              <>
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                <span>Validando leitura do WhatsApp...</span>
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Simular Leitura do QR Code no Celular</span>
+                              </>
+                            )}
+                          </button>
                         </div>
-                        <p className="text-[11px] text-neutral-300">
-                          Sem um segundo celular em mãos? Clique abaixo para simular a leitura do QR Code e conectar imediatamente a instância <code className="font-mono text-emerald-300 font-bold">{instanceId}</code>.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={handleSimulateScan}
-                          disabled={isSimulatingScan}
-                          className="w-full py-2 px-3 text-xs font-bold text-neutral-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-xs disabled:opacity-50"
-                        >
-                          {isSimulatingScan ? (
-                            <>
-                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                              <span>Validando leitura do WhatsApp...</span>
-                            </>
-                          ) : (
-                            <>
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>Simular Leitura do QR Code no Celular</span>
-                            </>
-                          )}
-                        </button>
                       </div>
-                    </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -610,39 +673,56 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
                 </p>
               </div>
 
-              {/* Test Phone Input */}
+              {/* Phone Input for Real 8-Digit Code + Simulation */}
               <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-xl space-y-3 text-xs">
                 <div>
                   <label className="font-bold text-neutral-800 block">
-                    Número do WhatsApp do Restaurante (com DDD):
+                    Número do WhatsApp do Restaurante (com DDI 55 + DDD):
                   </label>
-                  <input
-                    type="text"
-                    value={phoneInput}
-                    onChange={(e) => setPhoneInput(e.target.value)}
-                    placeholder="5511987654321"
-                    className="mt-1 w-full p-2.5 bg-white border border-neutral-300 rounded-lg font-mono text-neutral-900"
-                  />
-                  <span className="text-[10px] text-neutral-500 mt-1 block">
-                    Formato: Código do país (55) + DDD (11) + 9 dígitos.
+                  <div className="mt-1 flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={phoneInput}
+                      onChange={(e) => setPhoneInput(e.target.value)}
+                      onBlur={() => setPhoneInput(normalizeBrPhone(phoneInput))}
+                      placeholder="Informe DDI, DDD e número"
+                      className="w-full p-2.5 bg-white border border-neutral-300 rounded-lg font-mono text-neutral-900"
+                    />
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={() => {
+                        const norm = normalizeBrPhone(phoneInput);
+                        setPhoneInput(norm);
+                        fetchQrCode(true, norm);
+                      }}
+                      className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg whitespace-nowrap cursor-pointer disabled:opacity-50"
+                    >
+                      {loading ? 'Gerando...' : 'Gerar Código Real'}
+                    </button>
+                  </div>
+                  <span className="text-[10px] text-emerald-700 font-semibold mt-1 block">
+                    Formato Brasil automático: <strong>+{normalizeBrPhone(phoneInput)}</strong> (Ex: 55 + 91 + 981214188)
                   </span>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleSimulateScan}
-                  disabled={isSimulatingScan}
-                  className="w-full py-2 px-3 text-xs font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors flex items-center justify-center gap-2"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Confirmar Pareamento deste Número</span>
-                </button>
+                {isSuperAdmin && (
+                  <button
+                    type="button"
+                    onClick={handleSimulateScan}
+                    disabled={isSimulatingScan}
+                    className="w-full py-2 px-3 text-xs font-bold text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors flex items-center justify-center gap-2"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Confirmar / Simular Pareamento deste Número</span>
+                  </button>
+                )}
               </div>
             </div>
           )}
 
-          {/* TAB 3: EVOLUTION API HOSTINGER / EASYPANEL CONFIG */}
-          {activeTab === 'config' && (
+          {/* TAB 3: EVOLUTION API HOSTINGER / EASYPANEL CONFIG (SUPER ADMIN ONLY) */}
+          {isSuperAdmin && activeTab === 'config' && (
             <form onSubmit={handleSaveConfig} className="space-y-4 max-w-lg mx-auto text-xs">
               <div>
                 <h4 className="text-sm font-bold text-neutral-900">
@@ -655,28 +735,26 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
 
               <div>
                 <label className="font-bold text-neutral-800 block">
-                  URL da Evolution API (VPS / Easypanel):
+                  URL da Evolution API (Lida de EVOLUTION_API_URL no .env):
                 </label>
                 <input
                   type="url"
-                  required
                   value={vpsUrl}
                   onChange={(e) => setVpsUrl(e.target.value)}
-                  placeholder="https://sua-evolution-api"
+                  placeholder="Configurado no arquivo .env do servidor"
                   className="mt-1 w-full p-2.5 bg-white border border-neutral-300 rounded-lg font-mono text-neutral-900"
                 />
               </div>
 
               <div>
                 <label className="font-bold text-neutral-800 block">
-                  Global API Key (Chave Global de Autenticação):
+                  Global API Key (Lida de EVOLUTION_API_KEY no .env):
                 </label>
                 <input
-                  type="text"
-                  required
+                  type="password"
                   value={vpsApiKey}
                   onChange={(e) => setVpsApiKey(e.target.value)}
-                  placeholder="Cole a chave configurada no servidor"
+                  placeholder="•••••••••••••••••••••••••••••••• (Definida no .env)"
                   className="mt-1 w-full p-2.5 bg-white border border-neutral-300 rounded-lg font-mono text-neutral-900"
                 />
               </div>
@@ -724,7 +802,11 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
         <div className="bg-neutral-50 px-5 py-3 border-t border-neutral-200 flex flex-wrap items-center justify-between text-[11px] text-neutral-500 gap-2">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Sessão segura Baileys &bull; Multi-Device Protocol oficial</span>
+            <span>
+              {isSuperAdmin
+                ? 'Sessão segura Baileys • Multi-Device Protocol oficial'
+                : 'Conexão oficial segura e criptografada'}
+            </span>
           </div>
           <div className="flex items-center gap-3">
             <span className="font-mono text-neutral-400">Status: {tenant.evolutionStatus}</span>

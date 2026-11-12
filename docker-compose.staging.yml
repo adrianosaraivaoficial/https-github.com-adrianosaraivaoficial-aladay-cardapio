@@ -1,0 +1,12 @@
+# Run with a separate project and env file to isolate database, network and secrets.
+services:
+  app:
+    env_file: !override
+      - .env.staging
+    environment:
+      DEPLOY_ENV: staging
+      ASAAS_ENVIRONMENT: sandbox
+      TRUST_PROXY_HOPS: 0
+      SEO_NOINDEX: 'true'
+    ports: !override
+      - '127.0.0.1:3001:3000'

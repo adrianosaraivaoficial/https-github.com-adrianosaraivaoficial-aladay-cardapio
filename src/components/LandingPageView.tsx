@@ -1,39 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
-  ArrowRight,
-  LogIn,
-  QrCode,
-  MessageSquare,
-  ShieldCheck,
-  Check,
-  Calculator,
-  CreditCard,
-  ExternalLink,
-  Smartphone,
-  Zap,
-  Sparkles,
-  TrendingUp,
-  Building2,
-  Store,
-  ShoppingBag,
-  Send,
-  Lock,
-  ChevronRight,
-  PhoneCall,
-  X,
-  ChefHat,
-  Clock,
-  MapPin,
-  CheckCircle2,
-  HelpCircle,
+  ArrowRight, BarChart3, Check, ChevronDown, ChevronLeft, ChevronRight,
+  CirclePlay, ExternalLink, LayoutDashboard, MenuSquare, MessageCircle,
+  Play, QrCode, ScanLine, ShieldCheck, Smartphone, Sparkles, Upload, X,
 } from 'lucide-react';
 import { AuthSession, RestaurantTenant } from '../types';
 import {
-  getConsentStatus,
-  setConsentStatus,
-  trackConversionEvent,
-  initGA4,
-  ConsentStatus,
+  ConsentStatus, getConsentStatus, initGA4, setConsentStatus, trackConversionEvent,
 } from '../utils/analytics';
 
 interface LandingPageViewProps {
@@ -43,56 +17,115 @@ interface LandingPageViewProps {
   onNavigateToSetup: () => void;
   onNavigateToDemoMenu: () => void;
   onNavigateToAdmin: () => void;
+  onNavigateToTerms?: () => void;
+  onNavigateToPrivacy?: () => void;
 }
 
-// Sample interactive products for the live mobile phone demonstration
-interface DemoProduct {
+interface DemoScreen {
   id: string;
-  name: string;
-  category: string;
-  priceCents: number;
+  label: string;
+  eyebrow: string;
   description: string;
-  badge?: string;
-  imageUrl: string;
+  image: string;
+  imageAlt: string;
 }
 
-const DEMO_PRODUCTS: DemoProduct[] = [
+interface Reel {
+  id: string;
+  title: string;
+  duration: string;
+  poster: string;
+  posterAlt: string;
+  videoSrc?: string;
+}
+
+const PRODUCT_CAPTURE = '/assets/landing/aladay-produtos.webp';
+const CART_CAPTURE = '/assets/landing/aladay-carrinho.webp';
+const ADMIN_CAPTURE = '/assets/landing/aladay-painel.webp';
+const PHONE_CAPTURE = '/assets/landing/aladay-cardapio.webp';
+const WHATSAPP_CAPTURE = '/assets/landing/aladay-whatsapp.webp';
+
+const FEATURES = [
+  { icon: Smartphone, title: 'Cardápio digital responsivo', description: 'Uma vitrine rápida e organizada para o cliente escolher pelo próprio celular.' },
+  { icon: QrCode, title: 'Acesso por QR Code', description: 'Leve o cliente direto ao cardápio da loja, no salão, na embalagem ou no balcão.' },
+  { icon: MessageCircle, title: 'Pedidos no WhatsApp', description: 'Centralize o contato e envie atualizações pelo canal que o cliente já usa.' },
+  { icon: MenuSquare, title: 'Produtos e categorias', description: 'Organize preços, adicionais, fotos e disponibilidade em uma operação mais simples.' },
+  { icon: LayoutDashboard, title: 'Painel e KDS', description: 'Acompanhe os pedidos em uma visão operacional clara para atendimento e cozinha.' },
+  { icon: BarChart3, title: 'Gestão do restaurante', description: 'Consulte vendas, clientes, mesas e indicadores disponíveis na plataforma.' },
+];
+
+const DEMO_SCREENS: DemoScreen[] = [
   {
-    id: 'demo_1',
-    name: 'Smash Cheddar & Bacon Duplo',
-    category: 'Burgers',
-    priceCents: 3890,
-    description: 'Dois burgers artesanais 100g, queijo cheddar inglês fundido e fatias de bacon crocante.',
-    badge: 'Mais Pedido',
-    imageUrl: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&auto=format&fit=crop&q=80',
+    id: 'menu', label: 'Cardápio', eyebrow: 'Descoberta sem atrito',
+    description: 'Categorias, fotos, adicionais e preços apresentados para uma decisão rápida no celular.',
+    image: PHONE_CAPTURE, imageAlt: 'Captura real do cardápio digital Aladay em um smartphone',
   },
   {
-    id: 'demo_2',
-    name: 'Batata Rústica com Alecrim & Queijo',
-    category: 'Acompanhamentos',
-    priceCents: 2490,
-    description: 'Corte rústico artesanal temperado com flor de sal, alecrim fresco e dip cremoso.',
-    badge: 'Crocante',
-    imageUrl: 'https://images.unsplash.com/photo-1573080496219-bb080dd4f877?w=400&auto=format&fit=crop&q=80',
+    id: 'cart', label: 'Carrinho', eyebrow: 'Pedido organizado',
+    description: 'O cliente confere itens e valores antes de avançar, em uma jornada pensada para telas pequenas.',
+    image: CART_CAPTURE, imageAlt: 'Captura real do carrinho e checkout do cardápio Aladay',
   },
   {
-    id: 'demo_3',
-    name: 'Pizza Artesanal Margherita D.O.P.',
-    category: 'Pizzas',
-    priceCents: 6200,
-    description: 'Molho de tomate San Marzano, mozzarella di bufala fresca e manjericão no forno a lenha.',
-    badge: 'Receita Tradicional',
-    imageUrl: 'https://images.unsplash.com/photo-1604382355076-af4b0eb60143?w=400&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'demo_4',
-    name: 'Limonada Suíça com Hortelã 400ml',
-    category: 'Bebidas',
-    priceCents: 1290,
-    description: 'Limões tahiti frescos batidos com leite condensado e folhas de hortelã orgânica.',
-    imageUrl: 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=400&auto=format&fit=crop&q=80',
+    id: 'management', label: 'Gestão', eyebrow: 'Operação centralizada',
+    description: 'O restaurante gerencia o serviço em um painel próprio, separado da experiência do cliente.',
+    image: ADMIN_CAPTURE, imageAlt: 'Captura real do painel de gestão Aladay',
   },
 ];
+
+const REELS: Reel[] = [
+  { id: 'digital-menu', title: 'O cardápio na mão do cliente', duration: '01', poster: PHONE_CAPTURE, posterAlt: 'Prévia vertical do cardápio digital Aladay' },
+  { id: 'order-flow', title: 'Do produto ao carrinho', duration: '02', poster: PRODUCT_CAPTURE, posterAlt: 'Prévia vertical da seleção de produtos no Aladay' },
+  { id: 'whatsapp', title: 'Atualizações pelo WhatsApp', duration: '03', poster: WHATSAPP_CAPTURE, posterAlt: 'Prévia vertical do atendimento pelo WhatsApp' },
+  { id: 'restaurant-panel', title: 'A rotina no painel', duration: '04', poster: ADMIN_CAPTURE, posterAlt: 'Prévia vertical do painel do restaurante Aladay' },
+];
+
+const FAQS = [
+  {
+    question: 'Como o cliente acessa o cardápio digital?',
+    answer: 'Cada restaurante possui um link próprio. O cliente pode abrir esse link ou escanear o QR Code disponibilizado pela loja, sem instalar aplicativo.',
+  },
+  {
+    question: 'Os pedidos podem ser acompanhados pelo WhatsApp?',
+    answer: 'Sim. A plataforma possui automações de WhatsApp para a comunicação do pedido e das atualizações de status, conforme a configuração da operação.',
+  },
+  {
+    question: 'A Aladay cobra comissão sobre as vendas diretas?',
+    answer: 'Não. Nos planos apresentados, a Aladay cobra uma assinatura fixa e não retém comissão sobre os pedidos diretos feitos no cardápio da loja.',
+  },
+  {
+    question: 'O Pix cai na conta do restaurante?',
+    answer: 'Sim. O QR Code Pix é gerado com a chave configurada pelo próprio restaurante, para pagamento direto na conta bancária informada pela loja.',
+  },
+  {
+    question: 'Preciso ter CNPJ para começar?',
+    answer: 'Não é obrigatório. O cadastro pode ser realizado com CPF ou CNPJ, e a loja pode usar uma chave Pix válida compatível com sua operação.',
+  },
+  {
+    question: 'Como funciona o teste gratuito?',
+    answer: 'O plano mensal inclui 15 dias de teste gratuito. Nesse período, o restaurante pode experimentar os recursos antes da cobrança mensal de R$ 129,90.',
+  },
+];
+
+const HOW_IT_WORKS = [
+  { number: '01', icon: Upload, title: 'Configure seu cardápio', description: 'Organize produtos e categorias e deixe o menu digital pronto para receber clientes.' },
+  { number: '02', icon: ScanLine, title: 'Compartilhe seu QR Code', description: 'Divulgue no salão, nas redes sociais, no balcão e nas embalagens do restaurante.' },
+  { number: '03', icon: MessageCircle, title: 'Receba e acompanhe pedidos', description: 'Centralize a operação no painel e mantenha o cliente informado pelo WhatsApp.' },
+];
+
+const FadeIn = ({ children, className = '' }: { children: React.ReactNode; className?: string }) => {
+  const reduceMotion = useReducedMotion();
+  return (
+    <motion.div
+      initial={reduceMotion ? undefined : { opacity: 0, y: 22 }}
+      whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+      viewport={{ once: true, amount: 0.2 }}
+      transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+      className={className}
+    >
+      {children}
+    </motion.div>
+  );
+};
 
 export const LandingPageView: React.FC<LandingPageViewProps> = ({
   tenant,
@@ -101,1274 +134,340 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
   onNavigateToSetup,
   onNavigateToDemoMenu,
   onNavigateToAdmin,
+  onNavigateToTerms,
+  onNavigateToPrivacy,
 }) => {
-  // ---------------------------------------------------------------------------
-  // 1. Analytics & Privacy Consent State (LGPD / GDPR)
-  // ---------------------------------------------------------------------------
+  const reduceMotion = useReducedMotion();
+  const reelsRef = useRef<HTMLDivElement>(null);
   const [cookieConsent, setCookieConsent] = useState<ConsentStatus>('pending');
-  const [showConsentModal, setShowConsentModal] = useState<boolean>(false);
+  const [activeDemo, setActiveDemo] = useState(DEMO_SCREENS[0]);
+  const [activeReel, setActiveReel] = useState<Reel | null>(null);
+  const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const [planCycle, setPlanCycle] = useState<'YEARLY' | 'MONTHLY'>('MONTHLY');
+  const [monthlyOrders, setMonthlyOrders] = useState(450);
+  const [averageTicket, setAverageTicket] = useState(68);
+  const [marketplaceFee, setMarketplaceFee] = useState(18);
 
   useEffect(() => {
     const status = getConsentStatus();
     setCookieConsent(status);
-    if (status === 'granted') {
-      initGA4();
-    }
-    trackConversionEvent('page_view', {
-      page_name: 'landing_home',
-      tenant_slug: tenant.slug,
-    });
+    if (status === 'granted') initGA4();
+    trackConversionEvent('page_view', { page_name: 'landing_home_2_0', tenant_slug: tenant.slug });
   }, [tenant.slug]);
 
-  const handleAcceptAllCookies = () => {
-    setConsentStatus('granted');
-    setCookieConsent('granted');
-    setShowConsentModal(false);
-  };
+  useEffect(() => {
+    if (!activeReel) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setActiveReel(null);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [activeReel]);
 
-  const handleRejectCookies = () => {
-    setConsentStatus('denied');
-    setCookieConsent('denied');
-    setShowConsentModal(false);
-  };
+  const monthlySavings = useMemo(() => {
+    const marketplaceCost = monthlyOrders * averageTicket * (marketplaceFee / 100);
+    const aladayCost = planCycle === 'YEARLY' ? 99 : 129.9;
+    return Math.max(0, marketplaceCost - aladayCost);
+  }, [averageTicket, marketplaceFee, monthlyOrders, planCycle]);
 
-  // ---------------------------------------------------------------------------
-  // 2. Mobile Phone Live Menu Demonstration State
-  // ---------------------------------------------------------------------------
-  const [selectedCategory, setSelectedCategory] = useState<string>('Todos');
-  const [demoCart, setDemoCart] = useState<{ product: DemoProduct; count: number }[]>([
-    { product: DEMO_PRODUCTS[0], count: 1 },
-  ]);
-  const [isDemoCartSheetOpen, setIsDemoCartSheetOpen] = useState<boolean>(false);
-  const [demoOrderSimulatedPix, setDemoOrderSimulatedPix] = useState<boolean>(false);
+  const formatBRL = (value: number) =>
+    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 
-  const demoCategories = ['Todos', 'Burgers', 'Pizzas', 'Acompanhamentos', 'Bebidas'];
-
-  const filteredDemoProducts = useMemo(() => {
-    if (selectedCategory === 'Todos') return DEMO_PRODUCTS;
-    return DEMO_PRODUCTS.filter((p) => p.category === selectedCategory);
-  }, [selectedCategory]);
-
-  const demoTotalCents = useMemo(() => {
-    return demoCart.reduce((acc, item) => acc + item.product.priceCents * item.count, 0);
-  }, [demoCart]);
-
-  const handleAddDemoProduct = (product: DemoProduct) => {
-    setDemoCart((prev) => {
-      const existing = prev.find((i) => i.product.id === product.id);
-      if (existing) {
-        return prev.map((i) =>
-          i.product.id === product.id ? { ...i, count: i.count + 1 } : i
-        );
-      }
-      return [...prev, { product, count: 1 }];
-    });
-
-    trackConversionEvent('interact_phone_demo', {
-      action: 'add_item',
-      product_name: product.name,
-      price_cents: product.priceCents,
-    });
-  };
-
-  const handleClearDemoCart = () => {
-    setDemoCart([]);
-    setIsDemoCartSheetOpen(false);
-    setDemoOrderSimulatedPix(false);
-  };
-
-  // ---------------------------------------------------------------------------
-  // 3. Calculator State (Marketplaces vs Aladay R$ 129,90)
-  // ---------------------------------------------------------------------------
-  const [monthlyOrders, setMonthlyOrders] = useState<number>(450);
-  const [averageTicketBRL, setAverageTicketBRL] = useState<number>(68);
-  const [marketplaceFeePercent, setMarketplaceFeePercent] = useState<number>(18);
-
-  const grossMonthlyRevenue = monthlyOrders * averageTicketBRL;
-  const marketplaceMonthlyCost = (grossMonthlyRevenue * marketplaceFeePercent) / 100;
-  const aladayMonthlyCost = 129.9;
-  const monthlySavings = Math.max(0, marketplaceMonthlyCost - aladayMonthlyCost);
-  const annualSavings = monthlySavings * 12;
-
-  const formatBRL = (val: number) =>
-    val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
-
-  // ---------------------------------------------------------------------------
-  // 4. Modal de Proposta Personalizada (Redes & Franquias) & Demonstração Guiada
-  // ---------------------------------------------------------------------------
-  const [isProposalModalOpen, setIsProposalModalOpen] = useState<boolean>(false);
-  const [isGuidedDemoModalOpen, setIsGuidedDemoModalOpen] = useState<boolean>(false);
-  const [proposalForm, setProposalForm] = useState({
-    name: '',
-    restaurantName: '',
-    storesCount: '3 a 5 unidades',
-    whatsapp: '',
-    city: '',
-    email: '',
-  });
-  const [proposalSent, setProposalSent] = useState<boolean>(false);
-
-  const handleSubmitProposal = (e: React.FormEvent) => {
-    e.preventDefault();
-    trackConversionEvent('request_proposal', {
-      stores_count: proposalForm.storesCount,
-      city: proposalForm.city,
-    });
-    setProposalSent(true);
-    setTimeout(() => {
-      // Direct WhatsApp bridge with pre-filled message
-      const text = encodeURIComponent(
-        `Olá equipe Aladay! Solicito proposta para o meu grupo gastronômico:\n` +
-          `• Nome: ${proposalForm.name}\n` +
-          `• Restaurante: ${proposalForm.restaurantName}\n` +
-          `• Unidades: ${proposalForm.storesCount}\n` +
-          `• Cidade: ${proposalForm.city}\n` +
-          `• WhatsApp: ${proposalForm.whatsapp}`
-      );
-      window.open(`https://wa.me/5511999999999?text=${text}`, '_blank');
-      setIsProposalModalOpen(false);
-      setProposalSent(false);
-    }, 1200);
-  };
-
-  // ---------------------------------------------------------------------------
-  // Tracked Navigation & Demonstration Handlers
-  // ---------------------------------------------------------------------------
-  const handleScrollToPhoneDemo = (source: string) => {
-    trackConversionEvent('view_demo_interaction', {
-      source,
-    });
-    const target = document.getElementById('demonstracao-celular');
-    if (target) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      const phoneFrame = document.getElementById('phone-mockup-frame');
-      if (phoneFrame) {
-        phoneFrame.classList.remove('ring-4', 'ring-emerald-500', 'scale-[1.02]');
-        void phoneFrame.offsetWidth;
-        phoneFrame.classList.add('ring-4', 'ring-emerald-500', 'scale-[1.02]', 'transition-all', 'duration-500');
-        setTimeout(() => {
-          phoneFrame.classList.remove('ring-4', 'ring-emerald-500', 'scale-[1.02]');
-        }, 2200);
-      }
-    }
-  };
-
-  const handleTrackedSignup = (source: string) => {
+  const handleSignup = (source: string, cycle = planCycle) => {
     trackConversionEvent('click_signup', {
       source,
-      plan: 'pro_129_90',
+      plan: cycle === 'YEARLY' ? 'pro_99_yearly' : 'pro_129_90',
     });
     onNavigateToSetup();
   };
 
-  const handleTrackedDemo = (source: string) => {
-    trackConversionEvent('view_demo_menu', {
-      source,
+  const handleDemo = (source: string) => {
+    trackConversionEvent('view_demo_menu', { source });
+    document.getElementById('demonstracao-celular')?.scrollIntoView({
+      behavior: reduceMotion ? 'auto' : 'smooth',
     });
-    handleScrollToPhoneDemo(source);
   };
 
-  const handleTrackedLogin = (source: string) => {
-    trackConversionEvent('click_login', {
-      source,
-    });
-    onNavigateToLogin();
-  };
-
-  const handleTrackedWhatsApp = (source: string) => {
-    trackConversionEvent('click_whatsapp_contact', {
-      source,
-      channel: 'whatsapp_commercial',
-    });
-    const msg = encodeURIComponent(
-      'Olá! Gostaria de tirar dúvidas sobre o Aladay Cardápios Digitais (Plano R$ 129,90/mês e Pix Direto).'
-    );
-    window.open(`https://wa.me/5511999999999?text=${msg}`, '_blank');
+  const openSupportWhatsApp = () => {
+    trackConversionEvent('click_whatsapp_contact', { source: 'landing_2_0' });
+    const message = encodeURIComponent('Olá! Gostaria de conhecer a Aladay para digitalizar o meu restaurante.');
+    window.open(`https://wa.me/559131976334?text=${message}`, '_blank', 'noopener,noreferrer');
   };
 
   return (
-    <div className="space-y-16 pb-20">
-      {/* ================================================================== */}
-      {/* 1. MENSAGEM PRINCIPAL & HERO HEADER                                */}
-      {/* O que a Aladay faz e exatamente para quem é                         */}
-      {/* ================================================================== */}
-      <section className="bg-white border border-neutral-200 rounded-3xl p-6 sm:p-10 lg:p-14 relative overflow-hidden shadow-xs">
-        {/* Decorative subtle ambient backdrop */}
-        <div className="absolute top-0 right-0 -mr-20 -mt-20 w-96 h-96 bg-emerald-50 rounded-full blur-3xl pointer-events-none opacity-60" />
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center relative z-10">
-          {/* Left Column: Direct Pitch, Who it is for & CTAs */}
-          <div className="lg:col-span-7 space-y-6">
-            {/* Tagline Badge */}
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-800 text-xs font-semibold">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Plataforma de Pedidos Próprios para Food Service</span>
+    <div className="aladay-landing -mx-4 -mt-4 overflow-hidden bg-[#f5f7fa] text-slate-950 sm:-mx-6 sm:-mt-6">
+      <section className="relative min-h-[680px] overflow-hidden bg-slate-950 text-white lg:min-h-[720px]">
+        <img
+          src="/assets/landing/aladay-hero.webp"
+          alt="Hambúrguer artesanal apresentado em ambiente de restaurante"
+          className="absolute inset-0 h-full w-full object-cover object-center opacity-60"
+          fetchPriority="high"
+          width={1920}
+          height={1080}
+          decoding="async"
+        />
+        <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(2,6,23,.98)_0%,rgba(2,6,23,.9)_45%,rgba(2,6,23,.3)_100%)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(2,6,23,.12)_0%,rgba(2,6,23,.22)_65%,rgba(2,6,23,.92)_100%)]" />
+        <div className="relative mx-auto grid min-h-[680px] max-w-7xl items-center gap-12 px-6 py-16 sm:px-10 lg:min-h-[720px] lg:grid-cols-[1.08fr_.92fr] lg:px-12">
+          <div className="relative z-10 max-w-3xl">
+            <div className="mb-7 inline-flex items-center gap-2 border border-white/20 bg-black/30 px-3 py-2 text-[11px] font-bold uppercase text-white backdrop-blur-md">
+              <span className="h-2 w-2 bg-emerald-400" />
+              Tecnologia que trabalha com o seu restaurante
             </div>
-
-            {/* Main Value Proposition Headline */}
-            <h1 className="text-3xl sm:text-4xl lg:text-[44px] font-black tracking-tight text-neutral-950 leading-[1.12]">
-              O cardápio digital que liberta seu restaurante das comissões abusivas.
+            <h1 className="max-w-3xl text-4xl font-extrabold leading-[1.03] sm:text-5xl lg:text-[64px]">
+              Seu restaurante mais digital. Seus pedidos muito mais simples.
             </h1>
-
-            {/* Target Audience Explanation (Para Quem É) */}
-            <p className="text-base sm:text-lg text-neutral-600 leading-relaxed font-normal">
-              A <strong>Aladay</strong> foi criada para <strong>hamburguerias, pizzarias, lanchonetes, restaurantes e dark kitchens</strong> que desejam receber pedidos ilimitados direto no WhatsApp, com <strong>Pix 100% creditado na conta da sua própria loja</strong> e sem intermediários retendo até <strong>27% do seu faturamento</strong>.
+            <p className="mt-6 max-w-2xl text-base leading-relaxed text-slate-200 sm:text-lg">
+              Modernize seu atendimento com cardápio digital, QR Code e pedidos pelo WhatsApp. Uma experiência prática para o seu restaurante e seus clientes.
             </p>
-
-            {/* Audience Badges */}
-            <div className="flex flex-wrap gap-2 pt-1 text-xs text-neutral-600 font-medium">
-              <span className="px-2.5 py-1 bg-neutral-100 rounded-md border border-neutral-200">🍔 Hamburguerias</span>
-              <span className="px-2.5 py-1 bg-neutral-100 rounded-md border border-neutral-200">🍕 Pizzarias</span>
-              <span className="px-2.5 py-1 bg-neutral-100 rounded-md border border-neutral-200">🥪 Lanchonetes</span>
-              <span className="px-2.5 py-1 bg-neutral-100 rounded-md border border-neutral-200">🥗 Marmitarias &amp; PF</span>
-              <span className="px-2.5 py-1 bg-neutral-100 rounded-md border border-neutral-200">🍣 Sushi &amp; Asiáticos</span>
-              <span className="px-2.5 py-1 bg-neutral-100 rounded-md border border-neutral-200">🛵 Dark Kitchens &amp; Delivery</span>
-            </div>
-
-            {/* Evident Call-to-Action Action Buttons */}
-            <div className="pt-2 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => handleTrackedSignup('hero_primary')}
-                className="px-6 py-4 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl transition-all shadow-md hover:shadow-lg flex items-center gap-2 cursor-pointer"
-              >
-                <span>Começar Teste Grátis de 15 Dias</span>
-                <ArrowRight className="w-4 h-4" />
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <button type="button" onClick={() => handleSignup('hero_primary')} className="group inline-flex min-h-12 items-center justify-center gap-2 bg-blue-600 px-6 py-3 text-sm font-bold text-white transition hover:bg-blue-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">
+                Começar teste grátis
+                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
               </button>
-
-              <button
-                type="button"
-                onClick={() => handleScrollToPhoneDemo('hero_button')}
-                className="px-5 py-4 bg-neutral-100 hover:bg-neutral-200 text-neutral-900 text-sm font-semibold rounded-xl transition-colors flex items-center gap-2 cursor-pointer"
-              >
-                <Smartphone className="w-4 h-4 text-emerald-700" />
-                <span>Testar Demonstração no Celular</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleTrackedLogin('hero_login')}
-                className="px-4 py-4 bg-white hover:bg-neutral-50 text-neutral-700 border border-neutral-300 text-sm font-medium rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
-              >
-                <LogIn className="w-4 h-4 text-neutral-500" />
-                <span>Fazer Login</span>
+              <button type="button" onClick={() => handleDemo('hero_secondary')} className="inline-flex min-h-12 items-center justify-center gap-2 border border-white/25 bg-white/10 px-6 py-3 text-sm font-bold text-white backdrop-blur-md transition hover:bg-white/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">
+                <CirclePlay className="h-4 w-4" /> Ver como funciona
               </button>
             </div>
-
-            {/* Trust Metrics Pill Bar */}
-            <div className="pt-4 border-t border-neutral-200 grid grid-cols-3 gap-4">
-              <div>
-                <p className="text-xl sm:text-2xl font-black text-neutral-950 font-mono">0%</p>
-                <p className="text-[11px] sm:text-xs text-neutral-500 font-medium">Comissão sobre vendas</p>
-              </div>
-              <div>
-                <p className="text-xl sm:text-2xl font-black text-emerald-700 font-mono">100% Direto</p>
-                <p className="text-[11px] sm:text-xs text-neutral-500 font-medium">Pix na conta da loja</p>
-              </div>
-              <div>
-                <p className="text-xl sm:text-2xl font-black text-neutral-950 font-mono">R$ 129,90</p>
-                <p className="text-[11px] sm:text-xs text-neutral-500 font-medium">Mensalidade fixa Asaas</p>
-              </div>
+            <div className="mt-8 flex flex-wrap gap-x-6 gap-y-3 text-xs font-semibold text-slate-300">
+              <span className="flex items-center gap-2"><Check className="h-4 w-4 text-emerald-400" /> 15 dias grátis</span>
+              <span className="flex items-center gap-2"><Check className="h-4 w-4 text-emerald-400" /> 0% de comissão</span>
+              <span className="flex items-center gap-2"><Check className="h-4 w-4 text-emerald-400" /> Sem instalar aplicativo</span>
             </div>
           </div>
-
-          {/* ================================================================ */}
-          {/* 2. DEMONSTRAÇÃO VISUAL: CARDÁPIO REAL EM TELA DE CELULAR         */}
-          {/* ================================================================ */}
-          <div id="demonstracao-celular" className="lg:col-span-5 flex flex-col items-center scroll-mt-24">
-            <div className="w-full max-w-[360px] relative">
-              {/* Floating label guiding user interaction */}
-              <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-30 bg-neutral-900 text-white text-[11px] font-semibold px-3 py-1 rounded-full shadow-md flex items-center gap-1.5 whitespace-nowrap">
-                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                <span>Cardápio Real Interativo no Celular</span>
+          <div className="relative hidden h-[580px] items-center justify-center lg:flex" aria-label="Prévia real do cardápio digital Aladay">
+            <div className="absolute right-0 top-10 h-[530px] w-[274px] rotate-[4deg] overflow-hidden rounded-[38px] border-[9px] border-slate-900 bg-white shadow-[0_35px_90px_rgba(0,0,0,.55)]">
+              <img src={PHONE_CAPTURE} alt="Cardápio digital Aladay em smartphone" className="h-full w-full object-cover object-top" />
+            </div>
+            <div className="absolute bottom-16 left-2 w-64 rounded-lg border border-white/20 bg-slate-950/85 p-4 shadow-2xl backdrop-blur-xl">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center bg-emerald-500 text-white"><MessageCircle className="h-5 w-5" /></div>
+                <div><p className="text-[10px] font-bold uppercase text-emerald-300">Pedido atualizado</p><p className="mt-1 text-xs font-semibold text-white">A caminho pelo WhatsApp</p></div>
               </div>
-
-              {/* Realistic Mobile Device Frame */}
-              <div id="phone-mockup-frame" className="w-full h-[620px] bg-neutral-950 rounded-[44px] p-3 shadow-2xl shadow-neutral-950/30 border-4 border-neutral-800 relative select-none flex flex-col transition-all duration-300">
-                {/* Dynamic Island / Speaker */}
-                <div className="w-24 h-5 bg-neutral-900 rounded-full mx-auto relative z-30 flex items-center justify-between px-2 text-[8px] text-neutral-400 font-mono mb-1 shrink-0">
-                  <span className="text-[9px] text-white">19:42</span>
-                  <div className="w-2 h-2 rounded-full bg-neutral-700" />
-                  <span className="text-[9px] text-emerald-400">5G</span>
-                </div>
-
-                {/* Inner Screen Surface */}
-                <div className="rounded-[32px] overflow-hidden bg-neutral-50 h-full flex flex-col relative border border-neutral-200">
-                  {/* Phone Header Banner */}
-                  <div className="bg-neutral-900 text-white p-3.5 shrink-0 relative">
-                    <div className="flex items-center justify-between text-[11px] text-neutral-400 pb-1">
-                      <span className="flex items-center gap-1 text-emerald-400 font-semibold">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        Aberto Agora
-                      </span>
-                      <span className="font-mono text-[10px]">30-45 min</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-bold text-xs shrink-0">
-                        {tenant.name.slice(0, 2).toUpperCase() || 'AL'}
-                      </div>
-                      <div className="min-w-0">
-                        <h2 className="text-xs font-bold text-white truncate">
-                          {tenant.name || 'Aladay Smash & Burger'}
-                        </h2>
-                        <p className="text-[10px] text-neutral-400 truncate flex items-center gap-1">
-                          <MapPin className="w-2.5 h-2.5" />
-                          <span>Delivery &amp; Balcão &middot; Pix Direto</span>
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Notice bar inside phone */}
-                    <div className="mt-2 py-1 px-2 rounded-md bg-neutral-800 text-[9px] text-emerald-300 flex items-center justify-between">
-                      <span>⚡ Chave Pix da loja &middot; Sem taxas</span>
-                      <span className="font-mono">0% taxa</span>
-                    </div>
-                  </div>
-
-                  {/* Horizontal Category Switcher */}
-                  <div className="bg-white border-b border-neutral-200 px-2 py-1.5 flex gap-1.5 overflow-x-auto no-scrollbar shrink-0 text-[11px]">
-                    {demoCategories.map((cat) => (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() => setSelectedCategory(cat)}
-                        className={`px-2.5 py-1 rounded-full whitespace-nowrap font-medium transition-colors cursor-pointer ${
-                          selectedCategory === cat
-                            ? 'bg-neutral-900 text-white'
-                            : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Scrollable Products List */}
-                  <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
-                    {filteredDemoProducts.map((prod) => (
-                      <div
-                        key={prod.id}
-                        className="bg-white rounded-xl p-2 border border-neutral-200 shadow-2xs flex gap-2.5 items-center hover:border-emerald-500 transition-colors"
-                      >
-                        <img
-                          src={prod.imageUrl}
-                          alt={prod.name}
-                          className="w-16 h-16 rounded-lg object-cover shrink-0 bg-neutral-100"
-                          loading="lazy"
-                        />
-                        <div className="flex-1 min-w-0">
-                          {prod.badge && (
-                            <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
-                              {prod.badge}
-                            </span>
-                          )}
-                          <h3 className="text-xs font-bold text-neutral-900 truncate">
-                            {prod.name}
-                          </h3>
-                          <p className="text-[10px] text-neutral-500 line-clamp-1 leading-tight">
-                            {prod.description}
-                          </p>
-                          <div className="mt-1 flex items-center justify-between">
-                            <span className="text-xs font-bold text-neutral-950 font-mono">
-                              R$ {(prod.priceCents / 100).toFixed(2).replace('.', ',')}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleAddDemoProduct(prod)}
-                              className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-semibold rounded-md transition-colors cursor-pointer"
-                            >
-                              + Adicionar
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-
-                    <div className="p-2 text-center text-[10px] text-neutral-400">
-                      Toque em <strong>+ Adicionar</strong> para simular o pedido
-                    </div>
-                  </div>
-
-                  {/* Interactive Cart Bottom Bar inside Phone */}
-                  <div className="p-2 bg-white border-t border-neutral-200 shrink-0">
-                    {demoCart.length > 0 ? (
-                      <div className="space-y-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setIsDemoCartSheetOpen(!isDemoCartSheetOpen)}
-                          className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center justify-between transition-colors cursor-pointer"
-                        >
-                          <div className="flex items-center gap-1.5">
-                            <ShoppingBag className="w-3.5 h-3.5" />
-                            <span>
-                              {demoCart.reduce((sum, i) => sum + i.count, 0)} {demoCart.length === 1 ? 'item' : 'itens'}
-                            </span>
-                          </div>
-                          <span>R$ {(demoTotalCents / 100).toFixed(2).replace('.', ',')} &middot; Ver Sacola</span>
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleAddDemoProduct(DEMO_PRODUCTS[0])}
-                        className="w-full py-2 px-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-xl text-xs font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer"
-                      >
-                        <span>Sacola vazia &middot; Adicione um item</span>
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Simulated Drawer / Pix Sheet inside Phone */}
-                  {isDemoCartSheetOpen && (
-                    <div className="absolute inset-0 bg-black/60 z-40 flex flex-col justify-end">
-                      <div className="bg-white rounded-t-2xl p-3 space-y-2 border-t border-neutral-200 max-h-[75%] overflow-y-auto">
-                        <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
-                          <span className="text-xs font-bold text-neutral-900">
-                            Sacola do Cliente (Simulação)
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setIsDemoCartSheetOpen(false)}
-                            className="text-neutral-400 hover:text-neutral-700 text-xs p-1"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-
-                        <div className="space-y-1.5 text-xs">
-                          {demoCart.map((item) => (
-                            <div key={item.product.id} className="flex justify-between items-center text-[11px]">
-                              <span className="truncate pr-2">
-                                {item.count}x {item.product.name}
-                              </span>
-                              <span className="font-mono font-semibold shrink-0">
-                                R$ {((item.product.priceCents * item.count) / 100).toFixed(2).replace('.', ',')}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-
-                        <div className="pt-2 border-t border-neutral-200 flex justify-between font-bold text-xs">
-                          <span>Total do Pedido:</span>
-                          <span className="font-mono text-emerald-700">
-                            R$ {(demoTotalCents / 100).toFixed(2).replace('.', ',')}
-                          </span>
-                        </div>
-
-                        {!demoOrderSimulatedPix ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setDemoOrderSimulatedPix(true);
-                              trackConversionEvent('interact_phone_demo', { action: 'simulate_pix_checkout' });
-                            }}
-                            className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center justify-center gap-1"
-                          >
-                            <QrCode className="w-3.5 h-3.5" />
-                            <span>Pagar com Pix Direto (0% taxa)</span>
-                          </button>
-                        ) : (
-                          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2 text-[10px] space-y-1 text-emerald-950">
-                            <div className="flex items-center gap-1 font-bold text-emerald-800">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>QR Code Pix Gerado na Hora</span>
-                            </div>
-                            <p className="text-neutral-600">
-                              O dinheiro entra 100% no banco da loja. A cozinha recebe a comanda e o cliente é avisado no WhatsApp.
-                            </p>
-                            <button
-                              type="button"
-                              onClick={handleClearDemoCart}
-                              className="mt-1 w-full text-center text-emerald-700 font-semibold underline"
-                            >
-                              Reiniciar Demonstração
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Sub-phone CTA button */}
-              <div className="mt-4 text-center">
-                <button
-                  type="button"
-                  onClick={() => {
-                    trackConversionEvent('open_guided_demo_modal', { source: 'phone_footer' });
-                    setIsGuidedDemoModalOpen(true);
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-neutral-100 hover:bg-neutral-200 text-xs font-semibold text-neutral-800 hover:text-emerald-700 transition-colors cursor-pointer"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                  <span>Ver Tour da Operação (Cardápio + KDS + WhatsApp)</span>
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
+            </div>
+            <div className="absolute right-44 top-24 flex items-center gap-2 rounded-lg border border-white/20 bg-white/95 px-4 py-3 text-slate-950 shadow-xl">
+              <QrCode className="h-5 w-5 text-blue-600" /><span className="text-xs font-bold">Escaneou. Abriu.</span>
             </div>
           </div>
         </div>
       </section>
 
-      {/* ================================================================== */}
-      {/* 3. ARQUITETURA OPERACIONAL: POR QUE O MODELO ALADAY FUNCIONA       */}
-      {/* ================================================================== */}
-      <section className="space-y-8">
-        <div className="max-w-3xl space-y-2">
-          <p className="text-xs font-bold text-emerald-700 uppercase tracking-wider">
-            01. Pilares da Operação
-          </p>
-          <h2 className="text-2xl sm:text-3xl font-bold text-neutral-950 tracking-tight">
-            Como a Aladay transforma o WhatsApp da sua loja em lucro real
-          </h2>
-          <p className="text-sm text-neutral-600">
-            Eliminamos os intermediários para que você tenha controle dos seus clientes, margens saudáveis e agilidade máxima de ponta a ponta.
-          </p>
+      <section aria-label="Diferenciais comerciais" className="border-b border-slate-200 bg-white">
+        <div className="mx-auto grid max-w-7xl grid-cols-2 divide-x divide-slate-200 px-6 sm:grid-cols-4 sm:px-10 lg:px-12">
+          {[
+            ['0%', 'comissão nas vendas diretas'],
+            ['15 dias', 'de teste no plano mensal'],
+            ['R$ 99', 'por mês no plano anual'],
+            ['24/7', 'cardápio disponível online'],
+          ].map(([value, label]) => (
+            <div key={value} className="px-4 py-7 text-center"><p className="text-2xl font-extrabold">{value}</p><p className="mt-1 text-[11px] font-semibold text-slate-500">{label}</p></div>
+          ))}
         </div>
+      </section>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Card 1: Pix Direto */}
-          <div className="bg-white border border-neutral-200 rounded-2xl p-6 space-y-4 flex flex-col justify-between hover:border-neutral-300 transition-colors">
-            <div className="space-y-3">
-              <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
-                <QrCode className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold text-neutral-950">
-                1. Pix 100% Direto na Conta da Loja
-              </h3>
-              <p className="text-xs text-neutral-600 leading-relaxed">
-                Você cadastra a chave Pix do seu próprio banco (Nubank PJ, Inter, Itaú, Bradesco, etc.). O QR Code e código Copia e Cola são gerados instantaneamente com padrão BACEN EMV. <strong>A Aladay não retém R$ 0,01 das suas vendas.</strong>
-              </p>
-            </div>
-            <div className="pt-3 border-t border-neutral-100 flex items-center justify-between text-[11px] text-neutral-500 font-mono">
-              <span>Zero Retenção</span>
-              <span className="text-emerald-700 font-bold">Liquidação Imediata</span>
-            </div>
-          </div>
-
-          {/* Card 2: KDS & WhatsApp Automático */}
-          <div className="bg-white border border-neutral-200 rounded-2xl p-6 space-y-4 flex flex-col justify-between hover:border-neutral-300 transition-colors">
-            <div className="space-y-3">
-              <div className="w-12 h-12 rounded-xl bg-neutral-100 text-neutral-900 flex items-center justify-center">
-                <MessageSquare className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold text-neutral-950">
-                2. KDS &amp; WhatsApp Automático
-              </h3>
-              <p className="text-xs text-neutral-600 leading-relaxed">
-                O cliente acompanha cada etapa sem sobrecarregar sua equipe: quando o pedido é confirmado, entra em preparo ou sai para entrega com o motoboy, o WhatsApp dele recebe avisos automáticos via Evolution API.
-              </p>
-            </div>
-            <div className="pt-3 border-t border-neutral-100 flex items-center justify-between text-[11px] text-neutral-500 font-mono">
-              <span>-80% Mensagens</span>
-              <span className="text-neutral-900 font-bold">Fim do &ldquo;Cadê meu pedido?&rdquo;</span>
-            </div>
-          </div>
-
-          {/* Card 3: Cardápio Próprio Sem Instalação */}
-          <div className="bg-white border border-neutral-200 rounded-2xl p-6 space-y-4 flex flex-col justify-between hover:border-neutral-300 transition-colors">
-            <div className="space-y-3">
-              <div className="w-12 h-12 rounded-xl bg-neutral-100 text-neutral-900 flex items-center justify-center">
-                <Smartphone className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold text-neutral-950">
-                3. Sem Download &amp; Sem Login Chato
-              </h3>
-              <p className="text-xs text-neutral-600 leading-relaxed">
-                O cliente acessa pelo link na bio do Instagram ou pelo QR Code da mesa sem precisar baixar nenhum aplicativo da App Store. Carregamento instantâneo via Cloudflare com experiência moderna e intuitiva.
-              </p>
-            </div>
-            <div className="pt-3 border-t border-neutral-100 flex items-center justify-between text-[11px] text-neutral-500 font-mono">
-              <span>aladay.com.br</span>
-              <span className="text-neutral-900 font-bold">100% Responsivo</span>
-            </div>
+      <section className="px-6 py-20 sm:px-10 lg:py-28">
+        <div className="mx-auto max-w-7xl">
+          <FadeIn className="max-w-3xl">
+            <p className="text-xs font-extrabold uppercase text-blue-600">Da vitrine à cozinha</p>
+            <h2 className="mt-4 text-3xl font-extrabold leading-tight sm:text-5xl">Tudo que seu restaurante precisa para começar a vender digitalmente.</h2>
+            <p className="mt-5 max-w-2xl text-base leading-relaxed text-slate-600">Uma jornada conectada para apresentar produtos, receber pedidos e organizar a rotina sem tirar do restaurante o controle da própria operação.</p>
+          </FadeIn>
+          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {FEATURES.map((feature, index) => (
+              <FadeIn key={feature.title} className="group min-h-56 rounded-lg border border-slate-200 bg-white p-7 transition-colors hover:bg-slate-50">
+                <div className="flex h-11 w-11 items-center justify-center bg-slate-950 text-white transition-colors group-hover:bg-blue-600"><feature.icon className="h-5 w-5" /></div>
+                <p className="mt-7 text-[11px] font-bold text-blue-600">0{index + 1}</p>
+                <h3 className="mt-2 text-lg font-bold">{feature.title}</h3>
+                <p className="mt-3 text-sm leading-relaxed text-slate-600">{feature.description}</p>
+              </FadeIn>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* ================================================================== */}
-      {/* 4. OFERTA: PLANOS, PREÇOS E COMO SOLICITAR PROPOSTA                */}
-      {/* ================================================================== */}
-      <section id="planos" className="bg-white border border-neutral-200 rounded-3xl p-6 sm:p-10 lg:p-12 space-y-10 shadow-xs scroll-mt-24">
-        <div className="max-w-3xl space-y-2">
-          <p className="text-xs font-bold text-emerald-700 uppercase tracking-wider">
-            02. Modelo Comercial &amp; Planos
-          </p>
-          <h2 className="text-2xl sm:text-3xl font-bold text-neutral-950 tracking-tight">
-            Transparência absoluta: quanto custa usar a Aladay?
-          </h2>
-          <p className="text-sm text-neutral-600">
-            Você paga apenas uma assinatura mensal fixa para a infraestrutura da plataforma. Venda 50 ou 5.000 pedidos, o valor do seu plano não se altera.
-          </p>
-        </div>
-
-        {/* Pricing Cards Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
-          {/* Main Plan Card: Plano Pro R$ 129,90 */}
-          <div className="lg:col-span-7 bg-neutral-950 text-white rounded-2xl p-6 sm:p-8 flex flex-col justify-between border-2 border-emerald-500 relative shadow-xl">
-            {/* Best Value Ribbon */}
-            <div className="absolute -top-3.5 right-6 bg-emerald-500 text-neutral-950 text-xs font-extrabold px-3 py-1 rounded-full shadow-md">
-              15 DIAS GRÁTIS PARA TESTAR &middot; PLANO COMPLETO
+      <section id="demonstracao-celular" className="scroll-mt-24 bg-slate-950 px-6 py-20 text-white sm:px-10 lg:py-28">
+        <div className="mx-auto max-w-7xl">
+          <FadeIn className="flex flex-col justify-between gap-8 lg:flex-row lg:items-end">
+            <div className="max-w-3xl">
+              <p className="text-xs font-extrabold uppercase text-sky-400">Produto real, em contexto</p>
+              <h2 className="mt-4 text-3xl font-extrabold sm:text-5xl">Veja a Aladay em ação.</h2>
+              <p className="mt-5 max-w-2xl text-base leading-relaxed text-slate-400">Explore capturas reais do cardápio e do painel. Cada tela abaixo vem do produto atual, sem promessas ilustrativas.</p>
             </div>
-
-            <div className="space-y-6">
-              <div>
-                <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
-                  15 Dias Grátis &middot; Depois Assinatura Mensal Fixa
-                </span>
-                <h3 className="text-2xl font-black text-white mt-1">Plano Aladay Pro</h3>
-                <p className="text-xs text-neutral-400 mt-1">
-                  Experimente grátis por 15 dias sem compromisso. Ideal para restaurantes, lanchonetes, pizzarias e dark kitchens.
-                </p>
-              </div>
-
-              {/* Price display */}
-              <div className="flex flex-wrap items-baseline gap-2 border-y border-neutral-800 py-4">
-                <span className="text-4xl sm:text-5xl font-black font-mono text-white">R$ 129,90</span>
-                <span className="text-neutral-400 text-sm">/mês após 15 dias grátis</span>
-                <span className="ml-auto text-xs font-mono text-emerald-400 bg-neutral-900 px-2.5 py-1 rounded-md border border-neutral-800">
-                  R$ 0,00 hoje &middot; 0% comissão
-                </span>
-              </div>
-
-              {/* What is included checklist */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-neutral-300">
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>Cardápio digital ilimitado (Link &amp; QR Code)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>Pix 100% direto na conta bancária da sua loja</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>Pedidos, produtos e categorias ilimitados</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>Disparos automáticos no WhatsApp via Evolution API</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>Painel KDS Kanban para cozinha e expedição</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>Gestão de taxas de entrega por bairro ou raio</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>Impressão de comandas térmicas (58mm e 80mm)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>Sem fidelidade: cancele quando quiser sem multa</span>
-                </div>
-              </div>
-            </div>
-
-            {/* CTA inside Pro Card */}
-            <div className="pt-6 mt-6 border-t border-neutral-800 space-y-2">
-              <button
-                type="button"
-                onClick={() => handleTrackedSignup('pricing_main_pro')}
-                className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold text-sm rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <span>Começar 15 Dias de Teste Grátis (R$ 0,00 hoje)</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-              <p className="text-[11px] text-neutral-500 text-center">
-                Teste grátis por 15 dias sem cartão obrigatório. Após o teste, R$ 129,90/mês via Asaas.
-              </p>
-            </div>
-          </div>
-
-          {/* Secondary Card: Redes, Franquias & Solicitar Proposta */}
-          <div className="lg:col-span-5 bg-neutral-50 border border-neutral-200 rounded-2xl p-6 sm:p-8 flex flex-col justify-between">
-            <div className="space-y-5">
-              <div>
-                <span className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">
-                  Operações Multi-Unidade
-                </span>
-                <h3 className="text-xl font-bold text-neutral-950 mt-1">
-                  Redes, Franquias &amp; Dark Kitchens
-                </h3>
-                <p className="text-xs text-neutral-600 mt-1">
-                  Para grupos gastronômicos com múltiplas filiais, dark kitchens centralizadas ou operações com alta volumetria.
-                </p>
-              </div>
-
-              <div className="space-y-3 text-xs text-neutral-700">
-                <div className="p-3 bg-white rounded-lg border border-neutral-200 space-y-1">
-                  <p className="font-bold text-neutral-900">Multi-Filiais Centralizadas</p>
-                  <p className="text-neutral-500">
-                    Gerencie cardápios por região, filiais separadas e relatórios consolidados em um único painel.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-white rounded-lg border border-neutral-200 space-y-1">
-                  <p className="font-bold text-neutral-900">Integrações Customizadas</p>
-                  <p className="text-neutral-500">
-                    Webhooks n8n, ERPs de PDV e canais dedicados de disparo no WhatsApp.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-white rounded-lg border border-neutral-200 space-y-1">
-                  <p className="font-bold text-neutral-900">Onboarding &amp; SLA Dedicado</p>
-                  <p className="text-neutral-500">
-                    Apoio na digitalização de cardápios com gerente de contas exclusivo.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-6 border-t border-neutral-200 space-y-2">
-              <button
-                type="button"
-                onClick={() => {
-                  trackConversionEvent('click_request_proposal_button', { source: 'pricing_enterprise' });
-                  setIsProposalModalOpen(true);
-                }}
-                className="w-full py-3.5 bg-neutral-900 hover:bg-neutral-800 text-white font-semibold text-xs rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Building2 className="w-4 h-4 text-neutral-300" />
-                <span>Solicitar Proposta para Redes</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleTrackedWhatsApp('pricing_talk_human')}
-                className="w-full py-3 bg-white hover:bg-neutral-100 text-neutral-800 border border-neutral-300 font-medium text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <PhoneCall className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Falar com Consultor Comercial</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Comparison Table vs Marketplaces */}
-        <div className="border border-neutral-200 rounded-2xl overflow-hidden bg-neutral-50/50">
-          <div className="p-4 bg-neutral-100 border-b border-neutral-200 flex items-center justify-between">
-            <h4 className="text-xs font-bold text-neutral-900 uppercase tracking-wide">
-              Comparativo de Custos &middot; Apps Tradicionais vs Aladay
-            </h4>
-            <span className="text-[11px] text-neutral-500 font-mono">Economia Real</span>
-          </div>
-          <div className="overflow-x-auto text-xs">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-neutral-200 bg-white">
-                  <th className="py-3 px-4 font-semibold text-neutral-700">Recurso / Custo</th>
-                  <th className="py-3 px-4 font-semibold text-neutral-500">Apps Tradicionais (Marketplaces)</th>
-                  <th className="py-3 px-4 font-bold text-emerald-800 bg-emerald-50/50">Aladay Cardápios Digitais</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-200 bg-white">
-                <tr>
-                  <td className="py-3 px-4 font-medium text-neutral-900">Comissão por Pedido</td>
-                  <td className="py-3 px-4 text-red-600 font-semibold">12% a 27% sobre cada venda</td>
-                  <td className="py-3 px-4 font-bold text-emerald-700 bg-emerald-50/50">0% (Zero comissão)</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-4 font-medium text-neutral-900">Prazo de Repasse do Dinheiro</td>
-                  <td className="py-3 px-4 text-neutral-600">Até 30 dias (ou taxa extra de antecipação)</td>
-                  <td className="py-3 px-4 font-bold text-emerald-700 bg-emerald-50/50">Na hora (Pix direto no seu banco)</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-4 font-medium text-neutral-900">Acesso à Base de Clientes</td>
-                  <td className="py-3 px-4 text-neutral-600">O cliente pertence ao aplicativo</td>
-                  <td className="py-3 px-4 font-bold text-emerald-700 bg-emerald-50/50">Sua base própria de WhatsApp</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-4 font-medium text-neutral-900">Notificações no WhatsApp</td>
-                  <td className="py-3 px-4 text-neutral-600">Não disponível</td>
-                  <td className="py-3 px-4 font-bold text-emerald-700 bg-emerald-50/50">100% automáticas via Evolution API</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-4 font-medium text-neutral-900">Custo Total Mensal</td>
-                  <td className="py-3 px-4 text-neutral-600">R$ 2.000 a R$ 8.000+ em comissões</td>
-                  <td className="py-3 px-4 font-bold text-emerald-700 bg-emerald-50/50">Fixo R$ 129,90/mês</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      {/* ================================================================== */}
-      {/* 5. SIMULADOR DE ECONOMIA (CALCULADORA DE ROI INTERATIVA)            */}
-      {/* ================================================================== */}
-      <section id="calculadora" className="bg-white border border-neutral-200 rounded-3xl p-6 sm:p-10 space-y-8 shadow-xs scroll-mt-24">
-        <div className="max-w-3xl space-y-2">
-          <p className="text-xs font-bold text-emerald-700 uppercase tracking-wider">
-            03. Calculadora de Economia
-          </p>
-          <h2 className="text-2xl sm:text-3xl font-bold text-neutral-950 tracking-tight">
-            Calcule quanto você economiza ao substituir comissões pela assinatura fixa
-          </h2>
-          <p className="text-sm text-neutral-600">
-            Arraste os seletores para aproximar com os números do seu restaurante hoje.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-          {/* Sliders */}
-          <div className="lg:col-span-7 space-y-6">
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs font-medium">
-                <label htmlFor="slider-orders" className="text-neutral-700">
-                  Volume de pedidos por mês
-                </label>
-                <span className="font-mono font-bold text-neutral-950">
-                  {monthlyOrders} pedidos/mês
-                </span>
-              </div>
-              <input
-                id="slider-orders"
-                type="range"
-                min={50}
-                max={2000}
-                step={25}
-                value={monthlyOrders}
-                onChange={(e) => {
-                  setMonthlyOrders(Number(e.target.value));
-                  trackConversionEvent('calculate_roi', {
-                    orders: Number(e.target.value),
-                    savings: monthlySavings,
-                  });
-                }}
-                className="w-full accent-emerald-600 cursor-pointer"
-              />
-              <div className="flex justify-between text-[11px] text-neutral-400 font-mono">
-                <span>50 pedidos</span>
-                <span>1.000 pedidos</span>
-                <span>2.000 pedidos</span>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs font-medium">
-                <label htmlFor="slider-ticket" className="text-neutral-700">
-                  Ticket Médio por Pedido (R$)
-                </label>
-                <span className="font-mono font-bold text-neutral-950">
-                  R$ {averageTicketBRL},00
-                </span>
-              </div>
-              <input
-                id="slider-ticket"
-                type="range"
-                min={25}
-                max={180}
-                step={5}
-                value={averageTicketBRL}
-                onChange={(e) => {
-                  setAverageTicketBRL(Number(e.target.value));
-                  trackConversionEvent('calculate_roi', {
-                    ticket: Number(e.target.value),
-                    savings: monthlySavings,
-                  });
-                }}
-                className="w-full accent-emerald-600 cursor-pointer"
-              />
-              <div className="flex justify-between text-[11px] text-neutral-400 font-mono">
-                <span>R$ 25</span>
-                <span>R$ 90</span>
-                <span>R$ 180</span>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs font-medium">
-                <label htmlFor="slider-fee" className="text-neutral-700">
-                  Comissão cobrada pelo Marketplace (%)
-                </label>
-                <span className="font-mono font-bold text-neutral-950">
-                  {marketplaceFeePercent}%
-                </span>
-              </div>
-              <input
-                id="slider-fee"
-                type="range"
-                min={12}
-                max={27}
-                step={1}
-                value={marketplaceFeePercent}
-                onChange={(e) => setMarketplaceFeePercent(Number(e.target.value))}
-                className="w-full accent-emerald-600 cursor-pointer"
-              />
-              <div className="flex justify-between text-[11px] text-neutral-400 font-mono">
-                <span>12% (Básico)</span>
-                <span>18% (Média)</span>
-                <span>27% (Com Entrega do App)</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Result Card */}
-          <div className="lg:col-span-5 bg-neutral-50 border border-neutral-200 rounded-2xl p-6 space-y-4">
-            <div className="space-y-2.5 border-b border-neutral-200 pb-4 text-xs">
-              <div className="flex justify-between">
-                <span className="text-neutral-600">Faturamento Bruto:</span>
-                <span className="font-mono font-semibold text-neutral-900">
-                  {formatBRL(grossMonthlyRevenue)}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-neutral-600">Comissão Retida no App ({marketplaceFeePercent}%):</span>
-                <span className="font-mono font-semibold text-red-600">
-                  - {formatBRL(marketplaceMonthlyCost)} / mês
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-neutral-600">Mensalidade Fixa Aladay:</span>
-                <span className="font-mono font-semibold text-emerald-700">
-                  R$ 129,90 / mês
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <p className="text-xs text-neutral-500 font-medium">
-                Lucro Extra que fica no seu bolso todo mês:
-              </p>
-              <p className="text-3xl font-black text-emerald-700 font-mono">
-                {formatBRL(monthlySavings)} / mês
-              </p>
-              <p className="text-xs font-mono text-neutral-600">
-                Ou seja, <strong>{formatBRL(annualSavings)} a mais por ano</strong> para investir no seu negócio.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => handleTrackedSignup('calculator_result_cta')}
-              className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs"
-            >
-              <Calculator className="w-4 h-4" />
-              <span>Quero Economizar {formatBRL(monthlySavings)}/mês</span>
+            <button type="button" onClick={onNavigateToDemoMenu} className="inline-flex min-h-11 items-center justify-center gap-2 border border-white/20 px-5 py-3 text-sm font-bold transition hover:bg-white hover:text-slate-950">
+              Abrir demonstração interativa <ExternalLink className="h-4 w-4" />
             </button>
-          </div>
-        </div>
-      </section>
-
-      {/* ================================================================== */}
-      {/* 6. CAMINHO EVIDENTE: BANNER FINAL DE CONVERSÃO & CONTATO           */}
-      {/* ================================================================== */}
-      <section className="bg-neutral-950 text-white rounded-3xl p-8 sm:p-12 text-center relative overflow-hidden shadow-xl">
-        <div className="max-w-2xl mx-auto space-y-6 relative z-10">
-          <span className="inline-block px-3 py-1 bg-emerald-950 border border-emerald-800 text-emerald-400 text-xs font-semibold rounded-full">
-            Teste Grátis por 15 Dias &middot; Sem Compromisso
-          </span>
-          <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
-            Coloque seu cardápio próprio no ar hoje mesmo com 15 dias grátis.
-          </h2>
-          <p className="text-sm sm:text-base text-neutral-400 max-w-xl mx-auto leading-relaxed">
-            Cadastre seu período de teste grátis de 15 dias em menos de 1 minuto, configure seus produtos e comece a receber pedidos no WhatsApp com Pix 100% na sua conta bancária.
-          </p>
-
-          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-            <button
-              type="button"
-              onClick={() => handleTrackedSignup('bottom_banner_primary')}
-              className="px-7 py-4 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 text-sm font-bold rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer"
-            >
-              <span>Começar 15 Dias de Teste Grátis</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleScrollToPhoneDemo('bottom_banner_demo')}
-              className="px-6 py-4 bg-neutral-900 hover:bg-neutral-800 text-white text-sm font-semibold rounded-xl border border-neutral-800 transition-colors flex items-center gap-2 cursor-pointer shadow-xs"
-            >
-              <Smartphone className="w-4 h-4 text-emerald-400" />
-              <span>Testar Demonstração no Celular</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleTrackedWhatsApp('bottom_banner_whatsapp')}
-              className="px-5 py-4 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 text-sm font-medium rounded-xl border border-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
-            >
-              <PhoneCall className="w-4 h-4 text-emerald-400" />
-              <span>Tirar Dúvidas no WhatsApp</span>
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {/* ================================================================== */}
-      {/* 7. MODAL DE SOLICITAÇÃO DE PROPOSTA (REDES & FRANQUIAS)           */}
-      {/* ================================================================== */}
-      {isProposalModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl border border-neutral-200 relative animate-in fade-in duration-150">
-            <div className="flex items-center justify-between border-b border-neutral-200 pb-4">
-              <div>
-                <h3 className="text-lg font-bold text-neutral-950">
-                  Solicitar Proposta para Redes &amp; Franquias
-                </h3>
-                <p className="text-xs text-neutral-500 mt-0.5">
-                  Preencha os dados da sua operação para receber contato personalizado.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsProposalModalOpen(false)}
-                className="text-neutral-400 hover:text-neutral-700 p-1 rounded-lg"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {proposalSent ? (
-              <div className="p-6 text-center space-y-3 bg-emerald-50 rounded-xl border border-emerald-200 text-emerald-950">
-                <CheckCircle2 className="w-10 h-10 text-emerald-600 mx-auto" />
-                <h4 className="font-bold text-sm">Solicitação Recebida com Sucesso!</h4>
-                <p className="text-xs text-neutral-600">
-                  Redirecionando para o canal direto do WhatsApp para envio da sua proposta comercial...
-                </p>
-              </div>
-            ) : (
-              <form onSubmit={handleSubmitProposal} className="space-y-4 text-xs">
-                <div>
-                  <label className="block font-medium text-neutral-700 mb-1">
-                    Seu Nome Completo *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={proposalForm.name}
-                    onChange={(e) => setProposalForm({ ...proposalForm, name: e.target.value })}
-                    placeholder="Ex: Carlos Eduardo Mendes"
-                    className="w-full px-3 py-2.5 rounded-lg border border-neutral-300 focus:outline-emerald-600 text-neutral-900"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block font-medium text-neutral-700 mb-1">
-                      Nome do Restaurante / Marca *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={proposalForm.restaurantName}
-                      onChange={(e) => setProposalForm({ ...proposalForm, restaurantName: e.target.value })}
-                      placeholder="Ex: Smash Bros Burger"
-                      className="w-full px-3 py-2.5 rounded-lg border border-neutral-300 focus:outline-emerald-600 text-neutral-900"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-medium text-neutral-700 mb-1">
-                      Número de Unidades *
-                    </label>
-                    <select
-                      value={proposalForm.storesCount}
-                      onChange={(e) => setProposalForm({ ...proposalForm, storesCount: e.target.value })}
-                      className="w-full px-3 py-2.5 rounded-lg border border-neutral-300 focus:outline-emerald-600 text-neutral-900 bg-white"
-                    >
-                      <option value="2 a 3 lojas">2 a 3 lojas</option>
-                      <option value="4 a 8 lojas">4 a 8 lojas</option>
-                      <option value="9 a 20 lojas">9 a 20 lojas</option>
-                      <option value="Mais de 20 lojas (Franquia)">Mais de 20 lojas (Franquia)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block font-medium text-neutral-700 mb-1">
-                      WhatsApp Comercial *
-                    </label>
-                    <input
-                      type="tel"
-                      required
-                      value={proposalForm.whatsapp}
-                      onChange={(e) => setProposalForm({ ...proposalForm, whatsapp: e.target.value })}
-                      placeholder="(11) 99999-9999"
-                      className="w-full px-3 py-2.5 rounded-lg border border-neutral-300 focus:outline-emerald-600 text-neutral-900"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-medium text-neutral-700 mb-1">
-                      Cidade e Estado *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={proposalForm.city}
-                      onChange={(e) => setProposalForm({ ...proposalForm, city: e.target.value })}
-                      placeholder="São Paulo, SP"
-                      className="w-full px-3 py-2.5 rounded-lg border border-neutral-300 focus:outline-emerald-600 text-neutral-900"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block font-medium text-neutral-700 mb-1">
-                    E-mail Corporativo (Opcional)
-                  </label>
-                  <input
-                    type="email"
-                    value={proposalForm.email}
-                    onChange={(e) => setProposalForm({ ...proposalForm, email: e.target.value })}
-                    placeholder="contato@restaurante.com.br"
-                    className="w-full px-3 py-2.5 rounded-lg border border-neutral-300 focus:outline-emerald-600 text-neutral-900"
-                  />
-                </div>
-
-                <div className="pt-2">
-                  <button
-                    type="submit"
-                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    <Send className="w-4 h-4" />
-                    <span>Enviar Solicitação de Proposta</span>
+          </FadeIn>
+          <div className="mt-12 grid gap-10 lg:grid-cols-[.76fr_1.24fr] lg:items-center">
+            <div className="space-y-2" role="tablist" aria-label="Telas da Aladay">
+              {DEMO_SCREENS.map((screen) => {
+                const isActive = activeDemo.id === screen.id;
+                return (
+                  <button key={screen.id} type="button" role="tab" aria-selected={isActive} onClick={() => setActiveDemo(screen)} className={`w-full border-l-2 px-5 py-5 text-left transition ${isActive ? 'border-sky-400 bg-white/8' : 'border-white/10 hover:border-white/30 hover:bg-white/5'}`}>
+                    <span className={`text-[11px] font-bold uppercase ${isActive ? 'text-sky-400' : 'text-slate-500'}`}>{screen.eyebrow}</span>
+                    <span className="mt-1 block text-lg font-bold">{screen.label}</span>
+                    <span className="mt-2 block text-sm leading-relaxed text-slate-400">{screen.description}</span>
                   </button>
-                </div>
-              </form>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ================================================================== */}
-      {/* 8. MODAL DE DEMONSTRAÇÃO COMPLETA DA OPERAÇÃO ALADAY             */}
-      {/* ================================================================== */}
-      {isGuidedDemoModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 space-y-6 shadow-2xl border border-neutral-200 relative animate-in fade-in duration-150 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-neutral-200 pb-4">
-              <div>
-                <span className="text-xs font-semibold text-emerald-700 uppercase tracking-wider">
-                  Tour Operacional Aladay
-                </span>
-                <h3 className="text-xl font-black text-neutral-950 mt-0.5">
-                  Como Funciona do Pedido à Entrega
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsGuidedDemoModalOpen(false)}
-                className="text-neutral-400 hover:text-neutral-700 p-1.5 rounded-lg hover:bg-neutral-100 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+                );
+              })}
             </div>
-
-            {/* 3 Step Interactive Visual Cards */}
-            <div className="space-y-4">
-              {/* Step 1 */}
-              <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-neutral-900 flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">1</span>
-                    Cliente Acessa o Cardápio no Celular
-                  </span>
-                  <span className="text-emerald-700 font-mono font-semibold">Sem App &middot; 100% Web</span>
-                </div>
-                <p className="text-xs text-neutral-600 leading-relaxed pl-8">
-                  O cliente clica no link da sua bio do Instagram ou escaneia o QR Code na mesa. Navega pelas categorias, seleciona adicionais e opções com fotos reais e fecha o pedido em segundos.
-                </p>
-              </div>
-
-              {/* Step 2 */}
-              <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200 space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-emerald-950 flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-full bg-emerald-700 text-white flex items-center justify-center text-xs font-bold">2</span>
-                    Pix 100% Direto na Conta do seu Banco
-                  </span>
-                  <span className="text-emerald-700 font-mono font-bold">0% Comissão Retida</span>
-                </div>
-                <p className="text-xs text-neutral-700 leading-relaxed pl-8">
-                  O QR Code e o código Pix Copia e Cola são gerados instantaneamente com a chave Pix cadastrada pelo seu restaurante. O dinheiro entra na hora na sua conta bancária PJ.
-                </p>
-              </div>
-
-              {/* Step 3 */}
-              <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-neutral-900 flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-full bg-neutral-900 text-white flex items-center justify-center text-xs font-bold">3</span>
-                    Cozinha KDS &amp; WhatsApp Automático
-                  </span>
-                  <span className="text-neutral-500 font-mono">Evolution API</span>
-                </div>
-                <p className="text-xs text-neutral-600 leading-relaxed pl-8">
-                  A cozinha visualiza o pedido no painel Kanban. Quando avança para &ldquo;Em Preparo&rdquo; ou &ldquo;Saiu para Entrega&rdquo;, o cliente recebe atualizações em tempo real pelo WhatsApp com link de rastreio.
-                </p>
-              </div>
-            </div>
-
-            {/* Modal Actions */}
-            <div className="pt-2 border-t border-neutral-200 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsGuidedDemoModalOpen(false);
-                  handleScrollToPhoneDemo('modal_demo_cta');
-                }}
-                className="flex-1 py-3.5 px-4 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Smartphone className="w-4 h-4 text-emerald-400" />
-                <span>Testar Cardápio no Celular Interativo</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setIsGuidedDemoModalOpen(false);
-                  handleTrackedSignup('modal_signup_cta');
-                }}
-                className="flex-1 py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs"
-              >
-                <span>Criar Meu Cardápio por R$ 129,90/mês</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+            <div className="relative min-h-[500px] overflow-hidden rounded-lg border border-white/10 bg-[#0b1220] p-5 sm:min-h-[600px] sm:p-8">
+              <div className="absolute inset-x-0 top-0 h-1 bg-blue-600" />
+              <AnimatePresence mode="wait">
+                <motion.div key={activeDemo.id} initial={reduceMotion ? undefined : { opacity: 0, y: 14 }} animate={reduceMotion ? undefined : { opacity: 1, y: 0 }} exit={reduceMotion ? undefined : { opacity: 0, y: -10 }} className="flex min-h-[540px] items-center justify-center">
+                  <div className={`overflow-hidden bg-white shadow-[0_30px_80px_rgba(0,0,0,.5)] ${activeDemo.id === 'management' ? 'w-full max-w-2xl border-[6px] border-slate-800' : 'h-[540px] w-[276px] rounded-[34px] border-[8px] border-slate-800'}`}>
+                    <img src={activeDemo.image} alt={activeDemo.imageAlt} className={`h-full w-full ${activeDemo.id === 'management' ? 'object-contain' : 'object-cover object-top'}`} loading="lazy" decoding="async" />
+                  </div>
+                </motion.div>
+              </AnimatePresence>
             </div>
           </div>
         </div>
-      )}
+      </section>
 
-      {/* ================================================================== */}
-      {/* 9. PRIVACY & LGPD COOKIE CONSENT BANNER (MEDIÇÃO COM PRIVACIDADE)   */}
-      {/* ================================================================== */}
+      <section className="bg-white px-6 py-20 sm:px-10 lg:py-28">
+        <div className="mx-auto max-w-7xl">
+          <FadeIn className="flex items-end justify-between gap-6">
+            <div className="max-w-2xl"><p className="text-xs font-extrabold uppercase text-blue-600">Demonstrações rápidas</p><h2 className="mt-4 text-3xl font-extrabold sm:text-5xl">Veja como é simples usar a Aladay.</h2></div>
+            <div className="hidden gap-2 sm:flex">
+              <button type="button" onClick={() => reelsRef.current?.scrollBy({ left: -320, behavior: reduceMotion ? 'auto' : 'smooth' })} aria-label="Ver vídeos anteriores" className="flex h-11 w-11 items-center justify-center border border-slate-300 transition hover:bg-slate-950 hover:text-white"><ChevronLeft className="h-5 w-5" /></button>
+              <button type="button" onClick={() => reelsRef.current?.scrollBy({ left: 320, behavior: reduceMotion ? 'auto' : 'smooth' })} aria-label="Ver próximos vídeos" className="flex h-11 w-11 items-center justify-center border border-slate-300 transition hover:bg-slate-950 hover:text-white"><ChevronRight className="h-5 w-5" /></button>
+            </div>
+          </FadeIn>
+          <div ref={reelsRef} className="mt-10 flex snap-x snap-mandatory gap-4 overflow-x-auto pb-4">
+            {REELS.map((reel) => (
+              <button key={reel.id} type="button" onClick={() => setActiveReel(reel)} className="group relative aspect-[9/16] w-[250px] shrink-0 snap-start overflow-hidden rounded-lg bg-slate-900 text-left sm:w-[280px]">
+                <img src={reel.poster} alt={reel.posterAlt} className="h-full w-full object-cover object-top opacity-80 transition duration-500 group-hover:scale-[1.03] group-hover:opacity-65" loading="lazy" decoding="async" />
+                <span className="absolute inset-0 bg-gradient-to-t from-black via-black/10 to-transparent" />
+                <span className="absolute left-4 top-4 border border-white/30 bg-black/45 px-2 py-1 text-[10px] font-bold text-white backdrop-blur">EP. {reel.duration}</span>
+                <span className="absolute left-1/2 top-1/2 flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white text-slate-950 shadow-xl transition group-hover:scale-110"><Play className="ml-1 h-5 w-5 fill-current" /></span>
+                <span className="absolute bottom-5 left-5 right-5 text-lg font-bold text-white">{reel.title}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="border-y border-slate-200 bg-[#f5f7fa] px-6 py-20 sm:px-10 lg:py-28">
+        <div className="mx-auto max-w-7xl">
+          <FadeIn className="text-center"><p className="text-xs font-extrabold uppercase text-blue-600">Comece em três movimentos</p><h2 className="mx-auto mt-4 max-w-3xl text-3xl font-extrabold sm:text-5xl">Do primeiro cadastro ao primeiro pedido.</h2></FadeIn>
+          <div className="relative mt-14 grid gap-8 lg:grid-cols-3">
+            <div className="absolute left-[17%] right-[17%] top-10 hidden h-px bg-slate-300 lg:block" />
+            {HOW_IT_WORKS.map((step) => (
+              <FadeIn key={step.number} className="relative bg-[#f5f7fa] text-center">
+                <div className="relative z-10 mx-auto flex h-20 w-20 items-center justify-center border border-slate-300 bg-white text-blue-600 shadow-sm"><step.icon className="h-7 w-7" /></div>
+                <p className="mt-6 text-[11px] font-extrabold text-blue-600">ETAPA {step.number}</p><h3 className="mt-2 text-xl font-bold">{step.title}</h3><p className="mx-auto mt-3 max-w-xs text-sm leading-relaxed text-slate-600">{step.description}</p>
+              </FadeIn>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="px-6 py-20 sm:px-10 lg:py-24">
+        <FadeIn className="relative mx-auto grid max-w-7xl overflow-hidden rounded-lg bg-blue-600 text-white lg:grid-cols-[1fr_.72fr]">
+          <div className="relative z-10 p-8 sm:p-12 lg:p-16">
+            <p className="text-xs font-extrabold uppercase text-blue-100">Seu canal próprio de vendas</p>
+            <h2 className="mt-4 max-w-2xl text-3xl font-extrabold sm:text-5xl">Seu restaurante merece uma experiência digital melhor.</h2>
+            <p className="mt-5 text-base text-blue-100">Comece a modernizar seu atendimento com a Aladay.</p>
+            <button type="button" onClick={() => handleSignup('promotional_banner')} className="mt-8 inline-flex min-h-12 items-center gap-2 bg-white px-6 py-3 text-sm font-bold text-blue-700 transition hover:bg-slate-950 hover:text-white">Experimentar gratuitamente <ArrowRight className="h-4 w-4" /></button>
+          </div>
+          <div className="relative min-h-72 overflow-hidden bg-slate-950">
+            <img src={PHONE_CAPTURE} alt="Cardápio Aladay em um smartphone" className="absolute left-1/2 top-8 h-[500px] w-[255px] -translate-x-1/2 rotate-[3deg] rounded-[30px] border-[7px] border-slate-900 object-cover object-top shadow-2xl" loading="lazy" decoding="async" />
+          </div>
+        </FadeIn>
+      </section>
+
+      <section id="planos" className="scroll-mt-24 bg-white px-6 py-20 sm:px-10 lg:py-28">
+        <div className="mx-auto max-w-7xl">
+          <FadeIn className="mx-auto max-w-3xl text-center"><p className="text-xs font-extrabold uppercase text-blue-600">Planos reais, sem comissão</p><h2 className="mt-4 text-3xl font-extrabold sm:text-5xl">Uma assinatura. O controle continua seu.</h2><p className="mt-5 text-base leading-relaxed text-slate-600">Escolha entre economia anual no cartão ou a flexibilidade do plano mensal com 15 dias grátis.</p></FadeIn>
+          <div className="mx-auto mt-12 grid max-w-5xl gap-5 lg:grid-cols-2">
+            <div className="rounded-lg border border-slate-200 bg-white p-7 sm:p-9">
+              <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-extrabold uppercase text-slate-500">Plano Pro</p><h3 className="mt-2 text-2xl font-bold">Anual no cartão</h3></div><span className="bg-emerald-100 px-3 py-1 text-[10px] font-extrabold uppercase text-emerald-800">Economize R$ 370,80/ano</span></div>
+              <div className="mt-8 border-y border-slate-200 py-6"><span className="text-4xl font-extrabold">R$ 99,00</span><span className="text-sm text-slate-500"> /mês</span><p className="mt-2 text-xs font-semibold text-slate-500">12 parcelas no cartão de crédito</p></div>
+              <ul className="mt-7 space-y-3 text-sm text-slate-700">{['Cardápio, pedidos e produtos ilimitados', 'Painel, KDS e automações de WhatsApp', 'Pix direto na conta da loja', 'Controle de mesas, garçons e relatórios'].map((item) => <li key={item} className="flex items-start gap-3"><Check className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />{item}</li>)}</ul>
+              <button type="button" onClick={() => { setPlanCycle('YEARLY'); handleSignup('pricing_yearly', 'YEARLY'); }} className="mt-8 flex min-h-12 w-full items-center justify-center gap-2 bg-slate-950 px-5 text-sm font-bold text-white transition hover:bg-blue-600">Escolher plano anual <ArrowRight className="h-4 w-4" /></button>
+            </div>
+            <div className="relative overflow-hidden rounded-lg border-2 border-blue-600 bg-slate-950 p-7 text-white sm:p-9">
+              <span className="absolute right-0 top-0 bg-blue-600 px-3 py-2 text-[10px] font-extrabold uppercase">Teste grátis disponível</span>
+              <p className="text-xs font-extrabold uppercase text-sky-400">Plano Pro</p><h3 className="mt-2 text-2xl font-bold">Mensal</h3>
+              <div className="mt-8 border-y border-white/15 py-6"><span className="text-4xl font-extrabold">R$ 129,90</span><span className="text-sm text-slate-400"> /mês</span><p className="mt-2 text-xs font-semibold text-sky-400">R$ 0 hoje. Cobrança após 15 dias.</p></div>
+              <ul className="mt-7 space-y-3 text-sm text-slate-300">{['Todos os recursos do Plano Pro', '15 dias para experimentar a plataforma', 'Sem fidelidade: cancele quando quiser', 'Pix, cartão de crédito ou boleto'].map((item) => <li key={item} className="flex items-start gap-3"><Check className="mt-0.5 h-4 w-4 shrink-0 text-sky-400" />{item}</li>)}</ul>
+              <button type="button" onClick={() => { setPlanCycle('MONTHLY'); handleSignup('pricing_monthly', 'MONTHLY'); }} className="mt-8 flex min-h-12 w-full items-center justify-center gap-2 bg-blue-600 px-5 text-sm font-bold text-white transition hover:bg-blue-500">Começar 15 dias grátis <ArrowRight className="h-4 w-4" /></button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="calculadora" className="scroll-mt-24 border-y border-slate-200 bg-[#f5f7fa] px-6 py-20 sm:px-10 lg:py-24">
+        <div className="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[1fr_.85fr] lg:items-center">
+          <FadeIn>
+            <p className="text-xs font-extrabold uppercase text-blue-600">Calculadora de margem</p><h2 className="mt-4 text-3xl font-extrabold sm:text-4xl">Quanto uma operação direta pode preservar?</h2><p className="mt-4 text-sm leading-relaxed text-slate-600">A estimativa compara a comissão informada com a assinatura da Aladay. O resultado varia conforme o seu volume real.</p>
+            <div className="mt-8 space-y-7">
+              <label htmlFor="orders" className="block"><span className="flex justify-between text-sm font-semibold"><span>Pedidos por mês</span><strong>{monthlyOrders}</strong></span><input id="orders" type="range" min="50" max="1500" step="50" value={monthlyOrders} onChange={(event) => setMonthlyOrders(Number(event.target.value))} className="mt-3 w-full accent-blue-600" /></label>
+              <label htmlFor="ticket" className="block"><span className="flex justify-between text-sm font-semibold"><span>Ticket médio</span><strong>{formatBRL(averageTicket)}</strong></span><input id="ticket" type="range" min="25" max="180" step="5" value={averageTicket} onChange={(event) => setAverageTicket(Number(event.target.value))} className="mt-3 w-full accent-blue-600" /></label>
+              <label htmlFor="fee" className="block"><span className="flex justify-between text-sm font-semibold"><span>Comissão do marketplace</span><strong>{marketplaceFee}%</strong></span><input id="fee" type="range" min="12" max="27" step="1" value={marketplaceFee} onChange={(event) => setMarketplaceFee(Number(event.target.value))} className="mt-3 w-full accent-blue-600" /></label>
+            </div>
+          </FadeIn>
+          <FadeIn className="rounded-lg bg-slate-950 p-8 text-white sm:p-10">
+            <p className="text-xs font-extrabold uppercase text-sky-400">Estimativa mensal</p><p className="mt-5 text-sm text-slate-400">Valor potencialmente preservado depois da assinatura:</p><p className="mt-2 text-4xl font-extrabold sm:text-5xl">{formatBRL(monthlySavings)}</p><p className="mt-3 text-sm text-slate-400">ou {formatBRL(monthlySavings * 12)} em 12 meses</p>
+            <div className="mt-7 grid grid-cols-2 gap-2 bg-white/5 p-1"><button type="button" onClick={() => setPlanCycle('YEARLY')} className={`px-3 py-2 text-xs font-bold ${planCycle === 'YEARLY' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>Anual · R$ 99</button><button type="button" onClick={() => setPlanCycle('MONTHLY')} className={`px-3 py-2 text-xs font-bold ${planCycle === 'MONTHLY' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>Mensal · R$ 129,90</button></div>
+            <button type="button" onClick={() => handleSignup('calculator')} className="mt-6 flex min-h-12 w-full items-center justify-center gap-2 bg-white px-5 text-sm font-bold text-slate-950 transition hover:bg-blue-600 hover:text-white">Testar a Aladay <ArrowRight className="h-4 w-4" /></button>
+          </FadeIn>
+        </div>
+      </section>
+
+      <section className="bg-white px-6 py-20 sm:px-10 lg:py-28">
+        <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[.7fr_1.3fr]">
+          <FadeIn><p className="text-xs font-extrabold uppercase text-blue-600">Dúvidas frequentes</p><h2 className="mt-4 text-3xl font-extrabold sm:text-5xl">Antes de colocar o cardápio no ar.</h2><button type="button" onClick={openSupportWhatsApp} className="mt-7 inline-flex items-center gap-2 text-sm font-bold text-blue-700 hover:text-blue-500">Falar com a equipe <MessageCircle className="h-4 w-4" /></button></FadeIn>
+          <div className="border-t border-slate-200">
+            {FAQS.map((item, index) => {
+              const isOpen = openFaq === index;
+              return (
+                <div key={item.question} className="border-b border-slate-200">
+                  <button type="button" onClick={() => setOpenFaq(isOpen ? null : index)} aria-expanded={isOpen} aria-controls={`faq-answer-${index}`} className="flex w-full items-center justify-between gap-6 py-6 text-left text-base font-bold sm:text-lg"><span>{item.question}</span><ChevronDown className={`h-5 w-5 shrink-0 text-blue-600 transition-transform ${isOpen ? 'rotate-180' : ''}`} /></button>
+                  <AnimatePresence initial={false}>{isOpen && <motion.div id={`faq-answer-${index}`} initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden"><p className="max-w-3xl pb-6 text-sm leading-relaxed text-slate-600">{item.answer}</p></motion.div>}</AnimatePresence>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-slate-950 px-6 py-20 text-white sm:px-10 lg:py-28">
+        <FadeIn className="mx-auto max-w-4xl text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center bg-blue-600"><Sparkles className="h-5 w-5" /></div><h2 className="mt-7 text-3xl font-extrabold sm:text-5xl">Pronto para modernizar seu restaurante?</h2><p className="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-slate-400">Crie seu cardápio, organize a operação e ofereça uma jornada mais simples para quem compra de você.</p>
+          <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row"><button type="button" onClick={() => handleSignup('final_cta')} className="inline-flex min-h-12 items-center justify-center gap-2 bg-blue-600 px-7 text-sm font-bold text-white transition hover:bg-blue-500">Começar meu teste grátis <ArrowRight className="h-4 w-4" /></button><button type="button" onClick={authSession ? onNavigateToAdmin : onNavigateToLogin} className="inline-flex min-h-12 items-center justify-center border border-white/20 px-7 text-sm font-bold text-white transition hover:bg-white hover:text-slate-950">{authSession ? 'Ir para meu painel' : 'Já tenho uma conta'}</button></div>
+        </FadeIn>
+      </section>
+
+      <footer className="border-t border-white/10 bg-slate-950 px-6 pb-10 text-slate-500 sm:px-10">
+        <div className="mx-auto flex max-w-7xl flex-col justify-between gap-5 border-t border-white/10 pt-8 text-xs sm:flex-row sm:items-center">
+          <div className="flex items-center gap-2 font-bold text-white"><span className="flex h-7 w-7 items-center justify-center bg-blue-600">A</span> Aladay</div>
+          <div className="flex flex-wrap gap-5">{onNavigateToTerms && <button type="button" onClick={onNavigateToTerms} className="hover:text-white">Termos de Uso</button>}{onNavigateToPrivacy && <button type="button" onClick={onNavigateToPrivacy} className="hover:text-white">Política de Privacidade</button>}<button type="button" onClick={openSupportWhatsApp} className="hover:text-white">Atendimento</button></div>
+          <span>© {new Date().getFullYear()} Aladay</span>
+        </div>
+      </footer>
+
+      <AnimatePresence>
+        {activeReel && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} role="dialog" aria-modal="true" aria-label={activeReel.title} className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/95 p-4 backdrop-blur-md" onClick={() => setActiveReel(null)}>
+            <button type="button" onClick={() => setActiveReel(null)} aria-label="Fechar vídeo" className="absolute right-5 top-5 flex h-11 w-11 items-center justify-center border border-white/20 text-white hover:bg-white hover:text-slate-950"><X className="h-5 w-5" /></button>
+            <div className="relative aspect-[9/16] h-[80vh] max-h-[760px] overflow-hidden rounded-lg bg-black shadow-2xl" onClick={(event) => event.stopPropagation()}>
+              {activeReel.videoSrc ? <video src={activeReel.videoSrc} poster={activeReel.poster} controls playsInline preload="metadata" className="h-full w-full object-cover" /> : (
+                <div className="relative h-full w-full"><img src={activeReel.poster} alt={activeReel.posterAlt} className="h-full w-full object-cover object-top opacity-75" /><div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/20" /><div className="absolute inset-x-6 bottom-8 text-white"><p className="text-[10px] font-bold uppercase text-sky-400">Demonstração visual</p><h3 className="mt-2 text-2xl font-bold">{activeReel.title}</h3><p className="mt-3 text-sm leading-relaxed text-slate-300">A estrutura aceita arquivos MP4 e WebM. Enquanto o vídeo oficial não é publicado, esta captura real preserva a fidelidade ao produto.</p></div></div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {cookieConsent === 'pending' && (
-        <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-md z-50 bg-white border border-neutral-300 rounded-2xl p-5 shadow-2xl text-xs space-y-3">
-          <div className="flex items-start gap-2.5">
-            <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <p className="font-bold text-neutral-950">Privacidade &amp; Métricas (LGPD)</p>
-              <p className="text-neutral-600 leading-relaxed text-[11px]">
-                Utilizamos cookies essenciais para o funcionamento do site e, com seu consentimento, métricas de navegação anônimas via Google Analytics 4 para aprimorar o serviço.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              type="button"
-              onClick={handleAcceptAllCookies}
-              className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs transition-colors cursor-pointer text-center"
-            >
-              Aceitar Métricas
-            </button>
-            <button
-              type="button"
-              onClick={handleRejectCookies}
-              className="py-2 px-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-medium rounded-lg text-xs transition-colors cursor-pointer"
-            >
-              Apenas Essenciais
-            </button>
-          </div>
+        <div className="fixed bottom-4 left-4 right-4 z-[70] rounded-lg border border-slate-300 bg-white p-5 text-xs shadow-2xl sm:left-auto sm:right-6 sm:max-w-md">
+          <div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" /><div><p className="font-bold text-slate-950">Privacidade e métricas</p><p className="mt-1 leading-relaxed text-slate-600">Usamos cookies essenciais e, com sua autorização, métricas anônimas para melhorar a experiência.</p></div></div>
+          <div className="mt-4 flex gap-2"><button type="button" onClick={() => { setConsentStatus('granted'); setCookieConsent('granted'); initGA4(); }} className="flex-1 bg-blue-600 px-4 py-2 font-bold text-white hover:bg-blue-700">Aceitar métricas</button><button type="button" onClick={() => { setConsentStatus('denied'); setCookieConsent('denied'); }} className="px-4 py-2 font-semibold text-slate-700 hover:bg-slate-100">Apenas essenciais</button></div>
         </div>
       )}
     </div>

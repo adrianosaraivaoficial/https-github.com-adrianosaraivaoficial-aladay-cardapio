@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Database, GitCommit, ShieldAlert, Cpu, ArrowRight, CheckCircle2, Copy, Check } from 'lucide-react';
+import { Database, GitCommit, ShieldAlert, Copy, Check } from 'lucide-react';
 
 export const TechDiagramsView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'outbox' | 'rls' | 'states'>('outbox');
