@@ -10,11 +10,6 @@ import fs from 'fs';
 import pg from 'pg';
 import QRCode from 'qrcode';
 import { GoogleGenAI } from '@google/genai';
-import jwt from 'jsonwebtoken';
-import helmet from 'helmet';
-import cookieParser from 'cookie-parser';
-import Redis from 'ioredis';
-import { initializeModularMonolith } from './modules/index.ts';
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -295,37 +290,8 @@ class EphemeralRedisCoordinator {
   private readonly cacheStore = new Map<string, EphemeralCacheEntry<any>>();
   private readonly sessionStore = new Map<string, EphemeralCacheEntry<any>>();
   private readonly rateLimitStore = new Map<string, { count: number; resetAt: number }>();
-  private readonly revokedSessionsStore = new Set<string>();
   private readonly outboxQueue: string[] = [];
   public readonly configuredUrl = process.env.REDIS_URL || '';
-  private redisClient: Redis | null = null;
-  private isConnected = false;
-
-  constructor() {
-    if (this.configuredUrl && this.configuredUrl.trim()) {
-      try {
-        this.redisClient = new Redis(this.configuredUrl.trim(), {
-          lazyConnect: true,
-          maxRetriesPerRequest: 1,
-          connectTimeout: 4000,
-          enableOfflineQueue: false,
-          retryStrategy: (times) => Math.min(times * 500, 5000),
-        });
-        this.redisClient.on('connect', () => {
-          this.isConnected = true;
-          console.log('[Redis] Conectado com sucesso para Cache, Rate Limit e Sessões.');
-        });
-        this.redisClient.on('error', (err) => {
-          this.isConnected = false;
-        });
-        this.redisClient.connect().catch(() => {
-          this.isConnected = false;
-        });
-      } catch (err: any) {
-        console.warn('[Redis] Fallback para gerenciador seguro em memória:', err.message);
-      }
-    }
-  }
 
   // 1. Cache de Leitura Efêmero (ex: Catálogo Público com TTL curto e invalidação imediata em escritas)
   getCache<T>(key: string): T | null {
@@ -354,7 +320,7 @@ class EphemeralRedisCoordinator {
     }
   }
 
-  // 2. Sessão Efêmera (Contexto de Conversa WhatsApp, Tokens e Revogação)
+  // 2. Sessão Efêmera (Contexto de Conversa WhatsApp e Códigos OTP 2FA com TTL)
   getSession<T>(key: string): T | null {
     const entry = this.sessionStore.get(`sess:${key}`);
     if (!entry) return null;
@@ -370,24 +336,10 @@ class EphemeralRedisCoordinator {
       value,
       expiresAt: Date.now() + ttlMs,
     });
-    if (this.redisClient && this.isConnected) {
-      try {
-        this.redisClient.set(`sess:${key}`, JSON.stringify(value), 'PX', ttlMs).catch(() => {});
-      } catch {
-        // ignore
-      }
-    }
   }
 
   deleteSession(key: string): void {
     this.sessionStore.delete(`sess:${key}`);
-    if (this.redisClient && this.isConnected) {
-      try {
-        this.redisClient.del(`sess:${key}`).catch(() => {});
-      } catch {
-        // ignore
-      }
-    }
   }
 
   clearSessionsByPrefix(prefix = ''): void {
@@ -399,65 +351,7 @@ class EphemeralRedisCoordinator {
     }
   }
 
-  // Revogação de Sessão (JTI / SID)
-  revokeSession(jti: string, ttlMs = 7 * 24 * 60 * 60 * 1000): void {
-    if (!jti) return;
-    this.revokedSessionsStore.add(jti);
-    if (this.redisClient && this.isConnected) {
-      try {
-        this.redisClient.set(`sess_revoked:${jti}`, '1', 'PX', ttlMs).catch(() => {});
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  isSessionRevoked(jti: string): boolean {
-    if (!jti) return true;
-    return this.revokedSessionsStore.has(jti);
-  }
-
-  async isSessionRevokedAsync(jti: string): Promise<boolean> {
-    if (!jti) return true;
-    if (this.revokedSessionsStore.has(jti)) return true;
-    if (this.redisClient && this.isConnected) {
-      try {
-        const exists = await this.redisClient.exists(`sess_revoked:${jti}`);
-        if (exists === 1) {
-          this.revokedSessionsStore.add(jti);
-          return true;
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return false;
-  }
-
-  // 3. Rate Limiting (Janelas por Conta + IP com Redis e fallback em memória)
-  async checkRateLimitAsync(key: string, maxRequests: number, windowMs: number): Promise<boolean> {
-    const fullKey = `rl:${key}`;
-    if (this.redisClient && this.isConnected) {
-      try {
-        const pipeline = this.redisClient.pipeline();
-        pipeline.incr(fullKey);
-        pipeline.pttl(fullKey);
-        const results = await pipeline.exec();
-        if (results && results[0] && !results[0][0]) {
-          const count = Number(results[0][1]);
-          const pttl = Number(results[1]?.[1]);
-          if (pttl === -1 || pttl === -2) {
-            await this.redisClient.pexpire(fullKey, windowMs);
-          }
-          return count <= maxRequests;
-        }
-      } catch {
-        // Fallback to in-memory store on connection glitch
-      }
-    }
-    return this.checkRateLimit(key, maxRequests, windowMs);
-  }
-
+  // 3. Rate Limiting (Janelas de proteção contra força bruta / abuso de API)
   checkRateLimit(key: string, maxRequests: number, windowMs: number): boolean {
     const fullKey = `rl:${key}`;
     const now = Date.now();
@@ -474,15 +368,7 @@ class EphemeralRedisCoordinator {
   }
 
   resetRateLimit(key: string): void {
-    const fullKey = `rl:${key}`;
-    this.rateLimitStore.delete(fullKey);
-    if (this.redisClient && this.isConnected) {
-      try {
-        this.redisClient.del(fullKey).catch(() => {});
-      } catch {
-        // ignore
-      }
-    }
+    this.rateLimitStore.delete(`rl:${key}`);
   }
 
   // 4. Fila de Sinalização do Outbox (O estado real do evento vive na tabela outbox_events do PostgreSQL)
@@ -494,82 +380,6 @@ class EphemeralRedisCoordinator {
       }
     }
   }
-}
-
-// ============================================================================
-// PII REDACTION & LGPD LOG SANITIZATION UTILITIES
-// ============================================================================
-function redactPhone(phone: any): string {
-  if (!phone || typeof phone !== 'string') return 'N/D';
-  const digits = phone.replace(/\D/g, '');
-  if (digits.length <= 4) return '****';
-  return `${digits.slice(0, 4)}****${digits.slice(-4)}`;
-}
-
-function redactAddress(address: any): string {
-  if (!address || typeof address !== 'string') return 'Endereço não informado';
-  const parts = address.split(',');
-  if (parts.length > 1) {
-    return `${parts[0].trim()}, *** [Redigido LGPD]`;
-  }
-  return address.length > 10 ? `${address.substring(0, 8)}... [Redigido LGPD]` : '*** [Redigido LGPD]';
-}
-
-function redactToken(token: any): string {
-  if (!token || typeof token !== 'string') return '';
-  if (token.length < 12) return '***[redacted]';
-  return `${token.slice(0, 6)}...${token.slice(-4)}`;
-}
-
-function sanitizeLogPayload(obj: any, depth = 0): any {
-  if (depth > 5) return '[Max Depth]';
-  if (!obj || typeof obj !== 'object') {
-    return obj;
-  }
-  if (Array.isArray(obj)) {
-    return obj.map((item) => sanitizeLogPayload(item, depth + 1));
-  }
-  const sensitiveKeys = new Set([
-    'password',
-    'passwordhash',
-    'token',
-    'authorization',
-    'refreshtoken',
-    'accesstoken',
-    'apikey',
-    'clientsecret',
-    'creditcardnumber',
-    'ccv',
-    'cvv',
-    'secret',
-    'pixkey',
-  ]);
-
-  const sanitized: Record<string, any> = {};
-  for (const [k, v] of Object.entries(obj)) {
-    const lowerKey = k.toLowerCase().replace(/[^a-z]/g, '');
-    if (sensitiveKeys.has(lowerKey)) {
-      sanitized[k] = '[REDACTED]';
-    } else if (
-      lowerKey.includes('phone') ||
-      lowerKey === 'telefone' ||
-      lowerKey === 'senderphone' ||
-      lowerKey === 'customerphone'
-    ) {
-      sanitized[k] = typeof v === 'string' ? redactPhone(v) : v;
-    } else if (
-      lowerKey.includes('address') ||
-      lowerKey === 'endereco' ||
-      lowerKey === 'customeraddress'
-    ) {
-      sanitized[k] = typeof v === 'string' ? redactAddress(v) : v;
-    } else if (typeof v === 'object' && v !== null) {
-      sanitized[k] = sanitizeLogPayload(v, depth + 1);
-    } else {
-      sanitized[k] = v;
-    }
-  }
-  return sanitized;
 }
 
 const redisCoordinator = new EphemeralRedisCoordinator();
@@ -1275,51 +1085,19 @@ async function startServer() {
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
 
-  // Parse JSON payloads and Cookies (HttpOnly session tokens)
+  // Limit JSON request payload size to prevent DoS memory exhaustion
   app.use(express.json({ limit: '1mb' }));
-  app.use(cookieParser());
 
-  // Global HTTP Security Headers (OWASP & Helmet Hardening com CSP Real e sem X-XSS legado)
-  app.use(
-    helmet({
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdnjs.cloudflare.com"],
-          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-          fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
-          imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
-          connectSrc: [
-            "'self'",
-            "https://fonts.googleapis.com",
-            "https://fonts.gstatic.com",
-            "https://aladay.com.br",
-            "https://api.asaas.com",
-            "https://sandbox.asaas.com",
-            "https://merchant-api.ifood.com.br",
-            "https://wa.me",
-            "wss:",
-            "ws:",
-          ],
-          mediaSrc: ["'self'", "blob:", "data:", "https:"],
-          frameSrc: ["'self'", "https:"],
-          objectSrc: ["'none'"],
-          baseUri: ["'self'"],
-          formAction: ["'self'"],
-          frameAncestors: ["'self'", "*"],
-        },
-      },
-      xXssProtection: false, // Helmet moderno desabilita X-XSS-Protection por ser legado e inseguro
-      frameguard: false, // Permite renderização controlada dentro do ambiente de preview iFrame
-      crossOriginEmbedderPolicy: false,
-      crossOriginResourcePolicy: { policy: 'cross-origin' },
-      referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
-      hsts: process.env.NODE_ENV === 'production' ? { maxAge: 31536000, includeSubDomains: true } : false,
-    })
-  );
-
-  app.use((_req: Request, res: Response, next: express.NextFunction) => {
+  // Global HTTP Security Headers (OWASP Hardening)
+  app.use((req: Request, res: Response, next: express.NextFunction) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    if (process.env.NODE_ENV === 'production' || req.secure) {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
     next();
   });
 
@@ -1343,38 +1121,44 @@ async function startServer() {
   }
 
   // ============================================================================
-  // P2 MODULAR MONOLITH: Mount isolated modules (auth, tenants, catalog, orders, payments, billing, whatsapp, ifood, webhooks)
-  // ============================================================================
-  initializeModularMonolith(app, pgPool, redisCoordinator);
-
-  // ============================================================================
   // SECURITY & MULTI-TENANT AUTHENTICATION GUARDS (OWASP / LGPD COMPLIANCE)
   // ============================================================================
   const JWT_SECRET =
     process.env.JWT_SECRET ||
     crypto.createHash('sha256').update(`aladay_runtime_jwt_${__dirname}`).digest('hex');
-  const JWT_ISSUER = 'https://aladay.com.br';
-  const JWT_AUDIENCE = 'https://aladay.com.br';
-  const JWT_ALGORITHM = 'HS256';
+
+  function base64UrlEncode(input: string | Buffer): string {
+    return Buffer.from(input)
+      .toString('base64')
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+  }
 
   function verifyJwtToken(token: string): any | null {
     try {
-      if (!token || typeof token !== 'string') return null;
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
+      const [headerB64, payloadB64, signature] = parts;
+      if (!headerB64 || !payloadB64 || !signature) return null;
 
-      // Validação estrita de alg, iss, aud, exp, nbf através de jsonwebtoken
-      const claims = jwt.verify(token, JWT_SECRET, {
-        algorithms: [JWT_ALGORITHM],
-        issuer: JWT_ISSUER,
-        audience: JWT_AUDIENCE,
-        clockTolerance: 5,
-      }) as any;
+      const expectedSignature = crypto
+        .createHmac('sha256', JWT_SECRET)
+        .update(`${headerB64}.${payloadB64}`)
+        .digest('base64')
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_');
 
-      if (!claims || !claims.sub || !claims.role) {
+      const sigBuf = Buffer.from(signature);
+      const expBuf = Buffer.from(expectedSignature);
+      if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
         return null;
       }
 
-      // Verificação de revogação/sessão no Redis / Coordenador Efêmero
-      if (claims.jti && redisCoordinator.isSessionRevoked(claims.jti)) {
+      const claims = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf-8'));
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (!claims || !claims.sub || !claims.role || !claims.exp || claims.exp < nowSec) {
         return null;
       }
 
@@ -1384,28 +1168,17 @@ async function startServer() {
     }
   }
 
-  function revokeSessionId(sessionId: string): void {
-    if (!sessionId) return;
-    redisCoordinator.revokeSession(sessionId);
-    redisCoordinator.deleteSession(`active_session:${sessionId}`);
-  }
-
   const authenticateToken = (req: Request, res: Response, next: express.NextFunction) => {
     const authHeader = req.headers['authorization'];
-    let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-    if (!token && (req as any).cookies?.aladay_session_token) {
-      token = (req as any).cookies.aladay_session_token;
-    }
-
+    const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
     if (!token) {
       return res.status(401).json({ error: 'Acesso não autorizado: token JWT ausente.' });
     }
     const claims = verifyJwtToken(token);
     if (!claims) {
-      return res.status(401).json({ error: 'Token JWT inválido, expirado ou revogado.' });
+      return res.status(401).json({ error: 'Token JWT inválido ou expirado.' });
     }
     (req as any).user = claims;
-    (req as any).sessionId = claims.jti;
     next();
   };
 
@@ -1441,9 +1214,6 @@ async function startServer() {
   }
   function checkRateLimit(key: string, maxRequests: number, windowMs: number): boolean {
     return redisCoordinator.checkRateLimit(key, maxRequests, windowMs);
-  }
-  async function checkRateLimitAsync(key: string, maxRequests: number, windowMs: number): Promise<boolean> {
-    return redisCoordinator.checkRateLimitAsync(key, maxRequests, windowMs);
   }
 
   // API Health Check (Queries PostgreSQL directly when active)
@@ -4826,46 +4596,27 @@ async function startServer() {
     }
   });
 
-  // Webhook Logs Query Endpoint (Protected: requires authentication and redacts PII/tokens)
-  app.get('/api/v1/webhooks/logs', authenticateToken, (req: Request, res: Response) => {
+  // Webhook Logs Query Endpoint
+  app.get('/api/v1/webhooks/logs', (req: Request, res: Response) => {
     const { instance, limit } = req.query;
-    const user = (req as any).user;
     let logs = [...memoryWebhookLogs];
-
-    // RBAC: Non-superadmins only view webhook logs scoped to their tenant
-    if (user && user.role !== 'SUPER_ADMIN' && user.tenantSlug) {
-      logs = logs.filter((l) => {
-        const inst = String(l.instance || '');
-        const slug = String(l.tenantSlug || '');
-        return inst.includes(user.tenantSlug) || slug === user.tenantSlug || !l.instance;
-      });
-    }
-
     if (instance) {
       logs = logs.filter((l) => l.instance === String(instance));
     }
-    const max = Math.min(Number(limit) || 30, 100);
-    const sanitizedLogs = logs.slice(0, max).map((l) => ({
-      ...l,
-      senderPhone: redactPhone(l.senderPhone),
-      messageText: l.messageText ? String(l.messageText).slice(0, 200) : '',
-      fullPayload: sanitizeLogPayload(l.fullPayload),
-    }));
-
-    res.json({ data: sanitizedLogs, total: logs.length });
+    const max = Number(limit) || 30;
+    res.json({ data: logs.slice(0, max), total: logs.length });
   });
 
   // Evolution API Webhook endpoint (Real inbound from Easypanel)
   app.post('/api/v1/webhooks/evolution', (req: Request, res: Response) => {
-    const { event, instance, data } = req.body || {};
+    const { event, instance, data } = req.body;
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     console.log(`[Evolution API Webhook] Recebido evento: ${event} para instância ${instance}`);
 
     const key = data?.key || {};
     const isGroup = key.remoteJid?.includes('@g.us');
     const fromMe = key.fromMe === true;
-    const rawCustomerPhone = key.remoteJid?.replace('@s.whatsapp.net', '') || 'Desconhecido';
-    const customerPhone = redactPhone(rawCustomerPhone);
+    const customerPhone = key.remoteJid?.replace('@s.whatsapp.net', '') || 'Desconhecido';
     const messageText = data?.message?.conversation || data?.message?.extendedTextMessage?.text || '';
 
     const newLog = {
@@ -4875,11 +4626,11 @@ async function startServer() {
       eventType: event || 'MESSAGES_UPSERT',
       instance: instance || 'instancia_brasas_burger',
       senderPhone: customerPhone,
-      messageText: messageText ? String(messageText).slice(0, 200) : '',
+      messageText,
       direction: 'inbound',
       status: (fromMe || isGroup) ? 'filtered' : 'success',
       payloadSummary: fromMe ? 'Mensagem enviada por mim (ignorada pelo bot)' : isGroup ? 'Mensagem em grupo (ignorada pelo bot)' : `Mensagem válida recebida de ${customerPhone}`,
-      fullPayload: sanitizeLogPayload(req.body),
+      fullPayload: req.body,
     };
 
     memoryWebhookLogs.unshift(newLog);
@@ -6763,8 +6514,10 @@ async function startServer() {
     detail: string;
   }> = [];
 
-  function signJwtToken(user: InMemAuthUser, existingSessionId?: string) {
-    const sessionId = existingSessionId || `sid_${crypto.randomBytes(16).toString('hex')}`;
+  function signJwtToken(user: InMemAuthUser) {
+    const header = { alg: 'HS256', typ: 'JWT', kid: 'aladay-cloudflare-2026' };
+    const iat = Math.floor(Date.now() / 1000);
+    const exp = iat + 60 * 60 * 12; // 12 hours
     const claims = {
       sub: user.id,
       name: user.name,
@@ -6772,53 +6525,41 @@ async function startServer() {
       role: user.role,
       tenant_id: user.tenantId,
       tenant_slug: user.tenantSlug,
-      permissions: user.permissions || ['tenant:full_access'],
+      permissions: user.permissions,
+      iss: 'https://aladay.com.br',
+      iat,
+      exp,
     };
 
-    const token = jwt.sign(claims, JWT_SECRET, {
-      algorithm: JWT_ALGORITHM,
-      issuer: JWT_ISSUER,
-      audience: JWT_AUDIENCE,
-      expiresIn: '1h', // Access token curto de 1h
-      jwtid: sessionId,
-      notBefore: 0,
-    });
-
-    redisCoordinator.setSession(
-      `active_session:${sessionId}`,
-      { userId: user.id, tenantSlug: user.tenantSlug },
-      7 * 24 * 60 * 60 * 1000
-    );
-
-    const decoded = jwt.decode(token) as any;
+    const encodedHeader = base64UrlEncode(JSON.stringify(header));
+    const encodedPayload = base64UrlEncode(JSON.stringify(claims));
+    const signature = crypto
+      .createHmac('sha256', JWT_SECRET)
+      .update(`${encodedHeader}.${encodedPayload}`)
+      .digest('base64')
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
 
     return {
-      token,
-      claims: decoded,
-      sessionId,
+      token: `${encodedHeader}.${encodedPayload}.${signature}`,
+      claims,
     };
   }
 
-  // POST /api/v1/auth/login (E-mail & Senha com Rate Limiting Redis por Conta + IP, Scrypt e Proteção Timing-Safe)
+  // POST /api/v1/auth/login (E-mail & Senha com Rate Limiting, Scrypt e Proteção Timing-Safe)
   app.post('/api/v1/auth/login', async (req: Request, res: Response) => {
     const clientIp = getClientIp(req);
-    const { email, password } = req.body || {};
-    const cleanEmail = String(email || '').trim().toLowerCase();
-    const rateKeyAccount = `login:acct:${cleanEmail}:${clientIp}`;
-    const rateKeyIp = `login:ip:${clientIp}`;
-
-    const [accountAllowed, ipAllowed] = await Promise.all([
-      redisCoordinator.checkRateLimitAsync(rateKeyAccount, 10, 5 * 60 * 1000), // Max 10 por conta+IP
-      redisCoordinator.checkRateLimitAsync(rateKeyIp, 30, 5 * 60 * 1000), // Max 30 por IP
-    ]);
-
-    if (!accountAllowed || !ipAllowed) {
+    const rateKey = `login_${clientIp}`;
+    if (!checkRateLimit(rateKey, 40, 5 * 60 * 1000)) {
       return res.status(429).json({
         success: false,
         error: 'Muitas tentativas de login consecutivas. Por favor, aguarde alguns minutos antes de tentar novamente.',
       });
     }
 
+    const { email, password, clientSessionUser, clientTenant } = req.body;
+    const cleanEmail = String(email || '').trim().toLowerCase();
     const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     let user = memoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
@@ -6873,17 +6614,9 @@ async function startServer() {
     }
 
     // Reset rate limit counter on successful login
-    redisCoordinator.resetRateLimit(rateKeyAccount);
+    redisCoordinator.resetRateLimit(rateKey);
 
-    const { token, claims, sessionId } = signJwtToken(user);
-
-    // Emissão de Cookie HttpOnly, Secure, SameSite=Lax (sem expor JWT longo em localStorage)
-    res.cookie('aladay_session_token', token, {
-      httpOnly: true,
-      secure: req.secure || process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    const { token, claims } = signJwtToken(user);
 
     memoryAuthAuditLogs.unshift({
       id: `audit_${Date.now()}`,
@@ -6895,18 +6628,17 @@ async function startServer() {
       method: 'password',
       ip: clientIp,
       status: 'SUCCESS',
-      detail: `JWT emitido com sucesso (sid=${sessionId}). Escopo RLS: tenant_slug=${user.tenantSlug} (${user.role}).`,
+      detail: `JWT emitido com sucesso. Escopo RLS: tenant_slug=${user.tenantSlug} (${user.role}).`,
     });
 
     res.json({
       success: true,
       token,
-      sessionId,
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
-        phone: redactPhone(user.phone),
+        phone: user.phone,
         role: user.role,
         tenantId: user.tenantId,
         tenantSlug: user.tenantSlug,
@@ -7086,20 +6818,16 @@ async function startServer() {
     }
   });
 
-  // GET /api/v1/auth/session (Garante sessão válida com validação real no banco, rotação de JTI e HttpOnly cookie)
+  // GET /api/v1/auth/session (Garante sessão válida assinada com o JWT_SECRET atual da VPS)
   app.get('/api/v1/auth/session', async (req: Request, res: Response) => {
     const authHeader = req.headers['authorization'];
-    let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-    if (!token && (req as any).cookies?.aladay_session_token) {
-      token = (req as any).cookies.aladay_session_token;
-    }
-
+    const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
     const claims = token ? verifyJwtToken(token) : null;
 
     if (!claims || !claims.sub) {
       return res.status(401).json({
         success: false,
-        error: 'Sessão inválida, expirada ou revogada.',
+        error: 'Sessão inválida ou não autenticada.',
       });
     }
 
@@ -7123,51 +6851,35 @@ async function startServer() {
           };
         }
       } catch {
-        // db query error
+        // fallback to claims
       }
     }
 
-    // P1 SECURITY GUARD: Se o usuário não existe no banco ou memória, NUNCA renovar com os claims! Revogar e rejeitar!
     if (!targetUser) {
-      console.warn(`[Segurança Auth] Tentativa de renovação para usuário revogado/inexistente: ${claims.sub}`);
-      if (claims.jti) {
-        revokeSessionId(claims.jti);
-      }
-      res.clearCookie('aladay_session_token', {
-        httpOnly: true,
-        secure: req.secure || process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-      });
-      return res.status(401).json({
-        success: false,
-        error: 'Sessão revogada: usuário inexistente ou desativado.',
-      });
+      targetUser = {
+        id: claims.sub,
+        name: claims.name || 'Usuário',
+        email: claims.email || 'user@aladay.com.br',
+        passwordHash: '',
+        phone: '',
+        role: claims.role || 'TENANT_OWNER',
+        tenantId: claims.tenant_id || '',
+        tenantSlug: claims.tenant_slug || '',
+        tenantName: claims.tenant_slug || 'Restaurante',
+        permissions: claims.permissions || ['tenant:full_access'],
+      };
     }
 
-    // Rotação de sessão: revoga o JTI anterior para impedir replay e emite novo token
-    if (claims.jti) {
-      revokeSessionId(claims.jti);
-    }
-
-    const { token: freshToken, claims: freshClaims, sessionId: newSessionId } = signJwtToken(targetUser);
-
-    // Renova o cookie HttpOnly
-    res.cookie('aladay_session_token', freshToken, {
-      httpOnly: true,
-      secure: req.secure || process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    const { token: freshToken, claims: freshClaims } = signJwtToken(targetUser);
 
     return res.json({
       success: true,
       token: freshToken,
-      sessionId: newSessionId,
       user: {
         id: targetUser.id,
         name: targetUser.name,
         email: targetUser.email,
-        phone: redactPhone(targetUser.phone),
+        phone: targetUser.phone,
         role: targetUser.role,
         tenantId: targetUser.tenantId,
         tenantSlug: targetUser.tenantSlug,
@@ -7178,54 +6890,20 @@ async function startServer() {
     });
   });
 
-  // POST /api/v1/auth/logout (Revogação ativa de sessão JTI e limpeza de cookies HttpOnly)
-  app.post('/api/v1/auth/logout', (req: Request, res: Response) => {
-    const authHeader = req.headers['authorization'];
-    let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-    if (!token && (req as any).cookies?.aladay_session_token) {
-      token = (req as any).cookies.aladay_session_token;
-    }
-
-    if (token) {
-      try {
-        const decoded = jwt.decode(token) as any;
-        if (decoded?.jti) {
-          revokeSessionId(decoded.jti);
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    res.clearCookie('aladay_session_token', {
-      httpOnly: true,
-      secure: req.secure || process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-    });
-
-    return res.json({
-      success: true,
-      message: 'Sessão revogada e encerrada com sucesso.',
-    });
-  });
-
   // POST /api/v1/auth/whatsapp-otp/request (Dispara código 6 dígitos real via Evolution API aladay)
   app.post('/api/v1/auth/whatsapp-otp/request', async (req: Request, res: Response) => {
     const clientIp = getClientIp(req);
-    const { email, phone } = req.body || {};
-    const cleanEmail = String(email || '').trim().toLowerCase();
-    const cleanPhone = String(phone || '').replace(/\D/g, '');
-    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-    // Compound rate limit: by account+IP and IP threshold
-    const accountAllowed = await checkRateLimitAsync(`otp:req:${cleanEmail || 'blank'}:${clientIp}`, 3, 10 * 60 * 1000);
-    const ipAllowed = await checkRateLimitAsync(`otp:req:ip:${clientIp}`, 10, 10 * 60 * 1000);
-    if (!accountAllowed || !ipAllowed) {
+    if (!checkRateLimit(`otp_${clientIp}`, 3, 10 * 60 * 1000)) {
       return res.status(429).json({
         success: false,
         error: 'Limite de solicitações de código excedido. Por favor, aguarde 10 minutos para solicitar outro código.',
       });
     }
+
+    const { email, phone } = req.body || {};
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const cleanPhone = String(phone || '').replace(/\D/g, '');
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     if (!cleanEmail || !cleanPhone) {
       return res.status(400).json({
@@ -7309,7 +6987,6 @@ async function startServer() {
       }
     }
 
-    const maskedPhone = redactPhone(cleanPhone);
     memoryAuthAuditLogs.unshift({
       id: `audit_otp_${Date.now()}`,
       timestamp: currentTime,
@@ -7320,16 +6997,16 @@ async function startServer() {
       method: 'whatsapp_otp',
       ip: clientIp,
       status: 'OTP_SENT',
-      detail: `Código OTP de 6 dígitos enviado via WhatsApp para +${maskedPhone} (${whatsappDelivered ? 'Entregue na Evolution API' : 'Gerado no servidor'}).`,
+      detail: `Código OTP de 6 dígitos enviado via WhatsApp para +${cleanPhone} (${whatsappDelivered ? 'Entregue na Evolution API' : 'Gerado no servidor'}).`,
     });
 
     return res.json({
       success: true,
       whatsappDelivered,
-      targetPhone: maskedPhone,
+      targetPhone: cleanPhone,
       email: user.email,
       message: whatsappDelivered
-        ? `Código de 6 dígitos enviado para o seu WhatsApp (+${maskedPhone}).`
+        ? `Código de 6 dígitos enviado para o seu WhatsApp (+${cleanPhone}).`
         : `Solicitação de código processada para ${user.email}. Verifique seu WhatsApp.`,
     });
   });
@@ -7337,20 +7014,17 @@ async function startServer() {
   // POST /api/v1/auth/whatsapp-otp/verify (Valida o OTP de 6 dígitos com expiração e rate-limit e emite o JWT)
   app.post('/api/v1/auth/whatsapp-otp/verify', async (req: Request, res: Response) => {
     const clientIp = getClientIp(req);
-    const { email, code } = req.body || {};
-    const cleanEmail = String(email || '').trim().toLowerCase();
-    const cleanCode = String(code || '').trim();
-    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-    // Compound rate limit: account+IP and IP
-    const accountAllowed = await checkRateLimitAsync(`otp:verify:${cleanEmail || 'blank'}:${clientIp}`, 5, 10 * 60 * 1000);
-    const ipAllowed = await checkRateLimitAsync(`otp:verify:ip:${clientIp}`, 15, 10 * 60 * 1000);
-    if (!accountAllowed || !ipAllowed) {
+    if (!checkRateLimit(`otp_verify_${clientIp}`, 5, 10 * 60 * 1000)) {
       return res.status(429).json({
         success: false,
         error: 'Muitas tentativas de verificação de código. Aguarde 10 minutos.',
       });
     }
+
+    const { email, code } = req.body || {};
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const cleanCode = String(code || '').trim();
+    const currentTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     const stored =
       (await redisCoordinator.getSession<{ code: string; email: string; expiresAt: number }>(`otp:${cleanEmail}`)) ||
@@ -7407,15 +7081,6 @@ async function startServer() {
     memoryOtpCodes.delete(cleanEmail);
     const { token, claims } = signJwtToken(user);
 
-    // Set HttpOnly, Secure, SameSite=Lax cookie for enterprise session storage
-    res.cookie('aladay_session_token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-      path: '/',
-    });
-
     memoryAuthAuditLogs.unshift({
       id: `audit_otp_ok_${Date.now()}`,
       timestamp: currentTime,
@@ -7426,7 +7091,7 @@ async function startServer() {
       method: 'whatsapp_otp',
       ip: clientIp,
       status: 'SUCCESS',
-      detail: `Login Passwordless via WhatsApp OTP confirmado! Sessão ${claims.jti} emitida para ${user.role} (${user.tenantSlug}).`,
+      detail: `Login Passwordless via WhatsApp OTP confirmado! JWT emitido para ${user.role} (${user.tenantSlug}).`,
     });
 
     return res.json({
@@ -7436,7 +7101,7 @@ async function startServer() {
         id: user.id,
         name: user.name,
         email: user.email,
-        phone: redactPhone(user.phone),
+        phone: user.phone,
         role: user.role,
         tenantId: user.tenantId,
         tenantSlug: user.tenantSlug,

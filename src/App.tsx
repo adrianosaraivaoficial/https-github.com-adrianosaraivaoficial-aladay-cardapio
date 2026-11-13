@@ -415,17 +415,8 @@ export default function App() {
 
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => {
     try {
-      const savedSession = sessionStorage.getItem('aladay_auth_session');
-      if (savedSession) return JSON.parse(savedSession);
-      const legacySaved = localStorage.getItem('aladay_auth_session');
-      if (legacySaved) {
-        const parsed = JSON.parse(legacySaved);
-        // Migrate to sessionStorage and remove from long-lived localStorage
-        sessionStorage.setItem('aladay_auth_session', legacySaved);
-        localStorage.removeItem('aladay_auth_session');
-        return parsed;
-      }
-      return null;
+      const saved = localStorage.getItem('aladay_auth_session');
+      return saved ? JSON.parse(saved) : null;
     } catch {
       return null;
     }
@@ -655,11 +646,11 @@ export default function App() {
     };
   }, [catalogsByTenant]);
 
-  // Synchronize and refresh session with backend via HttpOnly cookie and/or Bearer token
+  // Synchronize and refresh JWT session with backend if a token exists
   React.useEffect(() => {
+    if (!authSession?.token) return;
     fetch('/api/v1/auth/session', {
-      credentials: 'include',
-      headers: authSession?.token ? { Authorization: `Bearer ${authSession.token}` } : {},
+      headers: { Authorization: `Bearer ${authSession.token}` },
     })
       .then((res) => {
         if (res && res.status === 401) {
@@ -669,21 +660,16 @@ export default function App() {
         return res && res.ok ? res.json() : null;
       })
       .then((data) => {
-        if (data && data.success && data.user) {
-          const freshSession: AuthSession = {
-            token: data.token || authSession?.token || '',
-            user: data.user,
-            claims: data.claims || authSession?.claims,
-            authMethod: data.authMethod || authSession?.authMethod || 'password',
-            authenticatedAt: data.authenticatedAt || authSession?.authenticatedAt || new Date().toLocaleTimeString('pt-BR'),
-          };
-          setAuthSession(freshSession);
-          try {
-            sessionStorage.setItem('aladay_auth_session', JSON.stringify(freshSession));
-            localStorage.removeItem('aladay_auth_session');
-          } catch {
-            // ignore
-          }
+        if (data && data.success && data.token) {
+          setAuthSession((prev) => {
+            if (!prev) return null;
+            return {
+              ...prev,
+              token: data.token,
+              user: data.user || prev.user,
+              claims: data.claims || prev.claims,
+            };
+          });
         }
       })
       .catch(() => {});
@@ -1330,9 +1316,7 @@ export default function App() {
     setAuthSession(newSession);
     setShowSubscriptionNoticeModal(false);
     try {
-      // Store in transient sessionStorage and clear legacy long-lived localStorage
-      sessionStorage.setItem('aladay_auth_session', JSON.stringify(newSession));
-      localStorage.removeItem('aladay_auth_session');
+      localStorage.setItem('aladay_auth_session', JSON.stringify(newSession));
     } catch {
       // ignore
     }
@@ -1373,16 +1357,10 @@ export default function App() {
     setAuthSession(null);
     try {
       localStorage.removeItem('aladay_auth_session');
-      sessionStorage.removeItem('aladay_auth_session');
       sessionStorage.clear();
     } catch {
       // ignore
     }
-    // Call server to revoke JWT session in Redis and clear HttpOnly cookie
-    fetch('/api/v1/auth/logout', {
-      method: 'POST',
-      credentials: 'include',
-    }).catch(() => {});
     setKickoffSessionKey(Date.now());
     setCurrentView('home');
   };
