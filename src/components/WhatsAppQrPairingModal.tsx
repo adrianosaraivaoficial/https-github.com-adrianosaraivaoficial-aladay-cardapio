@@ -252,7 +252,7 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
     try {
       const token = (() => {
         try {
-          const raw = localStorage.getItem('aladay_auth_session_v1');
+          const raw = sessionStorage.getItem('aladay_auth_session') || localStorage.getItem('aladay_auth_session_v1');
           return raw ? JSON.parse(raw)?.token : null;
         } catch {
           return null;
@@ -260,6 +260,7 @@ export const WhatsAppQrPairingModal: React.FC<WhatsAppQrPairingModalProps> = ({
       })();
       const res = await fetch(`/api/v1/tenants/${tenant.slug}/evolution-config`, {
         method: 'PUT',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),

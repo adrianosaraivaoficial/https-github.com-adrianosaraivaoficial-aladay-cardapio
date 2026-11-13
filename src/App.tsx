@@ -415,8 +415,17 @@ export default function App() {
 
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => {
     try {
-      const saved = localStorage.getItem('aladay_auth_session');
-      return saved ? JSON.parse(saved) : null;
+      const savedSession = sessionStorage.getItem('aladay_auth_session');
+      if (savedSession) return JSON.parse(savedSession);
+      const legacySaved = localStorage.getItem('aladay_auth_session');
+      if (legacySaved) {
+        const parsed = JSON.parse(legacySaved);
+        // Migrate to sessionStorage and remove from long-lived localStorage
+        sessionStorage.setItem('aladay_auth_session', legacySaved);
+        localStorage.removeItem('aladay_auth_session');
+        return parsed;
+      }
+      return null;
     } catch {
       return null;
     }
@@ -646,11 +655,11 @@ export default function App() {
     };
   }, [catalogsByTenant]);
 
-  // Synchronize and refresh JWT session with backend if a token exists
+  // Synchronize and refresh session with backend via HttpOnly cookie and/or Bearer token
   React.useEffect(() => {
-    if (!authSession?.token) return;
     fetch('/api/v1/auth/session', {
-      headers: { Authorization: `Bearer ${authSession.token}` },
+      credentials: 'include',
+      headers: authSession?.token ? { Authorization: `Bearer ${authSession.token}` } : {},
     })
       .then((res) => {
         if (res && res.status === 401) {
@@ -660,16 +669,21 @@ export default function App() {
         return res && res.ok ? res.json() : null;
       })
       .then((data) => {
-        if (data && data.success && data.token) {
-          setAuthSession((prev) => {
-            if (!prev) return null;
-            return {
-              ...prev,
-              token: data.token,
-              user: data.user || prev.user,
-              claims: data.claims || prev.claims,
-            };
-          });
+        if (data && data.success && data.user) {
+          const freshSession: AuthSession = {
+            token: data.token || authSession?.token || '',
+            user: data.user,
+            claims: data.claims || authSession?.claims,
+            authMethod: data.authMethod || authSession?.authMethod || 'password',
+            authenticatedAt: data.authenticatedAt || authSession?.authenticatedAt || new Date().toLocaleTimeString('pt-BR'),
+          };
+          setAuthSession(freshSession);
+          try {
+            sessionStorage.setItem('aladay_auth_session', JSON.stringify(freshSession));
+            localStorage.removeItem('aladay_auth_session');
+          } catch {
+            // ignore
+          }
         }
       })
       .catch(() => {});
@@ -1316,7 +1330,9 @@ export default function App() {
     setAuthSession(newSession);
     setShowSubscriptionNoticeModal(false);
     try {
-      localStorage.setItem('aladay_auth_session', JSON.stringify(newSession));
+      // Store in transient sessionStorage and clear legacy long-lived localStorage
+      sessionStorage.setItem('aladay_auth_session', JSON.stringify(newSession));
+      localStorage.removeItem('aladay_auth_session');
     } catch {
       // ignore
     }
@@ -1357,10 +1373,16 @@ export default function App() {
     setAuthSession(null);
     try {
       localStorage.removeItem('aladay_auth_session');
+      sessionStorage.removeItem('aladay_auth_session');
       sessionStorage.clear();
     } catch {
       // ignore
     }
+    // Call server to revoke JWT session in Redis and clear HttpOnly cookie
+    fetch('/api/v1/auth/logout', {
+      method: 'POST',
+      credentials: 'include',
+    }).catch(() => {});
     setKickoffSessionKey(Date.now());
     setCurrentView('home');
   };
@@ -1812,13 +1834,22 @@ export default function App() {
                   Início
                 </button>
                 <a
-                  href="#demonstracao-celular"
+                  href="#recursos"
                   onClick={() => {
                     if (currentView !== 'home') handleNavigateSafely('home');
                   }}
                   className="hover:text-blue-600 transition-colors whitespace-nowrap shrink-0"
                 >
-                  Demonstração no Celular
+                  Recursos
+                </a>
+                <a
+                  href="#demonstracao"
+                  onClick={() => {
+                    if (currentView !== 'home') handleNavigateSafely('home');
+                  }}
+                  className="hover:text-blue-600 transition-colors whitespace-nowrap shrink-0"
+                >
+                  Como Funciona
                 </a>
                 <a
                   href="#planos"
@@ -1827,7 +1858,7 @@ export default function App() {
                   }}
                   className="hover:text-blue-600 transition-colors whitespace-nowrap shrink-0"
                 >
-                  Planos (a partir de R$ 99,00/mês)
+                  Planos (R$ 99/mês)
                 </a>
                 <a
                   href="#calculadora"
@@ -1836,7 +1867,16 @@ export default function App() {
                   }}
                   className="hover:text-blue-600 transition-colors whitespace-nowrap shrink-0"
                 >
-                  Calculadora de Economia
+                  Calculadora
+                </a>
+                <a
+                  href="#faq"
+                  onClick={() => {
+                    if (currentView !== 'home') handleNavigateSafely('home');
+                  }}
+                  className="hover:text-blue-600 transition-colors whitespace-nowrap shrink-0"
+                >
+                  Dúvidas
                 </a>
               </>
             )}
@@ -2034,14 +2074,24 @@ export default function App() {
                 Início
               </button>
               <a
-                href="#demonstracao-celular"
+                href="#recursos"
                 onClick={() => {
                   if (currentView !== 'home') handleNavigateSafely('home');
                   setIsMobileMenuOpen(false);
                 }}
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 bg-white text-slate-700 border border-slate-200 hover:bg-slate-100 transition-colors"
               >
-                Demonstração no Celular
+                Recursos
+              </a>
+              <a
+                href="#demonstracao"
+                onClick={() => {
+                  if (currentView !== 'home') handleNavigateSafely('home');
+                  setIsMobileMenuOpen(false);
+                }}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 bg-white text-slate-700 border border-slate-200 hover:bg-slate-100 transition-colors"
+              >
+                Como Funciona
               </a>
               <a
                 href="#planos"
@@ -2051,7 +2101,7 @@ export default function App() {
                 }}
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 bg-white text-slate-700 border border-slate-200 hover:bg-slate-100 transition-colors"
               >
-                Planos (R$ 99/mês Anual)
+                Planos (R$ 99/mês)
               </a>
               <a
                 href="#calculadora"
@@ -2186,14 +2236,24 @@ export default function App() {
                     Página Inicial
                   </button>
                   <a
-                    href="#demonstracao-celular"
+                    href="#recursos"
                     onClick={() => {
                       if (currentView !== 'home') handleNavigateSafely('home');
                       setIsMobileMenuOpen(false);
                     }}
                     className="block w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors"
                   >
-                    Demonstração no Celular
+                    Recursos da Plataforma
+                  </a>
+                  <a
+                    href="#demonstracao"
+                    onClick={() => {
+                      if (currentView !== 'home') handleNavigateSafely('home');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="block w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors"
+                  >
+                    Como Funciona &amp; Demonstração
                   </a>
                   <a
                     href="#planos"
@@ -2203,7 +2263,7 @@ export default function App() {
                     }}
                     className="block w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors"
                   >
-                    Planos &amp; Preço (R$ 99,00/mês Anual no Cartão ou R$ 129,90/mês)
+                    Planos (R$ 99,00/mês Anual ou R$ 129,90/mês)
                   </a>
                   <a
                     href="#calculadora"
@@ -2215,6 +2275,16 @@ export default function App() {
                   >
                     Calculadora de Economia
                   </a>
+                  <a
+                    href="#faq"
+                    onClick={() => {
+                      if (currentView !== 'home') handleNavigateSafely('home');
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="block w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors"
+                  >
+                    Dúvidas Frequentes
+                  </a>
                 </>
               )}
             </div>
@@ -2224,7 +2294,7 @@ export default function App() {
       )}
 
       {/* Main Content Viewport */}
-      <div className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
+      <div className={currentView === 'home' ? 'flex-1 w-full' : 'flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6'}>
         {currentView === 'home' && (
           <LandingPageView
             tenant={tenant}

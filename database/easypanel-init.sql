@@ -44,6 +44,8 @@ ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(30) NOT
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS status_notification_templates JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS pix_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS ifood_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS tables_count INTEGER NOT NULL DEFAULT 12;
 
 CREATE INDEX IF NOT EXISTS idx_tenants_slug ON tenants(slug);
 
@@ -109,6 +111,10 @@ CREATE TABLE IF NOT EXISTS orders (
   idempotency_key VARCHAR(120),
   pix_transaction JSONB,
   whatsapp_logs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  channel VARCHAR(30) DEFAULT 'DIGITAL_MENU',
+  ifood_order_id VARCHAR(80),
+  ifood_display_id VARCHAR(40),
+  ifood_pickup_code VARCHAR(40),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -119,9 +125,14 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimated_minutes INTEGER DEFAULT 35
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS whatsapp_status VARCHAR(40) DEFAULT 'delivered';
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS pix_transaction JSONB;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS whatsapp_logs JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS channel VARCHAR(30) DEFAULT 'DIGITAL_MENU';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS ifood_order_id VARCHAR(80);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS ifood_display_id VARCHAR(40);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS ifood_pickup_code VARCHAR(40);
 
 CREATE INDEX IF NOT EXISTS idx_orders_tenant_slug ON orders(tenant_slug);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_tenant_idempotency ON orders(tenant_slug, idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 -- 5. TABELA TRANSAÇÕES PIX DIRETO RESTAURANTE
 CREATE TABLE IF NOT EXISTS pix_transactions (
@@ -134,13 +145,25 @@ CREATE TABLE IF NOT EXISTS pix_transactions (
   psp VARCHAR(60) DEFAULT 'direct_bank',
   customer_name VARCHAR(120),
   customer_phone VARCHAR(30),
+  pix_key VARCHAR(160),
+  beneficiary_name VARCHAR(150),
+  merchant_name VARCHAR(60),
+  merchant_city VARCHAR(60),
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   end_to_end_id VARCHAR(100),
   paid_at TIMESTAMPTZ,
   expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE pix_transactions ADD COLUMN IF NOT EXISTS pix_key VARCHAR(160);
+ALTER TABLE pix_transactions ADD COLUMN IF NOT EXISTS beneficiary_name VARCHAR(150);
+ALTER TABLE pix_transactions ADD COLUMN IF NOT EXISTS merchant_name VARCHAR(60);
+ALTER TABLE pix_transactions ADD COLUMN IF NOT EXISTS merchant_city VARCHAR(60);
+ALTER TABLE pix_transactions ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 CREATE INDEX IF NOT EXISTS idx_pix_tenant_slug ON pix_transactions(tenant_slug);
+CREATE INDEX IF NOT EXISTS idx_pix_order_id ON pix_transactions(order_id);
 
 -- 6. TABELA OUTBOX PATTERN (FILA TRANSACIONAL DE EVENTOS PARA N8N / EVOLUTION API)
 CREATE TABLE IF NOT EXISTS outbox_events (
@@ -151,9 +174,14 @@ CREATE TABLE IF NOT EXISTS outbox_events (
   event_type VARCHAR(80) NOT NULL,
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   status VARCHAR(30) NOT NULL DEFAULT 'pending',
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
   processed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS last_error TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox_events(status);
 

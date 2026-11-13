@@ -13,6 +13,8 @@ services:
       - APP_URL=${APP_URL:-https://aladay.com.br}
       - DATABASE_URL=${DATABASE_URL}
       - PGSSLMODE=${PGSSLMODE:-disable}
+      - REQUIRE_POSTGRES=${REQUIRE_POSTGRES:-true}
+      - REDIS_URL=${REDIS_URL:-}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@aladay.com.br}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - EVOLUTION_API_URL=${EVOLUTION_API_URL:-https://agencia-evolution-api.2eoc7n.easypanel.host}

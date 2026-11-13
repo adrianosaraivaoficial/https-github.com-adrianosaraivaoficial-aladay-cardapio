@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   ArrowRight,
   LogIn,
@@ -19,6 +19,7 @@ import {
   Send,
   Lock,
   ChevronRight,
+  ChevronDown,
   PhoneCall,
   X,
   ChefHat,
@@ -32,6 +33,18 @@ import {
   Plus,
   Minus,
   ArrowLeft,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  RotateCcw,
+  Maximize2,
+  Layers,
+  FileSpreadsheet,
+  Printer,
+  SmartphoneCharging,
+  DollarSign,
+  HeartHandshake,
 } from 'lucide-react';
 import { AuthSession, RestaurantTenant } from '../types';
 import {
@@ -72,7 +85,7 @@ const DEMO_PRODUCTS: DemoProduct[] = [
     priceCents: 3890,
     description: 'Dois burgers artesanais 100g, queijo cheddar inglês fundido e fatias de bacon crocante.',
     badge: 'Mais Pedido',
-    imageUrl: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&auto=format&fit=crop&q=80',
+    imageUrl: '/src/assets/images/hero_food_burger_1794421911219.jpg',
   },
   {
     id: 'demo_2',
@@ -81,7 +94,7 @@ const DEMO_PRODUCTS: DemoProduct[] = [
     priceCents: 2490,
     description: 'Corte rústico artesanal temperado com flor de sal, alecrim fresco e dip cremoso.',
     badge: 'Crocante',
-    imageUrl: 'https://images.unsplash.com/photo-1573080496219-bb080dd4f877?w=400&auto=format&fit=crop&q=80',
+    imageUrl: '/src/assets/images/hero_food_burger_1794421911219.jpg',
   },
   {
     id: 'demo_3',
@@ -89,8 +102,8 @@ const DEMO_PRODUCTS: DemoProduct[] = [
     category: 'Pizzas',
     priceCents: 6200,
     description: 'Molho de tomate San Marzano, mozzarella di bufala fresca e manjericão no forno a lenha.',
-    badge: 'Receita Tradicional',
-    imageUrl: 'https://images.unsplash.com/photo-1604382355076-af4b0eb60143?w=400&auto=format&fit=crop&q=80',
+    badge: 'Forno a Lenha',
+    imageUrl: '/src/assets/images/reel_thumb_order_1794421913435.jpg',
   },
   {
     id: 'demo_4',
@@ -98,7 +111,155 @@ const DEMO_PRODUCTS: DemoProduct[] = [
     category: 'Bebidas',
     priceCents: 1290,
     description: 'Limões tahiti frescos batidos com leite condensado e folhas de hortelã orgânica.',
-    imageUrl: 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=400&auto=format&fit=crop&q=80',
+    imageUrl: '/src/assets/images/hero_restaurant_table_1794421912692.jpg',
+  },
+];
+
+interface ReelItem {
+  id: string;
+  title: string;
+  subtitle: string;
+  duration: string;
+  category: string;
+  thumbnailUrl: string;
+  accentColor: string;
+  storySteps: {
+    heading: string;
+    description: string;
+    badge: string;
+  }[];
+}
+
+const REELS_DATA: ReelItem[] = [
+  {
+    id: 'reel_cardapio',
+    title: 'Como funciona o cardápio digital',
+    subtitle: 'Navegação instantânea sem precisar baixar nenhum aplicativo.',
+    duration: '0:45',
+    category: 'Cliente',
+    thumbnailUrl: '/src/assets/images/reel_thumb_menu_1794421912943.jpg',
+    accentColor: 'from-blue-600/90 to-indigo-900/90',
+    storySteps: [
+      {
+        heading: '1. Acesso Imediato no Celular',
+        description: 'O cliente clica no link da sua bio do Instagram ou escaneia o QR Code na mesa. O menu carrega em menos de 1 segundo.',
+        badge: 'Zero Instalação',
+      },
+      {
+        heading: '2. Fotos em Alta Definição',
+        description: 'Apresentação visual com fotos apetitosas dos pratos, destaques para os mais vendidos e variações bem organizadas.',
+        badge: 'Cardápio Visual',
+      },
+      {
+        heading: '3. Adicionais & Observações',
+        description: 'O cliente escolhe o ponto da carne, adiciona queijo extra ou escreve observações sem complicação.',
+        badge: 'Customização Fácil',
+      },
+    ],
+  },
+  {
+    id: 'reel_pedido',
+    title: 'Como o cliente faz um pedido',
+    subtitle: 'Fluxo em 2 etapas otimizado para celulares rápidos.',
+    duration: '0:50',
+    category: 'Vendas',
+    thumbnailUrl: '/src/assets/images/hero_food_burger_1794421911219.jpg',
+    accentColor: 'from-amber-600/90 to-orange-950/90',
+    storySteps: [
+      {
+        heading: '1. Revisão Rápida na Sacola',
+        description: 'O cliente confere os itens, ajusta quantidades e visualiza o subtotal de forma transparente.',
+        badge: 'Etapa 1',
+      },
+      {
+        heading: '2. Dados de Entrega ou Retirada',
+        description: 'Preenchimento direto de nome, WhatsApp e endereço com cálculo automático de taxa de entrega.',
+        badge: 'Etapa 2',
+      },
+      {
+        heading: '3. Pix Direto & Envio Instantâneo',
+        description: 'O Pix entra na hora na conta do restaurante e o pedido cai direto no WhatsApp e na tela da cozinha.',
+        badge: 'Conclusão Segura',
+      },
+    ],
+  },
+  {
+    id: 'reel_qr',
+    title: 'Como funciona o QR Code de mesa',
+    subtitle: 'Atendimento no salão com comanda digital por mesa.',
+    duration: '0:40',
+    category: 'Salão',
+    thumbnailUrl: '/src/assets/images/reel_thumb_qr_1794421914081.jpg',
+    accentColor: 'from-emerald-600/90 to-teal-950/90',
+    storySteps: [
+      {
+        heading: '1. QR Code Único por Mesa',
+        description: 'Cada mesa possui sua identificação. O cliente escaneia com a câmera do celular sem chamar garçom.',
+        badge: 'Mesa Identificada',
+      },
+      {
+        heading: '2. Pedidos Vão Direto para a Cozinha',
+        description: 'Os pratos chegam organizados por número de mesa no painel KDS, acelerando o tempo de preparo.',
+        badge: 'Sem Fila',
+      },
+      {
+        heading: '3. Fechamento de Conta & 10%',
+        description: 'Divisão de conta facilitada entre amigos e inclusão opcional da taxa de 10% do garçom.',
+        badge: 'Conta Flexível',
+      },
+    ],
+  },
+  {
+    id: 'reel_whatsapp',
+    title: 'Como o pedido chega pelo WhatsApp',
+    subtitle: 'Notificações automáticas via Evolution API em tempo real.',
+    duration: '0:48',
+    category: 'Automação',
+    thumbnailUrl: '/src/assets/images/hero_restaurant_table_1794421912692.jpg',
+    accentColor: 'from-sky-600/90 to-blue-950/90',
+    storySteps: [
+      {
+        heading: '1. Mensagem de Confirmação',
+        description: 'Assim que o pedido é feito, o WhatsApp do cliente recebe um comprovante com os itens e o código Pix.',
+        badge: 'Imediato',
+      },
+      {
+        heading: '2. Atualizações a Cada Etapa',
+        description: 'A cozinha muda o status para "Em Preparo" ou "Saiu para Entrega", e o cliente é avisado automaticamente.',
+        badge: 'Fim do "Cadê o Pedido?"',
+      },
+      {
+        heading: '3. Link de Rastreio ao Vivo',
+        description: 'O cliente acompanha em tempo real o tempo estimado e a rota até sua casa.',
+        badge: 'Transparência Total',
+      },
+    ],
+  },
+  {
+    id: 'reel_kds',
+    title: 'Como a cozinha organiza no KDS',
+    subtitle: 'Hub centralizado que une pedidos próprios e do iFood.',
+    duration: '0:55',
+    category: 'Cozinha',
+    thumbnailUrl: '/src/assets/images/reel_thumb_order_1794421913435.jpg',
+    accentColor: 'from-rose-600/90 to-red-950/90',
+    storySteps: [
+      {
+        heading: '1. Colunas Kanban Inteligentes',
+        description: 'Pedidos organizados por: Recebidos, Em Preparo, Prontos e Despachados, com alertas sonoros e SLA visual.',
+        badge: 'Gestão Ágil',
+      },
+      {
+        heading: '2. Integração Oficial iFood',
+        description: 'Os pedidos do iFood entram no mesmo painel. Avançou no KDS, atualiza no aplicativo do cliente iFood.',
+        badge: 'Tela Única',
+      },
+      {
+        heading: '3. Impressão Térmica Automática',
+        description: 'Dispare vias para a cozinha, bar e motoboy com 1 clique ou impressão 100% automatizada.',
+        badge: 'Comanda Térmica',
+      },
+    ],
   },
 ];
 
@@ -116,7 +277,6 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
   // 1. Analytics & Privacy Consent State (LGPD / GDPR)
   // ---------------------------------------------------------------------------
   const [cookieConsent, setCookieConsent] = useState<ConsentStatus>('pending');
-  const [showConsentModal, setShowConsentModal] = useState<boolean>(false);
 
   useEffect(() => {
     const status = getConsentStatus();
@@ -125,7 +285,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
       initGA4();
     }
     trackConversionEvent('page_view', {
-      page_name: 'landing_home',
+      page_name: 'landing_home_v2',
       tenant_slug: tenant.slug,
     });
   }, [tenant.slug]);
@@ -133,13 +293,11 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
   const handleAcceptAllCookies = () => {
     setConsentStatus('granted');
     setCookieConsent('granted');
-    setShowConsentModal(false);
   };
 
   const handleRejectCookies = () => {
     setConsentStatus('denied');
     setCookieConsent('denied');
-    setShowConsentModal(false);
   };
 
   // ---------------------------------------------------------------------------
@@ -156,6 +314,9 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
   const [demoCustomerPhone, setDemoCustomerPhone] = useState<string>('');
   const [demoCustomerAddress, setDemoCustomerAddress] = useState<string>('');
   const [demoOrderSimulatedPix, setDemoOrderSimulatedPix] = useState<boolean>(false);
+
+  // Tab switch in "Veja em ação" showcase
+  const [actionTab, setActionTab] = useState<'menu' | 'bag' | 'pix' | 'whatsapp' | 'kds'>('menu');
 
   const demoCategories = ['Todos', 'Burgers', 'Pizzas', 'Acompanhamentos', 'Bebidas'];
 
@@ -233,10 +394,130 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
     val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 
   // ---------------------------------------------------------------------------
-  // 4. Modal de Proposta Personalizada (Redes & Franquias) & Demonstração Guiada
+  // 4. Hero Demo Video Player (Interactive 6-Scene Simulation Component)
+  // ---------------------------------------------------------------------------
+  const [activeSceneIndex, setActiveSceneIndex] = useState<number>(0);
+  const [isPlayingVideo, setIsPlayingVideo] = useState<boolean>(true);
+  const [isAudioMuted, setIsAudioMuted] = useState<boolean>(true);
+  const [heroViewMode, setHeroViewMode] = useState<'both' | 'video' | 'phone'>('both');
+  const videoIntervalRef = useRef<number | null>(null);
+
+  const heroScenes = [
+    {
+      step: 1,
+      title: 'Cliente acessa o QR Code',
+      badge: 'Mesa ou Bio',
+      description: 'O cliente aponta a câmera do celular para o QR Code da mesa ou clica no link da bio do Instagram.',
+      screen: 'qr',
+    },
+    {
+      step: 2,
+      title: 'Cardápio digital abre na hora',
+      badge: 'Sem Baixar App',
+      description: 'O menu Aladay carrega em menos de 1s diretamente no navegador móvel com fotos apetitosas.',
+      screen: 'menu',
+    },
+    {
+      step: 3,
+      title: 'Cliente escolhe os produtos',
+      badge: 'Personalização',
+      description: 'Seleção fácil de ponto da carne, queijos artesanais e adicionais com cálculo em tempo real.',
+      screen: 'customization',
+    },
+    {
+      step: 4,
+      title: 'Adiciona itens ao carrinho',
+      badge: 'Sacola 2 Passos',
+      description: 'Revisão rápida dos pratos, escolha entre Delivery ou Retirada e preenchimento ágil de dados.',
+      screen: 'bag',
+    },
+    {
+      step: 5,
+      title: 'Pedido vai para WhatsApp & KDS',
+      badge: 'Pix Direto',
+      description: 'O Pix entra na hora na conta do restaurante e o painel KDS da cozinha recebe a comanda.',
+      screen: 'whatsapp_kds',
+    },
+    {
+      step: 6,
+      title: 'Digitalize seu restaurante',
+      badge: 'Aladay 2.0',
+      description: 'Pronto! Seu restaurante modernizado, sem comissões abusivas e com controle total da operação.',
+      screen: 'brand',
+    },
+  ];
+
+  useEffect(() => {
+    if (!isPlayingVideo) {
+      if (videoIntervalRef.current) clearInterval(videoIntervalRef.current);
+      return;
+    }
+    videoIntervalRef.current = window.setInterval(() => {
+      setActiveSceneIndex((prev) => (prev + 1) % heroScenes.length);
+    }, 4500);
+    return () => {
+      if (videoIntervalRef.current) clearInterval(videoIntervalRef.current);
+    };
+  }, [isPlayingVideo, heroScenes.length]);
+
+  // ---------------------------------------------------------------------------
+  // 5. Reels Modal State
+  // ---------------------------------------------------------------------------
+  const [selectedReel, setSelectedReel] = useState<ReelItem | null>(null);
+  const [activeStoryStep, setActiveStoryStep] = useState<number>(0);
+
+  // ---------------------------------------------------------------------------
+  // 6. FAQ Accordion State
+  // ---------------------------------------------------------------------------
+  const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
+
+  const faqs = [
+    {
+      question: 'Como funciona o teste grátis de 15 dias da Aladay?',
+      answer:
+        'Você cadastra seu restaurante em menos de 1 minuto, sem precisar informar cartão de crédito no início. Durante 15 dias, você tem acesso total a todos os recursos Pro: cardápio digital ilimitado, QR Code para mesas, pedidos no WhatsApp, painel KDS de cozinha e Pix direto na sua conta bancária. Se gostar, escolhe o plano que preferir para continuar.',
+    },
+    {
+      question: 'A Aladay cobra alguma comissão ou porcentagem sobre as vendas?',
+      answer:
+        'Não! 0% de comissão. Você paga exclusivamente uma mensalidade fixa de R$ 99,00/mês no Plano Anual no Cartão de Crédito ou R$ 129,90/mês no Plano Mensal. Se você vender R$ 10.000 ou R$ 100.000 no mês, todo o faturamento das vendas diretas fica 100% com o seu restaurante.',
+    },
+    {
+      question: 'Como o dinheiro do Pix entra na minha conta bancária?',
+      answer:
+        'O Pix cai direto na conta bancária que você cadastrar (Nubank PJ, Inter, Itaú, Bradesco, Santander, etc.). O sistema gera o QR Code dinâmico e o código Pix Copia e Cola no padrão oficial do Banco Central. O cliente paga e o dinheiro é creditado imediatamente na sua conta, sem intermediação nem retenção da Aladay.',
+    },
+    {
+      question: 'Meus clientes precisam baixar algum aplicativo na Play Store ou App Store?',
+      answer:
+        'Não! Essa é uma das maiores vantagens da Aladay. O cardápio digital funciona 100% no navegador do celular (Chrome, Safari, etc.). O cliente apenas escaneia o QR Code na mesa ou clica no link da sua bio do Instagram e o cardápio abre na hora, rápido e leve.',
+    },
+    {
+      question: 'Como funciona o atendimento de salão e mesas?',
+      answer:
+        'Você pode gerar QR Codes exclusivos para cada mesa do seu restaurante. O cliente senta, escaneia e faz pedidos sozinho, ou o garçom lança os pedidos pelo próprio celular. Na hora de fechar a conta, o sistema permite incluir os 10% opcionais de serviço e dividir o valor facilmente entre os clientes da mesa.',
+    },
+    {
+      question: 'Posso integrar os pedidos do iFood no mesmo painel da cozinha?',
+      answer:
+        'Sim! A Aladay possui integração oficial via API de Parceiros do iFood. Quando um pedido entra no iFood, ele aparece automaticamente na mesma tela KDS dos seus pedidos diretos. Ao mudar o status no KDS (Em Preparo, Pronto ou Despachado), o status é sincronizado automaticamente no aplicativo do iFood com código de coleta.',
+    },
+    {
+      question: 'Como o WhatsApp envia as notificações automáticas?',
+      answer:
+        'A plataforma é integrada à Evolution API. Você conecta o WhatsApp do seu restaurante lendo um QR Code de pareamento. A partir daí, o sistema envia confirmações de pedidos, avisos de saída para entrega e links de rastreio em tempo real sem ocupar os atendentes da sua equipe.',
+    },
+    {
+      question: 'Consigo importar meu cardápio já existente por planilha Excel?',
+      answer:
+        'Sim! A Aladay oferece um modelo de planilha padrão em Excel/CSV. Você preenche seus pratos, preços, descrições e categorias e importa tudo de uma só vez em segundos.',
+    },
+  ];
+
+  // ---------------------------------------------------------------------------
+  // 7. Modal de Proposta Personalizada (Redes & Franquias)
   // ---------------------------------------------------------------------------
   const [isProposalModalOpen, setIsProposalModalOpen] = useState<boolean>(false);
-  const [isGuidedDemoModalOpen, setIsGuidedDemoModalOpen] = useState<boolean>(false);
   const [proposalForm, setProposalForm] = useState({
     name: '',
     restaurantName: '',
@@ -265,7 +546,6 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
     });
     setProposalSent(true);
     setTimeout(() => {
-      // Direct WhatsApp bridge with pre-filled message
       const text = encodeURIComponent(
         `Olá equipe Aladay! Solicito proposta para o meu grupo gastronômico:\n` +
           `• Nome: ${proposalForm.name}\n` +
@@ -281,24 +561,13 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
   };
 
   // ---------------------------------------------------------------------------
-  // Tracked Navigation & Demonstration Handlers
+  // Tracked Handlers
   // ---------------------------------------------------------------------------
-  const handleScrollToPhoneDemo = (source: string) => {
-    trackConversionEvent('view_demo_interaction', {
-      source,
-    });
-    const target = document.getElementById('demonstracao-celular');
+  const handleScrollToSection = (sectionId: string, source: string) => {
+    trackConversionEvent('navigation_click', { section: sectionId, source });
+    const target = document.getElementById(sectionId);
     if (target) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      const phoneFrame = document.getElementById('phone-mockup-frame');
-      if (phoneFrame) {
-        phoneFrame.classList.remove('ring-4', 'ring-blue-500', 'scale-[1.02]');
-        void phoneFrame.offsetWidth;
-        phoneFrame.classList.add('ring-4', 'ring-blue-500', 'scale-[1.02]', 'transition-all', 'duration-500');
-        setTimeout(() => {
-          phoneFrame.classList.remove('ring-4', 'ring-blue-500', 'scale-[1.02]');
-        }, 2200);
-      }
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   };
 
@@ -310,565 +579,1051 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
     onNavigateToSetup();
   };
 
-  const handleTrackedDemo = (source: string) => {
-    trackConversionEvent('view_demo_menu', {
-      source,
-    });
-    handleScrollToPhoneDemo(source);
-  };
-
-  const handleTrackedLogin = (source: string) => {
-    trackConversionEvent('click_login', {
-      source,
-    });
-    onNavigateToLogin();
-  };
-
   const handleTrackedWhatsApp = (source: string) => {
     trackConversionEvent('click_whatsapp_contact', {
       source,
       channel: 'whatsapp_commercial',
     });
     const msg = encodeURIComponent(
-      'Olá! Gostaria de tirar dúvidas sobre o Aladay Cardápios Digitais (Plano R$ 99,00/mês Anual ou R$ 129,90/mês e Pix Direto).'
+      'Olá! Gostaria de tirar dúvidas sobre o Aladay Cardápios Digitais (Plano R$ 99,00/mês Anual ou R$ 129,90/mês com Pix Direto).'
     );
     openSupportWhatsApp(msg);
   };
 
-  const aladaySchemaJsonLd = {
-    '@context': 'https://schema.org',
-    '@type': 'SoftwareApplication',
-    name: 'Aladay',
-    alternateName: 'Aladay Cardápios Digitais',
-    description:
-      'Software de cardápios digitais para restaurantes, hamburguerias, pizzarias e delivery com pedidos automatizados no WhatsApp via Evolution API, QR Code para mesas e pagamento Pix direto na conta do restaurante sem comissão.',
-    url: 'https://aladay.com.br',
-    applicationCategory: 'BusinessApplication',
-    applicationSubCategory: 'Software de Cardápios Digitais para Restaurantes',
-    operatingSystem: 'Web, Android, iOS',
-    inLanguage: 'pt-BR',
-    featureList: [
-      'Cardápio digital interativo para delivery, retirada e QR Code de mesa',
-      'Controle de salão e mesas para garçons com comanda digital, divisão de conta e taxa de 10%',
-      'Integração oficial iFood Partner API centralizada no painel KDS da cozinha',
-      'Automação de pedidos e status no WhatsApp',
-      'Pagamento Pix dinâmico com repasse 100% direto na conta da loja',
-      'Importação rápida de produtos e categorias via planilha CSV/Excel',
-      'Zero taxa de comissão sobre vendas diretas',
-    ],
-    offers: [
-      {
-        '@type': 'Offer',
-        name: 'Assinatura Anual Aladay Pro no Cartão de Crédito (12x de R$ 99,00)',
-        price: '99.00',
-        priceCurrency: 'BRL',
-        priceValidUntil: '2027-12-31',
-        availability: 'https://schema.org/InStock',
-        url: 'https://aladay.com.br',
-        category: 'Assinatura Anual SaaS (Cartão de Crédito)',
-      },
-      {
-        '@type': 'Offer',
-        name: 'Assinatura Mensal Aladay Pro (com 15 dias de teste grátis)',
-        price: '129.90',
-        priceCurrency: 'BRL',
-        priceValidUntil: '2027-12-31',
-        availability: 'https://schema.org/InStock',
-        url: 'https://aladay.com.br',
-        category: 'Assinatura Mensal SaaS',
-      },
-    ],
-    provider: {
-      '@type': 'Organization',
-      name: 'Aladay',
-      url: 'https://aladay.com.br',
-    },
-  };
-
   return (
-    <div className="space-y-16 pb-20">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(aladaySchemaJsonLd) }}
-      />
+    <div className="w-full text-slate-900 selection:bg-blue-600 selection:text-white">
       {/* ================================================================== */}
-      {/* 1. MENSAGEM PRINCIPAL & HERO HEADER                                */}
-      {/* O que a Aladay faz e exatamente para quem é                         */}
+      {/* 1. LAYOUT CINEMATOGRÁFICO UNIFICADO (HERO + MOCKUP + VÍDEO DEMO)   */}
+      {/* Headline: "Seu restaurante mais digital. Seus pedidos..."           */}
       {/* ================================================================== */}
-      <section className="bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-10 lg:p-14 relative overflow-hidden shadow-xs">
-        {/* Decorative subtle technological blue ambient backdrop */}
-        <div className="absolute top-0 right-0 -mr-20 -mt-20 w-96 h-96 bg-blue-100/70 rounded-full blur-3xl pointer-events-none opacity-70" />
-        <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-80 h-80 bg-indigo-50/80 rounded-full blur-3xl pointer-events-none opacity-60" />
+      <section
+        id="hero-cinematografico"
+        className="relative overflow-hidden pt-8 pb-16 sm:pt-14 sm:pb-24 border-b border-slate-800 bg-slate-950 text-white"
+      >
+        {/* Ambient cinematic lighting & grid */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1100px] h-[550px] bg-gradient-to-b from-blue-600/20 via-indigo-600/10 to-transparent rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute top-1/3 -left-20 w-[450px] h-[450px] bg-sky-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute top-1/2 -right-20 w-[450px] h-[450px] bg-blue-700/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b18_1px,transparent_1px),linear-gradient(to_bottom,#1e293b18_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none opacity-50" />
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center relative z-10">
-          {/* Left Column: Direct Pitch, Who it is for & CTAs */}
-          <div className="lg:col-span-7 space-y-6">
-            {/* Tagline Badge */}
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-50 border border-blue-200/90 text-blue-700 text-xs font-semibold">
-              <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
-              <span>Plataforma de Pedidos Próprios para Food Service</span>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 space-y-10 sm:space-y-12">
+          {/* Top Pitch & Exact Headline */}
+          <div className="text-center max-w-4xl mx-auto space-y-5">
+            {/* Quiet Micro Tagline */}
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/90 border border-slate-700/80 text-slate-300 text-xs font-semibold shadow-inner">
+              <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+              <span>Plataforma SaaS para Restaurantes &middot; Aladay 2.0</span>
             </div>
 
-            {/* Main Value Proposition Headline */}
-            <h1 className="text-3xl sm:text-4xl lg:text-[44px] font-black tracking-tight text-slate-950 leading-[1.12]">
-              O cardápio digital que liberta seu restaurante das comissões abusivas.
+            {/* Exact Requested Headline */}
+            <h1 className="text-3xl sm:text-5xl lg:text-[58px] font-extrabold tracking-tight text-white leading-[1.08] text-balance">
+              Seu restaurante mais digital. <br className="hidden sm:inline" />
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-blue-500">
+                Seus pedidos muito mais simples.
+              </span>
             </h1>
 
-            {/* Target Audience Explanation (Para Quem É) */}
-            <p className="text-base sm:text-lg text-slate-600 leading-relaxed font-normal">
-              A <strong>Aladay</strong> foi criada para <strong>hamburguerias, pizzarias, lanchonetes, restaurantes com salão e dark kitchens</strong> que desejam receber pedidos ilimitados direto no WhatsApp com <strong>0% de comissão</strong>, controlar <strong>mesas e garçons no salão</strong> e centralizar <strong>pedidos do iFood</strong> em um único painel KDS.
+            {/* Exact Requested Subtitle */}
+            <p className="text-base sm:text-lg text-slate-300 leading-relaxed font-normal max-w-2xl mx-auto">
+              Modernize seu atendimento com cardápio digital, QR Code e pedidos pelo WhatsApp. Uma experiência prática para o seu restaurante e seus clientes.
             </p>
 
-            {/* Audience & Feature Badges */}
-            <div className="flex flex-wrap gap-2 pt-1 text-xs text-slate-700 font-medium">
-              <span className="px-2.5 py-1 bg-amber-50 text-amber-900 rounded-md border border-amber-200 font-semibold">
-                🍽️ Controle de Salão, Mesas &amp; Garçons
-              </span>
-              <span className="px-2.5 py-1 bg-red-50 text-red-800 rounded-md border border-red-200 font-semibold">
-                🔴 Integração Oficial iFood no KDS
-              </span>
-              <span className="px-2.5 py-1 bg-slate-100 rounded-md border border-slate-200">🍔 Hamburguerias &amp; Pizzarias</span>
-              <span className="px-2.5 py-1 bg-slate-100 rounded-md border border-slate-200">🥗 Restaurantes &amp; Bares</span>
-              <span className="px-2.5 py-1 bg-slate-100 rounded-md border border-slate-200">🛵 Delivery &amp; Balcão</span>
-            </div>
-
-            {/* Evident Call-to-Action Action Buttons */}
-            <div className="pt-2 flex flex-wrap items-center gap-3">
+            {/* Primary & Secondary Action CTAs */}
+            <div className="pt-2 flex flex-wrap items-center justify-center gap-3.5">
               <button
                 type="button"
-                onClick={() => handleTrackedSignup('hero_primary')}
-                className="px-6 py-4 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl transition-all shadow-md shadow-blue-600/20 hover:shadow-lg hover:shadow-blue-600/25 flex items-center gap-2 cursor-pointer"
+                onClick={() => handleTrackedSignup('hero_cinematic_primary')}
+                className="px-7 py-4 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-xl transition-all shadow-lg shadow-blue-600/30 hover:shadow-blue-500/40 hover:-translate-y-0.5 flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 group"
               >
-                <span>Começar Teste Grátis de 15 Dias</span>
-                <ArrowRight className="w-4 h-4" />
+                <span>Começar teste grátis</span>
+                <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
               </button>
 
               <button
                 type="button"
-                onClick={() => handleScrollToPhoneDemo('hero_button')}
-                className="px-5 py-4 bg-slate-100 hover:bg-slate-200 text-slate-900 text-sm font-semibold rounded-xl transition-colors flex items-center gap-2 cursor-pointer"
+                onClick={() => {
+                  setHeroViewMode('video');
+                  handleScrollToSection('demonstracao-video', 'hero_cinematic_secondary');
+                }}
+                className="px-6 py-4 bg-slate-900/90 hover:bg-slate-800 text-slate-100 text-sm font-semibold rounded-xl transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 border border-slate-700/80 shadow-sm hover:border-slate-600"
               >
-                <Smartphone className="w-4 h-4 text-blue-600" />
-                <span>Testar Demonstração no Celular</span>
+                <Play className="w-4 h-4 text-blue-400 fill-blue-400" />
+                <span>Ver demonstração em vídeo</span>
               </button>
-            
             </div>
 
-            {/* Trust Metrics Pill Bar */}
-            <div className="pt-4 border-t border-slate-200 grid grid-cols-3 gap-4">
-              <div>
-                <p className="text-xl sm:text-2xl font-black text-slate-950 font-mono">0%</p>
-                <p className="text-[11px] sm:text-xs text-slate-500 font-medium">Comissão sobre vendas</p>
+            {/* Trust Metric Strip */}
+            <div className="pt-6 border-t border-slate-800/80 grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 max-w-3xl mx-auto">
+              <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-3 text-center">
+                <p className="text-2xl font-black text-white font-mono tracking-tight">0%</p>
+                <p className="text-xs text-slate-400 font-medium">Comissão sobre vendas</p>
               </div>
-              <div>
-                <p className="text-xl sm:text-2xl font-black text-blue-600 font-mono">100% Direto</p>
-                <p className="text-[11px] sm:text-xs text-slate-500 font-medium">Pix na conta da loja</p>
+              <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-3 text-center">
+                <p className="text-2xl font-black text-sky-400 font-mono tracking-tight">100%</p>
+                <p className="text-xs text-slate-400 font-medium">Pix direto no seu banco</p>
               </div>
-              <div>
-                <p className="text-xl sm:text-2xl font-black text-slate-950 font-mono">R$ 99,00</p>
-                <p className="text-[11px] sm:text-xs text-slate-500 font-medium">/mês no Plano Anual</p>
+              <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-3 text-center">
+                <p className="text-2xl font-black text-emerald-400 font-mono tracking-tight">15 dias</p>
+                <p className="text-xs text-slate-400 font-medium">Teste grátis sem cartão</p>
+              </div>
+              <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-3 text-center">
+                <p className="text-2xl font-black text-white font-mono tracking-tight">R$ 99/mês</p>
+                <p className="text-xs text-slate-400 font-medium">No plano anual no cartão</p>
               </div>
             </div>
           </div>
 
           {/* ================================================================ */}
-          {/* 2. DEMONSTRAÇÃO VISUAL: CARDÁPIO REAL EM TELA DE CELULAR         */}
+          {/* O PALCO CINEMATOGRÁFICO (SMARTPHONE + VÍDEO DEMO INTEGRADO)       */}
           {/* ================================================================ */}
-          <div id="demonstracao-celular" className="lg:col-span-5 flex flex-col items-center scroll-mt-24">
-            <div className="w-full max-w-[360px] relative">
-              {/* Floating label guiding user interaction */}
-              <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-30 bg-slate-950 text-white text-[11px] font-semibold px-3 py-1 rounded-full shadow-md flex items-center gap-1.5 whitespace-nowrap border border-slate-800">
-                <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-                <span>Cardápio Real Interativo no Celular</span>
+          <div
+            id="demonstracao-video"
+            className="bg-slate-900/90 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl relative scroll-mt-24"
+          >
+            {/* Stage Navigation & Mode Switcher Bar */}
+            <div className="bg-slate-950/90 border-b border-slate-800 px-4 py-3 sm:px-6 sm:py-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="font-bold text-white uppercase tracking-wider text-[11px]">
+                  Demonstração Aladay 2.0
+                </span>
+                <span className="hidden sm:inline text-slate-500">&middot;</span>
+                <span className="hidden sm:inline text-slate-400">
+                  Cena {activeSceneIndex + 1} de {heroScenes.length} ({heroScenes[activeSceneIndex].badge})
+                </span>
               </div>
 
-              {/* Realistic Mobile Device Frame */}
-              <div id="phone-mockup-frame" className="w-full h-[620px] bg-slate-950 rounded-[44px] p-3 shadow-2xl shadow-slate-950/30 border-4 border-slate-800 relative select-none flex flex-col transition-all duration-300">
-                {/* Dynamic Island / Speaker */}
-                <div className="w-24 h-5 bg-slate-900 rounded-full mx-auto relative z-30 flex items-center justify-between px-2 text-[8px] text-slate-400 font-mono mb-1 shrink-0">
-                  <span className="text-[9px] text-white">19:42</span>
-                  <div className="w-2 h-2 rounded-full bg-slate-700" />
-                  <span className="text-[9px] text-sky-400">5G</span>
-                </div>
-
-                {/* Inner Screen Surface */}
-                <div className="rounded-[32px] overflow-hidden bg-slate-50 h-full flex flex-col relative border border-slate-200">
-                  {/* Phone Header Banner */}
-                  <div className="bg-slate-950 text-white p-3.5 shrink-0 relative">
-                    <div className="flex items-center justify-between text-[11px] text-slate-400 pb-1">
-                      <span className="flex items-center gap-1 text-sky-400 font-semibold">
-                        <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
-                        Aberto Agora
-                      </span>
-                      <span className="font-mono text-[10px]">30-45 min</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-xs shadow-blue-600/30 overflow-hidden">
-                        AL
-                      </div>
-                      <div className="min-w-0">
-                        <h2 className="text-xs font-bold text-white truncate">
-                          Aladay Cardápio Digital
-                        </h2>
-                        <p className="text-[10px] text-slate-400 truncate flex items-center gap-1">
-                          <MapPin className="w-2.5 h-2.5" />
-                          <span>Delivery &amp; Balcão &middot; Pix Direto</span>
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Notice bar inside phone */}
-                    <div className="mt-2 py-1 px-2 rounded-md bg-slate-900 border border-slate-800 text-[9px] text-sky-300 flex items-center justify-between">
-                      <span>⚡ Chave Pix da loja &middot; Sem taxas</span>
-                      <span className="font-mono text-white font-semibold">0% taxa</span>
-                    </div>
-                  </div>
-
-                  {/* Horizontal Category Switcher */}
-                  <div className="bg-white border-b border-slate-200 px-2 py-1.5 flex gap-1.5 overflow-x-auto no-scrollbar shrink-0 text-[11px]">
-                    {demoCategories.map((cat) => (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() => setSelectedCategory(cat)}
-                        className={`px-2.5 py-1 rounded-full whitespace-nowrap font-semibold transition-colors cursor-pointer ${
-                          selectedCategory === cat
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Scrollable Products List */}
-                  <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
-                    {filteredDemoProducts.map((prod) => {
-                      const inBagItem = demoCart.find((i) => i.product.id === prod.id);
-                      const countInBag = inBagItem ? inBagItem.count : 0;
-
-                      return (
-                        <div
-                          key={prod.id}
-                          className={`bg-white rounded-xl p-2 border shadow-2xs flex gap-2.5 items-center transition-colors ${
-                            countInBag > 0
-                              ? 'border-blue-500/80 bg-blue-50/15'
-                              : 'border-slate-200 hover:border-blue-500'
-                          }`}
-                        >
-                          <div className="relative shrink-0">
-                            <img
-                              src={prod.imageUrl}
-                              alt={prod.name}
-                              className="w-16 h-16 rounded-lg object-cover bg-slate-100"
-                              loading="lazy"
-                            />
-                            {countInBag > 0 && (
-                              <span className="absolute -top-1 -left-1 bg-blue-600 text-white text-[9px] font-mono font-extrabold px-1.5 py-0.5 rounded-full shadow-xs">
-                                {countInBag}x
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            {prod.badge && (
-                              <span className="text-[9px] font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded">
-                                {prod.badge}
-                              </span>
-                            )}
-                            <h3 className="text-xs font-bold text-slate-900 truncate">
-                              {prod.name}
-                            </h3>
-                            <p className="text-[10px] text-slate-500 line-clamp-1 leading-tight">
-                              {prod.description}
-                            </p>
-                            <div className="mt-1 flex items-center justify-between">
-                              <span className="text-xs font-bold text-slate-950 font-mono">
-                                R$ {(prod.priceCents / 100).toFixed(2).replace('.', ',')}
-                              </span>
-                              {countInBag > 0 ? (
-                                <div className="flex items-center gap-1 bg-slate-900 text-white rounded-md p-0.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDecrementDemoProduct(prod.id)}
-                                    className="w-5 h-5 rounded hover:bg-white/15 flex items-center justify-center cursor-pointer"
-                                  >
-                                    <Minus className="w-2.5 h-2.5" />
-                                  </button>
-                                  <span className="px-1 text-[10px] font-mono font-bold">
-                                    {countInBag}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleAddDemoProduct(prod)}
-                                    className="w-5 h-5 rounded hover:bg-white/15 flex items-center justify-center cursor-pointer"
-                                  >
-                                    <Plus className="w-2.5 h-2.5" />
-                                  </button>
-                                </div>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => handleAddDemoProduct(prod)}
-                                  className="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-semibold rounded-md transition-colors cursor-pointer"
-                                >
-                                  + Adicionar
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    <div className="p-2 text-center text-[10px] text-slate-400">
-                      Escolha os produtos acima e depois toque em <strong>Ver Sacola</strong> para finalizar
-                    </div>
-                  </div>
-
-                  {/* Interactive Cart Bottom Bar inside Phone */}
-                  <div className="p-2 bg-white border-t border-slate-200 shrink-0">
-                    {demoCart.length > 0 ? (
-                      <div className="space-y-1.5">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDemoCheckoutStep('bag');
-                            setIsDemoCartSheetOpen(true);
-                          }}
-                          className="w-full py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold flex items-center justify-between transition-colors cursor-pointer shadow-xs shadow-blue-600/20"
-                        >
-                          <div className="flex items-center gap-1.5">
-                            <ShoppingBag className="w-3.5 h-3.5" />
-                            <span>
-                              {demoTotalCount} {demoTotalCount === 1 ? 'item' : 'itens'}
-                            </span>
-                          </div>
-                          <span>R$ {(demoTotalCents / 100).toFixed(2).replace('.', ',')} &middot; Ver Sacola</span>
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleAddDemoProduct(DEMO_PRODUCTS[0])}
-                        className="w-full py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer"
-                      >
-                        <span>Sacola vazia &middot; Toque em + Adicionar nos itens</span>
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Simulated 2-Step Drawer (1. Sacola -> 2. Seus Dados e Pix) inside Phone */}
-                  {isDemoCartSheetOpen && (
-                    <div className="absolute inset-0 bg-slate-950/60 z-40 flex flex-col justify-end">
-                      <div className="bg-white rounded-t-2xl p-3 space-y-2.5 border-t border-slate-200 max-h-[82%] overflow-y-auto">
-                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                          <div className="flex items-center gap-1.5">
-                            {demoCheckoutStep === 'customer' && !demoOrderSimulatedPix && (
-                              <button
-                                type="button"
-                                onClick={() => setDemoCheckoutStep('bag')}
-                                className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
-                              >
-                                <ArrowLeft className="w-3 h-3" />
-                              </button>
-                            )}
-                            <span className="text-xs font-bold text-slate-900">
-                              {demoCheckoutStep === 'bag'
-                                ? '1. Sua Sacola'
-                                : '2. Seus Dados & Pagamento'}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setIsDemoCartSheetOpen(false)}
-                            className="text-slate-400 hover:text-slate-700 text-xs p-1 cursor-pointer"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-
-                        {demoCheckoutStep === 'bag' ? (
-                          /* Etapa 1 da Demonstração: Revisar Itens na Sacola */
-                          <div className="space-y-2">
-                            <div className="space-y-1.5 text-xs max-h-36 overflow-y-auto pr-0.5">
-                              {demoCart.map((item) => (
-                                <div
-                                  key={item.product.id}
-                                  className="flex justify-between items-center text-[11px] bg-slate-50 border border-slate-200/80 rounded-lg p-1.5"
-                                >
-                                  <div className="min-w-0 flex-1 pr-2">
-                                    <p className="font-semibold text-slate-900 truncate">
-                                      {item.product.name}
-                                    </p>
-                                    <p className="text-[10px] font-mono text-blue-600 font-bold">
-                                      R$ {((item.product.priceCents * item.count) / 100).toFixed(2).replace('.', ',')}
-                                    </p>
-                                  </div>
-                                  <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-md p-0.5 shrink-0">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDecrementDemoProduct(item.product.id)}
-                                      className="w-4 h-4 rounded hover:bg-slate-100 flex items-center justify-center text-slate-700 cursor-pointer"
-                                    >
-                                      <Minus className="w-2.5 h-2.5" />
-                                    </button>
-                                    <span className="px-1 text-[10px] font-mono font-bold text-slate-900">
-                                      {item.count}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleAddDemoProduct(item.product)}
-                                      className="w-4 h-4 rounded hover:bg-slate-100 flex items-center justify-center text-slate-700 cursor-pointer"
-                                    >
-                                      <Plus className="w-2.5 h-2.5" />
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => setIsDemoCartSheetOpen(false)}
-                              className="w-full py-1.5 border border-dashed border-slate-300 rounded-lg text-[10px] font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
-                            >
-                              + Adicionar mais produtos
-                            </button>
-
-                            <div className="pt-1.5 border-t border-slate-200 flex justify-between font-bold text-xs">
-                              <span>Subtotal ({demoTotalCount} {demoTotalCount === 1 ? 'item' : 'itens'}):</span>
-                              <span className="font-mono text-blue-600">
-                                R$ {(demoTotalCents / 100).toFixed(2).replace('.', ',')}
-                              </span>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setDemoCheckoutStep('customer');
-                                trackConversionEvent('interact_phone_demo', { action: 'proceed_to_customer_data' });
-                              }}
-                              className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
-                            >
-                              <span>Finalizar e Preencher Dados</span>
-                              <ArrowRight className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        ) : (
-                          /* Etapa 2 da Demonstração: Preencher Dados do Cliente e Pagar */
-                          <div className="space-y-2 text-[11px]">
-                            {!demoOrderSimulatedPix ? (
-                              <>
-                                <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-100 rounded-lg text-[10px] font-bold">
-                                  <button
-                                    type="button"
-                                    onClick={() => setDemoDeliveryType('delivery')}
-                                    className={`py-1 rounded-md cursor-pointer ${
-                                      demoDeliveryType === 'delivery'
-                                        ? 'bg-white text-slate-900 shadow-2xs'
-                                        : 'text-slate-500'
-                                    }`}
-                                  >
-                                    🛵 Delivery
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setDemoDeliveryType('pickup')}
-                                    className={`py-1 rounded-md cursor-pointer ${
-                                      demoDeliveryType === 'pickup'
-                                        ? 'bg-white text-slate-900 shadow-2xs'
-                                        : 'text-slate-500'
-                                    }`}
-                                  >
-                                    🛍️ Retirada
-                                  </button>
-                                </div>
-
-                                <div className="space-y-1.5">
-                                  <input
-                                    type="text"
-                                    value={demoCustomerName}
-                                    onChange={(e) => setDemoCustomerName(e.target.value)}
-                                    placeholder="Seu Nome Completo"
-                                    className="w-full px-2 py-1.5 text-[11px] border border-slate-300 rounded-md text-slate-900"
-                                  />
-                                  <input
-                                    type="tel"
-                                    value={demoCustomerPhone}
-                                    onChange={(e) => setDemoCustomerPhone(e.target.value)}
-                                    placeholder="Seu WhatsApp (DDD + Número)"
-                                    className="w-full px-2 py-1.5 text-[11px] border border-slate-300 rounded-md text-slate-900 font-mono"
-                                  />
-                                  {demoDeliveryType === 'delivery' && (
-                                    <input
-                                      type="text"
-                                      value={demoCustomerAddress}
-                                      onChange={(e) => setDemoCustomerAddress(e.target.value)}
-                                      placeholder="Endereço de Entrega (Rua e Número)"
-                                      className="w-full px-2 py-1.5 text-[11px] border border-slate-300 rounded-md text-slate-900"
-                                    />
-                                  )}
-                                </div>
-
-                                <div className="pt-1.5 border-t border-slate-200 flex justify-between font-bold text-xs">
-                                  <span>Total a Pagar:</span>
-                                  <span className="font-mono text-blue-600">
-                                    R$ {(demoTotalCents / 100).toFixed(2).replace('.', ',')}
-                                  </span>
-                                </div>
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setDemoOrderSimulatedPix(true);
-                                    trackConversionEvent('interact_phone_demo', { action: 'simulate_pix_checkout' });
-                                  }}
-                                  className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1"
-                                >
-                                  <QrCode className="w-3.5 h-3.5" />
-                                  <span>Concluir Pedido &amp; Gerar Pix</span>
-                                </button>
-                              </>
-                            ) : (
-                              <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 text-[10px] space-y-1.5 text-blue-950">
-                                <div className="flex items-center gap-1 font-bold text-blue-800 text-xs">
-                                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
-                                  <span>Pedido Confirmado &amp; Pix Gerado!</span>
-                                </div>
-                                <p className="text-slate-600 leading-relaxed">
-                                  {demoCustomerName ? `Obrigado, ${demoCustomerName}! ` : ''}O pagamento Pix entra 100% no banco da loja, a cozinha recebe no KDS e o cliente acompanha no WhatsApp.
-                                </p>
-                                <button
-                                  type="button"
-                                  onClick={handleClearDemoCart}
-                                  className="mt-1 w-full py-1.5 bg-white border border-blue-200 rounded-md text-center text-blue-600 font-bold hover:bg-blue-100/50 cursor-pointer"
-                                >
-                                  Fazer Novo Teste na Demonstração
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Sub-phone CTA button */}
-              <div className="mt-4 text-center">
+              {/* View Modes Selector */}
+              <div className="flex items-center gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800">
                 <button
                   type="button"
-                  onClick={() => {
-                    trackConversionEvent('open_guided_demo_modal', { source: 'phone_footer' });
-                    setIsGuidedDemoModalOpen(true);
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-800 hover:text-blue-600 transition-colors cursor-pointer border border-slate-200"
+                  onClick={() => setHeroViewMode('both')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer hidden lg:inline-flex items-center gap-1.5 ${
+                    heroViewMode === 'both'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  }`}
                 >
-                  <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Ver Tour da Operação (Cardápio + KDS + WhatsApp)</span>
-                  <ChevronRight className="w-3.5 h-3.5" />
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Vista Dupla Cinema</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHeroViewMode('video')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                    heroViewMode === 'video'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  }`}
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  <span>Vídeo Demo Otimizado</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHeroViewMode('phone')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                    heroViewMode === 'phone'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  }`}
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Mockup Smartphone</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Stage Body */}
+            <div className="p-4 sm:p-6 lg:p-8">
+              <div
+                className={`grid gap-8 items-center ${
+                  heroViewMode === 'both'
+                    ? 'grid-cols-1 lg:grid-cols-12'
+                    : 'grid-cols-1 max-w-4xl mx-auto'
+                }`}
+              >
+                {/* -------------------------------------------------------- */}
+                {/* 1. MOCKUP DO SMARTPHONE (CARDÁPIO DIGITAL REAL & AO VIVO)  */}
+                {/* -------------------------------------------------------- */}
+                {(heroViewMode === 'both' || heroViewMode === 'phone') && (
+                  <div
+                    className={`${
+                      heroViewMode === 'both' ? 'lg:col-span-5' : 'w-full max-w-md mx-auto'
+                    } relative flex justify-center`}
+                  >
+                    <div className="relative w-full max-w-[370px]">
+                      {/* Floating Real Food Badge */}
+                      <div className="absolute -top-3 -right-3 z-20 bg-slate-900/95 backdrop-blur-md rounded-2xl p-2.5 shadow-xl border border-slate-700/80 hidden sm:flex items-center gap-2.5 max-w-[220px]">
+                        <img
+                          src="/src/assets/images/hero_food_burger_1794421911219.jpg"
+                          alt="Smash burger artesanal no cardápio Aladay"
+                          className="w-11 h-11 rounded-xl object-cover shrink-0 border border-slate-700"
+                        />
+                        <div className="min-w-0 text-left">
+                          <span className="text-[9px] font-bold text-sky-400 uppercase tracking-wide">
+                            Mais Pedido Hoje
+                          </span>
+                          <p className="text-xs font-bold text-white truncate">Smash Cheddar Duplo</p>
+                          <p className="text-[11px] font-mono font-bold text-emerald-400">R$ 38,90</p>
+                        </div>
+                      </div>
+
+                      {/* Floating QR Code Badge */}
+                      <div className="absolute -bottom-3 -left-3 z-20 bg-slate-950 text-white rounded-2xl p-2.5 shadow-xl border border-slate-700 flex items-center gap-2.5 max-w-[210px]">
+                        <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">
+                          <QrCode className="w-5 h-5" />
+                        </div>
+                        <div className="text-left text-xs">
+                          <p className="font-bold text-white">QR Code de Mesa</p>
+                          <p className="text-[10px] text-slate-400">Escaneou, pediu, pagou.</p>
+                        </div>
+                      </div>
+
+                      {/* Realistic Phone Frame */}
+                      <div className="w-full bg-slate-950 rounded-[44px] p-3 shadow-2xl border-4 border-slate-800 relative select-none flex flex-col">
+                        {/* Speaker & Dynamic Header */}
+                        <div className="w-24 h-5 bg-slate-900 rounded-full mx-auto relative z-30 flex items-center justify-between px-2 text-[8px] text-slate-400 font-mono mb-2 shrink-0">
+                          <span className="text-[9px] text-white">19:42</span>
+                          <div className="w-2 h-2 rounded-full bg-slate-700" />
+                          <span className="text-[9px] text-sky-400">5G</span>
+                        </div>
+
+                        {/* Inner Screen */}
+                        <div className="rounded-[32px] overflow-hidden bg-slate-900 flex flex-col border border-slate-800 text-left text-white">
+                          {/* Header banner */}
+                          <div className="bg-slate-950 p-3 shrink-0 border-b border-slate-800">
+                            <div className="flex items-center justify-between text-[11px] text-slate-400 pb-1">
+                              <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                Restaurante Aberto
+                              </span>
+                              <span className="font-mono text-[10px] text-slate-400">Preparo 25-35 min</span>
+                            </div>
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center text-white font-black text-xs shrink-0 shadow-md">
+                                A
+                              </div>
+                              <div className="min-w-0">
+                                <h3 className="text-xs font-bold text-white truncate">
+                                  Cardápio Digital Aladay
+                                </h3>
+                                <p className="text-[10px] text-slate-400 truncate flex items-center gap-1">
+                                  <MapPin className="w-2.5 h-2.5 text-blue-400" />
+                                  <span>Mesa 04 &middot; Balcão &middot; WhatsApp</span>
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Interactive Categories Bar */}
+                          <div className="bg-slate-950/80 border-b border-slate-800 px-2 py-1.5 flex gap-1 overflow-x-auto no-scrollbar shrink-0 text-[11px]">
+                            {demoCategories.map((cat) => (
+                              <button
+                                key={cat}
+                                type="button"
+                                onClick={() => setSelectedCategory(cat)}
+                                className={`px-2.5 py-1 rounded-lg whitespace-nowrap font-semibold transition-colors cursor-pointer text-[10px] ${
+                                  selectedCategory === cat
+                                    ? 'bg-blue-600 text-white'
+                                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                }`}
+                              >
+                                {cat}
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* Product preview list */}
+                          <div className="p-2 space-y-2 max-h-[310px] overflow-y-auto no-scrollbar">
+                            {filteredDemoProducts.slice(0, 3).map((prod) => {
+                              const inCart = demoCart.find((i) => i.product.id === prod.id);
+                              return (
+                                <div
+                                  key={prod.id}
+                                  className="bg-slate-950/90 border border-slate-800 rounded-xl p-2 flex gap-2.5 items-center hover:border-slate-700 transition-colors"
+                                >
+                                  <img
+                                    src={prod.imageUrl}
+                                    alt={prod.name}
+                                    className="w-14 h-14 rounded-lg object-cover shrink-0 border border-slate-800"
+                                  />
+                                  <div className="min-w-0 flex-1 text-left">
+                                    <div className="flex items-center gap-1.5">
+                                      {prod.badge && (
+                                        <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400">
+                                          {prod.badge}
+                                        </span>
+                                      )}
+                                      <p className="text-[11px] font-bold text-white truncate">
+                                        {prod.name}
+                                      </p>
+                                    </div>
+                                    <p className="text-[9px] text-slate-400 line-clamp-1">
+                                      {prod.description}
+                                    </p>
+                                    <p className="text-[11px] font-mono font-bold text-sky-400 pt-0.5">
+                                      {(prod.priceCents / 100).toLocaleString('pt-BR', {
+                                        style: 'currency',
+                                        currency: 'BRL',
+                                      })}
+                                    </p>
+                                  </div>
+                                  <div className="shrink-0">
+                                    {inCart ? (
+                                      <div className="flex items-center gap-1 bg-slate-800 rounded-lg p-0.5 border border-slate-700">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDecrementDemoProduct(prod.id)}
+                                          className="w-5 h-5 flex items-center justify-center text-slate-300 hover:text-white"
+                                        >
+                                          <Minus className="w-2.5 h-2.5" />
+                                        </button>
+                                        <span className="text-[10px] font-mono font-bold px-1 text-white">
+                                          {inCart.count}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleAddDemoProduct(prod)}
+                                          className="w-5 h-5 flex items-center justify-center text-slate-300 hover:text-white"
+                                        >
+                                          <Plus className="w-2.5 h-2.5" />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleAddDemoProduct(prod)}
+                                        className="px-2 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold transition-colors cursor-pointer"
+                                      >
+                                        + Pedir
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Bottom Sticky Floating Cart Bar in Mockup */}
+                          {demoTotalCount > 0 && (
+                            <div className="p-2 bg-slate-950 border-t border-slate-800 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => setIsDemoCartSheetOpen(true)}
+                                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl py-2 px-3 flex items-center justify-between text-[11px] font-bold cursor-pointer transition-colors shadow-md"
+                              >
+                                <span className="flex items-center gap-1.5">
+                                  <ShoppingBag className="w-3.5 h-3.5" />
+                                  <span>Ver Sacola ({demoTotalCount})</span>
+                                </span>
+                                <span className="font-mono">
+                                  {(demoTotalCents / 100).toLocaleString('pt-BR', {
+                                    style: 'currency',
+                                    currency: 'BRL',
+                                  })}
+                                </span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* -------------------------------------------------------- */}
+                {/* 2. VÍDEO DEMO OTIMIZADO (SIMULAÇÃO 6 CENAS & TIMELINE)   */}
+                {/* -------------------------------------------------------- */}
+                {(heroViewMode === 'both' || heroViewMode === 'video') && (
+                  <div
+                    className={`${
+                      heroViewMode === 'both' ? 'lg:col-span-7' : 'w-full'
+                    } flex flex-col space-y-4`}
+                  >
+                    {/* Scene Stage Viewport */}
+                    <div className="bg-black rounded-2xl border border-slate-800 overflow-hidden relative min-h-[360px] sm:min-h-[400px] flex flex-col justify-between p-5 sm:p-7 shadow-2xl">
+                      {/* Ambient background poster */}
+                      <img
+                        src="/src/assets/images/hero_restaurant_table_1794421912692.jpg"
+                        alt="Restaurante Aladay"
+                        className="absolute inset-0 w-full h-full object-cover opacity-20 filter blur-xs"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/70 to-transparent" />
+
+                      {/* Top Overlay Badge & Playback Status */}
+                      <div className="relative z-10 flex items-center justify-between">
+                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-600/30 border border-blue-400/40 text-sky-300 text-xs font-mono font-bold">
+                          <span>CENA {heroScenes[activeSceneIndex].step} DE 6</span>
+                          <span>&middot;</span>
+                          <span>{heroScenes[activeSceneIndex].badge}</span>
+                        </div>
+
+                        {/* Player Mini Controls */}
+                        <div className="flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md px-2 py-1 rounded-lg border border-slate-700/80">
+                          <button
+                            type="button"
+                            onClick={() => setIsPlayingVideo((prev) => !prev)}
+                            className="p-1 rounded text-slate-300 hover:text-white transition-colors cursor-pointer"
+                            title={isPlayingVideo ? 'Pausar simulação' : 'Reproduzir simulação'}
+                          >
+                            {isPlayingVideo ? (
+                              <Pause className="w-3.5 h-3.5 text-blue-400" />
+                            ) : (
+                              <Play className="w-3.5 h-3.5 text-emerald-400" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setActiveSceneIndex(0)}
+                            className="p-1 rounded text-slate-300 hover:text-white transition-colors cursor-pointer"
+                            title="Reiniciar do início"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setIsAudioMuted((prev) => !prev)}
+                            className="p-1 rounded text-slate-300 hover:text-white transition-colors cursor-pointer"
+                            title={isAudioMuted ? 'Ativar avisos sonoros' : 'Silenciar'}
+                          >
+                            {isAudioMuted ? (
+                              <VolumeX className="w-3.5 h-3.5" />
+                            ) : (
+                              <Volume2 className="w-3.5 h-3.5 text-sky-400" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Main Animated Scene Card */}
+                      <div className="relative z-10 my-4 bg-slate-900/90 backdrop-blur-md rounded-2xl p-5 sm:p-6 border border-slate-700/90 shadow-2xl text-left space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-sky-400 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                            {heroScenes[activeSceneIndex].badge}
+                          </span>
+                          <span className="font-mono text-[11px] text-slate-400">
+                            Passo {activeSceneIndex + 1}/6
+                          </span>
+                        </div>
+
+                        <h3 className="text-lg sm:text-2xl font-extrabold text-white">
+                          {heroScenes[activeSceneIndex].title}
+                        </h3>
+
+                        <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                          {heroScenes[activeSceneIndex].description}
+                        </p>
+
+                        {/* Interactive Context Pill for each scene */}
+                        <div className="pt-2 border-t border-slate-800 flex flex-wrap items-center justify-between text-xs text-slate-400 gap-2">
+                          <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                            <span>
+                              {activeSceneIndex === 0 && 'Câmera nativa lê o QR em 0.5s'}
+                              {activeSceneIndex === 1 && 'Carrega direto no Chrome/Safari'}
+                              {activeSceneIndex === 2 && 'Ponto da carne e adicionais'}
+                              {activeSceneIndex === 3 && 'Revisão transparente com Pix'}
+                              {activeSceneIndex === 4 && 'Comanda na cozinha e aviso no Whats'}
+                              {activeSceneIndex === 5 && 'Sua operação moderna e autônoma'}
+                            </span>
+                          </span>
+                          <span className="font-mono text-sky-400 text-[11px]">
+                            Aladay SaaS &middot; 0% Comissão
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Bottom Scrubber Progress Bar */}
+                      <div className="relative z-10 w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className="bg-blue-500 h-1.5 transition-all duration-300"
+                          style={{
+                            width: `${((activeSceneIndex + 1) / heroScenes.length) * 100}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Interactive Scene Roadmap (Click to jump to any scene) */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {heroScenes.map((scene, idx) => (
+                        <button
+                          key={scene.step}
+                          type="button"
+                          onClick={() => {
+                            setActiveSceneIndex(idx);
+                            setIsPlayingVideo(false);
+                          }}
+                          className={`text-left p-2.5 rounded-xl transition-all cursor-pointer border flex items-center gap-2 ${
+                            activeSceneIndex === idx
+                              ? 'bg-blue-600/30 border-blue-500 text-white shadow-xs'
+                              : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-900'
+                          }`}
+                        >
+                          <span
+                            className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                              activeSceneIndex === idx
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {scene.step}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[11px] font-bold truncate text-white">
+                              {scene.title}
+                            </p>
+                            <p className="text-[9px] text-slate-400 truncate">{scene.badge}</p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+
+
+      {/* ================================================================== */}
+      {/* 3. SEÇÃO DE FUNCIONALIDADES (CONFIRMADAS DO PRODUTO)                */}
+      {/* Título: "Tudo que seu restaurante precisa para começar a vender..." */}
+      {/* ================================================================== */}
+      <section id="recursos" className="py-16 sm:py-24 bg-white scroll-mt-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+          <div className="max-w-3xl space-y-3">
+            <span className="text-xs font-bold text-blue-600 uppercase tracking-widest font-mono">
+              Recursos &middot; Plataforma Completa
+            </span>
+            <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-950 tracking-tight text-balance">
+              Tudo que seu restaurante precisa para começar a vender digitalmente.
+            </h2>
+            <p className="text-base text-slate-600">
+              Recursos modernos projetados para eliminar atritos, aumentar o ticket médio e dar independência total ao seu negócio.
+            </p>
+          </div>
+
+          {/* 6 High-Fidelity Feature Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* 1. Cardápio Digital Responsivo */}
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 space-y-4 hover:border-blue-400 transition-all shadow-xs hover:shadow-md flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
+                  <Smartphone className="w-6 h-6" />
+                </div>
+                <h3 className="text-base font-bold text-slate-950">
+                  Cardápio Digital Responsivo
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                  Carregamento instantâneo no navegador do celular, sem download de aplicativo. Interface moderna com fotos dos pratos, busca em tempo real e categorias organizadas.
+                </p>
+              </div>
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-mono">
+                <span>100% Mobile Friendly</span>
+                <span className="text-blue-600 font-bold">Zero Instalação</span>
+              </div>
+            </div>
+
+            {/* 2. QR Code Inteligente de Mesa & Balcão */}
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 space-y-4 hover:border-blue-400 transition-all shadow-xs hover:shadow-md flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
+                  <QrCode className="w-6 h-6" />
+                </div>
+                <h3 className="text-base font-bold text-slate-950">
+                  Acesso ao Cardápio por QR Code
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                  Gere QR Codes individuais para cada mesa ou para o balcão. O cliente escaneia com a câmera nativa, faz o pedido sozinho e a cozinha já sabe exatamente onde entregar.
+                </p>
+              </div>
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-mono">
+                <span>Mesas &amp; Balcão</span>
+                <span className="text-blue-600 font-bold">Identificação Fácil</span>
+              </div>
+            </div>
+
+            {/* 3. Pedidos Encaminhados pelo WhatsApp */}
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 space-y-4 hover:border-blue-400 transition-all shadow-xs hover:shadow-md flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
+                  <MessageSquare className="w-6 h-6" />
+                </div>
+                <h3 className="text-base font-bold text-slate-950">
+                  Pedidos Encaminhados pelo WhatsApp
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                  Automação oficial via Evolution API. O cliente recebe confirmação do pedido, tempo estimado e avisos a cada troca de status sem sobrecarregar sua equipe de atendimento.
+                </p>
+              </div>
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-mono">
+                <span>Notificações Automáticas</span>
+                <span className="text-blue-600 font-bold">Evolution API</span>
+              </div>
+            </div>
+
+            {/* 4. Experiência de Compra pelo Celular */}
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 space-y-4 hover:border-blue-400 transition-all shadow-xs hover:shadow-md flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
+                  <ShoppingBag className="w-6 h-6" />
+                </div>
+                <h3 className="text-base font-bold text-slate-950">
+                  Experiência de Compra pelo Celular
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                  Fluxo claro em 2 etapas: o cliente escolhe os produtos, revisa a sacola e preenche seus dados para entrega ou retirada, com pagamento Pix dinâmico 100% na sua conta.
+                </p>
+              </div>
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-mono">
+                <span>Fluxo em 2 Etapas</span>
+                <span className="text-blue-600 font-bold">Alta Conversão</span>
+              </div>
+            </div>
+
+            {/* 5. Organização de Produtos e Categorias */}
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 space-y-4 hover:border-blue-400 transition-all shadow-xs hover:shadow-md flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
+                  <FileSpreadsheet className="w-6 h-6" />
+                </div>
+                <h3 className="text-base font-bold text-slate-950">
+                  Organização de Produtos &amp; Categorias
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                  Configure fotos, descrições, pontos de carne e adicionais com facilidade. Suporte para importação em massa via planilha Excel/CSV para colocar seu cardápio no ar em minutos.
+                </p>
+              </div>
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-mono">
+                <span>Planilha Excel / CSV</span>
+                <span className="text-blue-600 font-bold">Cadastro Rápido</span>
+              </div>
+            </div>
+
+            {/* 6. Recursos de Gestão Disponíveis */}
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 space-y-4 hover:border-blue-400 transition-all shadow-xs hover:shadow-md flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
+                  <ChefHat className="w-6 h-6" />
+                </div>
+                <h3 className="text-base font-bold text-slate-950">
+                  Gestão KDS, Salão &amp; Hub iFood
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                  Painel KDS para a cozinha com cronômetro SLA visual, mapa de mesas no salão, impressão térmica automática e integração oficial com os pedidos do iFood na mesma tela.
+                </p>
+              </div>
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-mono">
+                <span>KDS + Salão + iFood</span>
+                <span className="text-blue-600 font-bold">Controle Unificado</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ================================================================== */}
+      {/* 4. SEÇÃO "VEJA A ALADAY EM AÇÃO"                                   */}
+      {/* Demonstração visual interativa com alternância de telas            */}
+      {/* ================================================================== */}
+      <section id="demonstracao" className="py-16 sm:py-24 bg-slate-50 border-y border-slate-200/80 scroll-mt-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+          <div className="max-w-3xl space-y-3">
+            <span className="text-xs font-bold text-blue-600 uppercase tracking-widest font-mono">
+              Demonstração ao Vivo
+            </span>
+            <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-950 tracking-tight">
+              Veja a Aladay em ação
+            </h2>
+            <p className="text-sm sm:text-base text-slate-600">
+              Alterne entre as diferentes telas do sistema e sinta a fluidez que seus clientes e sua equipe terão no dia a dia.
+            </p>
+          </div>
+
+          {/* Screen Tabs Bar */}
+          <div className="flex flex-wrap items-center gap-2 p-1.5 bg-white border border-slate-200 rounded-2xl shadow-xs max-w-3xl">
+            <button
+              type="button"
+              onClick={() => setActionTab('menu')}
+              className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer text-center ${
+                actionTab === 'menu'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+              }`}
+            >
+              1. Cardápio do Cliente
+            </button>
+            <button
+              type="button"
+              onClick={() => setActionTab('bag')}
+              className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer text-center ${
+                actionTab === 'bag'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+              }`}
+            >
+              2. Sacola &amp; Checkout
+            </button>
+            <button
+              type="button"
+              onClick={() => setActionTab('pix')}
+              className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer text-center ${
+                actionTab === 'pix'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+              }`}
+            >
+              3. Pix Direto na Conta
+            </button>
+            <button
+              type="button"
+              onClick={() => setActionTab('whatsapp')}
+              className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer text-center ${
+                actionTab === 'whatsapp'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+              }`}
+            >
+              4. WhatsApp Automático
+            </button>
+            <button
+              type="button"
+              onClick={() => setActionTab('kds')}
+              className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer text-center ${
+                actionTab === 'kds'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+              }`}
+            >
+              5. Painel KDS Cozinha
+            </button>
+          </div>
+
+          {/* Screen Showcase Container */}
+          <div className="bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-10 shadow-sm grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+            {/* Left Description of Active Tab */}
+            <div className="lg:col-span-5 space-y-4 text-left">
+              <span className="text-xs font-mono font-bold text-blue-600 uppercase tracking-wider">
+                {actionTab === 'menu' && 'Navegação Leve e Rápida'}
+                {actionTab === 'bag' && 'Fluxo sem Fricção'}
+                {actionTab === 'pix' && 'Dinheiro Imediato no seu Banco'}
+                {actionTab === 'whatsapp' && 'Comunicação Automática'}
+                {actionTab === 'kds' && 'Cozinha Organizada e Produtiva'}
+              </span>
+
+              <h3 className="text-2xl font-black text-slate-950">
+                {actionTab === 'menu' && 'O cliente visualiza o prato e compra pelo apetite'}
+                {actionTab === 'bag' && 'Revisão sem cadastro chato nem senhas'}
+                {actionTab === 'pix' && '0% de comissão retida. Todo o lucro é seu.'}
+                {actionTab === 'whatsapp' && 'Mensagens de status em tempo real'}
+                {actionTab === 'kds' && 'Todas as comandas em uma única tela'}
+              </h3>
+
+              <p className="text-sm text-slate-600 leading-relaxed">
+                {actionTab === 'menu' &&
+                  'Layout responsivo com fotos destacadas, pontos da carne e adicionais. O cliente navega por categorias sem travar e adiciona produtos com 1 toque.'}
+                {actionTab === 'bag' &&
+                  'O cliente confere seus itens, escolhe entre Delivery ou Retirada, informa o WhatsApp e o endereço. Tudo em uma única tela limpa.'}
+                {actionTab === 'pix' &&
+                  'QR Code padrão BACEN EMV e Pix Copia e Cola gerados na hora com a chave Pix do seu banco. Liquidação instantânea na sua conta.'}
+                {actionTab === 'whatsapp' &&
+                  'Confirmação com resumo do pedido, aviso de prato em preparo e link para o cliente acompanhar o motoboy em tempo real.'}
+                {actionTab === 'kds' &&
+                  'Chega de confusão de comandas de papel! Seus pedidos próprios e do iFood chegam em cartões visuais com SLA e botão de avanço rápido.'}
+              </p>
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => handleTrackedSignup('showcase_tab_cta')}
+                  className="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-2 cursor-pointer"
+                >
+                  <span>Experimentar na Prática</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Right: Mockup Surface representing active tab */}
+            <div className="lg:col-span-7 flex justify-center">
+              <div className="w-full max-w-lg bg-slate-950 rounded-2xl p-4 shadow-xl border border-slate-800 text-white">
+                {actionTab === 'menu' && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between text-xs text-slate-400 border-b border-slate-800 pb-2">
+                      <span className="font-bold text-white">aladay.com.br/menu</span>
+                      <span className="text-emerald-400 font-mono">● Online</span>
+                    </div>
+                    <div className="space-y-2">
+                      {DEMO_PRODUCTS.slice(0, 2).map((item) => (
+                        <div key={item.id} className="bg-slate-900 rounded-xl p-3 flex gap-3 items-center border border-slate-800">
+                          <img src={item.imageUrl} alt={item.name} className="w-14 h-14 rounded-lg object-cover" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-white truncate">{item.name}</p>
+                            <p className="text-[10px] text-slate-400 line-clamp-1">{item.description}</p>
+                            <p className="text-xs font-mono font-bold text-sky-400 mt-1">
+                              R$ {(item.priceCents / 100).toFixed(2).replace('.', ',')}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {actionTab === 'bag' && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between text-xs text-slate-400 border-b border-slate-800 pb-2">
+                      <span className="font-bold text-white">1. Sua Sacola</span>
+                      <span className="text-sky-400 font-mono">1 Item Selecionado</span>
+                    </div>
+                    <div className="bg-slate-900 rounded-xl p-3 border border-slate-800 space-y-2 text-xs">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-white">Smash Cheddar Duplo</span>
+                        <span className="font-mono text-sky-400">R$ 38,90</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400">Ponto: Ao Ponto &middot; Molho extra à parte</p>
+                      <div className="pt-2 border-t border-slate-800 flex justify-between font-bold text-xs">
+                        <span>Total com entrega:</span>
+                        <span className="font-mono text-emerald-400">R$ 44,90</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {actionTab === 'pix' && (
+                  <div className="space-y-3 text-center p-2">
+                    <div className="inline-flex p-3 bg-white rounded-xl shadow-md text-slate-900 mx-auto">
+                      <QrCode className="w-24 h-24 text-slate-900" />
+                    </div>
+                    <p className="text-xs font-bold text-white">Pix Dinâmico BACEN EMV</p>
+                    <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                      Pagamento efetuado direto para a conta PJ da sua empresa. Sem taxas de intermediação.
+                    </p>
+                  </div>
+                )}
+
+                {actionTab === 'whatsapp' && (
+                  <div className="bg-slate-900 rounded-xl p-4 border border-slate-800 space-y-2 text-left">
+                    <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 pb-1 border-b border-slate-800">
+                      <MessageSquare className="w-4 h-4" />
+                      <span>WhatsApp Oficial do Restaurante</span>
+                    </div>
+                    <p className="text-xs text-slate-200 leading-relaxed font-sans">
+                      &ldquo;Olá, Marcos! Seu pedido <strong>#4891</strong> foi confirmado pela cozinha! 🍔 Tempo estimado: 35 minutos. Acompanhe seu pedido pelo link ao vivo.&rdquo;
+                    </p>
+                    <span className="text-[10px] text-slate-500 font-mono">Enviado automaticamente via Evolution API</span>
+                  </div>
+                )}
+
+                {actionTab === 'kds' && (
+                  <div className="grid grid-cols-2 gap-2 text-left">
+                    <div className="bg-slate-900 rounded-xl p-3 border border-blue-500/50 space-y-1.5">
+                      <div className="flex justify-between items-center text-[10px] text-sky-400 font-mono font-bold">
+                        <span>#4891 &middot; MESA 04</span>
+                        <span className="text-amber-400">⏱️ 08:12</span>
+                      </div>
+                      <p className="text-xs font-bold text-white">2x Smash Burger</p>
+                      <span className="text-[10px] text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800 inline-block font-mono">
+                        EM PREPARO
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-900 rounded-xl p-3 border border-red-500/50 space-y-1.5">
+                      <div className="flex justify-between items-center text-[10px] text-red-400 font-mono font-bold">
+                        <span>iFood #8410</span>
+                        <span className="text-slate-400">⏱️ 14:00</span>
+                      </div>
+                      <p className="text-xs font-bold text-white">1x Pizza Calabresa</p>
+                      <span className="text-[10px] text-sky-400 bg-sky-950/60 px-2 py-0.5 rounded border border-sky-800 inline-block font-mono">
+                        PRONTO P/ ENTREGA
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ================================================================== */}
+      {/* 5. SEÇÃO DE REELS E VÍDEOS VERTICAIS (9:16)                        */}
+      {/* Título: "Veja como é simples usar a Aladay."                       */}
+      {/* ================================================================== */}
+      <section className="py-16 sm:py-24 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+          <div className="max-w-3xl space-y-3">
+            <span className="text-xs font-bold text-blue-600 uppercase tracking-widest font-mono">
+              Reels &amp; Vídeos Curtos (9:16)
+            </span>
+            <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-950 tracking-tight">
+              Veja como é simples usar a Aladay.
+            </h2>
+            <p className="text-sm sm:text-base text-slate-600">
+              Demonstrações práticas e rápidas de cada funcionalidade. Toque em qualquer vídeo para assistir em tamanho expandido.
+            </p>
+          </div>
+
+          {/* Horizontal responsive reels cards grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 sm:gap-6">
+            {REELS_DATA.map((reel) => (
+              <div
+                key={reel.id}
+                onClick={() => {
+                  setSelectedReel(reel);
+                  setActiveStoryStep(0);
+                  trackConversionEvent('open_reel_modal', { reel_id: reel.id });
+                }}
+                className="group relative rounded-2xl overflow-hidden shadow-md hover:shadow-xl transition-all cursor-pointer aspect-[9/16] bg-slate-900 border border-slate-200 hover:scale-[1.02]"
+              >
+                {/* Reel Thumbnail with zero broken image fallback */}
+                <img
+                  src={reel.thumbnailUrl}
+                  alt={reel.title}
+                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                  loading="lazy"
+                />
+
+                {/* Scrim Overlay */}
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
+
+                {/* Top Badge & Duration */}
+                <div className="absolute top-3 left-3 right-3 flex items-center justify-between text-[11px] text-white">
+                  <span className="px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-xs font-semibold text-[10px]">
+                    {reel.category}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-xs font-mono text-[10px]">
+                    {reel.duration}
+                  </span>
+                </div>
+
+                {/* Center Play Button */}
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-12 h-12 rounded-full bg-white/90 text-slate-950 flex items-center justify-center shadow-lg group-hover:bg-blue-600 group-hover:text-white transition-all transform group-hover:scale-110">
+                    <Play className="w-5 h-5 fill-current ml-0.5" />
+                  </div>
+                </div>
+
+                {/* Bottom Title */}
+                <div className="absolute bottom-3 left-3 right-3 text-left space-y-1">
+                  <h4 className="text-xs sm:text-sm font-bold text-white line-clamp-2 leading-snug">
+                    {reel.title}
+                  </h4>
+                  <p className="text-[10px] text-slate-300 line-clamp-1">
+                    {reel.subtitle}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ================================================================== */}
+      {/* 6. SEÇÃO "COMO FUNCIONA" (3 ETAPAS SEQUENCIAIS)                     */}
+      {/* 1. Configure seu cardápio -> 2. Compartilhe QR -> 3. Receba Whats  */}
+      {/* ================================================================== */}
+      <section className="py-16 sm:py-24 bg-slate-50 border-y border-slate-200/80">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+          <div className="max-w-3xl space-y-3">
+            <span className="text-xs font-bold text-blue-600 uppercase tracking-widest font-mono">
+              Processo Simples
+            </span>
+            <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-950 tracking-tight">
+              Como funciona em 3 passos simples
+            </h2>
+            <p className="text-sm sm:text-base text-slate-600">
+              Você não precisa de técnico nem de semanas de espera. Seu cardápio fica pronto para vender hoje mesmo.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 relative">
+            {/* Step 1 */}
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-7 space-y-4 shadow-xs relative text-left">
+              <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white font-extrabold flex items-center justify-center text-lg shadow-md shadow-blue-600/20">
+                1
+              </div>
+              <h3 className="text-lg font-bold text-slate-950">
+                1. Configure seu cardápio
+              </h3>
+              <p className="text-sm text-slate-600 leading-relaxed">
+                Organize os produtos e disponibilize o menu digital. Cadastre fotos, adicionais e preços ou importe sua planilha existente em poucos cliques.
+              </p>
+            </div>
+
+            {/* Step 2 */}
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-7 space-y-4 shadow-xs relative text-left">
+              <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white font-extrabold flex items-center justify-center text-lg shadow-md shadow-blue-600/20">
+                2
+              </div>
+              <h3 className="text-lg font-bold text-slate-950">
+                2. Compartilhe seu QR Code
+              </h3>
+              <p className="text-sm text-slate-600 leading-relaxed">
+                Facilite o acesso dos clientes pelo celular. Imprima o QR Code nas mesas, deixe no balcão e coloque o link do cardápio na bio do seu Instagram.
+              </p>
+            </div>
+
+            {/* Step 3 */}
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-7 space-y-4 shadow-xs relative text-left">
+              <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white font-extrabold flex items-center justify-center text-lg shadow-md shadow-blue-600/20">
+                3
+              </div>
+              <h3 className="text-lg font-bold text-slate-950">
+                3. Receba pedidos pelo WhatsApp
+              </h3>
+              <p className="text-sm text-slate-600 leading-relaxed">
+                Simplifique o processo de atendimento e recebimento de pedidos. O Pix cai na hora na sua conta, a comanda vai para a cozinha e o cliente recebe avisos.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ================================================================== */}
+      {/* 7. BANNER PROMOCIONAL DE DESTAQUE                                  */}
+      {/* Título: "Seu restaurante merece uma experiência digital melhor."    */}
+      {/* ================================================================== */}
+      <section className="py-16 sm:py-24 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 text-white rounded-3xl p-8 sm:p-14 lg:p-16 relative overflow-hidden shadow-2xl border border-slate-800 text-left">
+            {/* Background elements */}
+            <div className="absolute top-0 right-0 -mr-24 -mt-24 w-96 h-96 bg-blue-600/20 rounded-full blur-3xl pointer-events-none" />
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center relative z-10">
+              <div className="lg:col-span-8 space-y-4">
+                <span className="text-xs font-mono font-bold text-sky-400 uppercase tracking-widest">
+                  Modernização Gastronômica
+                </span>
+                <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight leading-[1.12]">
+                  Seu restaurante merece uma experiência digital melhor.
+                </h2>
+                <p className="text-base sm:text-lg text-slate-300 max-w-xl leading-relaxed">
+                  Comece a modernizar seu atendimento com a Aladay.
+                </p>
+              </div>
+
+              <div className="lg:col-span-4 flex flex-col sm:flex-row lg:flex-col gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleTrackedSignup('promo_banner')}
+                  className="px-6 py-4 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-xl transition-all shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+                >
+                  <span>Experimentar gratuitamente</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleTrackedWhatsApp('promo_banner_whatsapp')}
+                  className="px-6 py-4 bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white text-sm font-semibold rounded-xl border border-slate-700 transition-colors flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+                >
+                  <PhoneCall className="w-4 h-4 text-sky-400" />
+                  <span>Tirar dúvidas no WhatsApp</span>
                 </button>
               </div>
             </div>
@@ -877,632 +1632,689 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
       </section>
 
       {/* ================================================================== */}
-      {/* 3. ARQUITETURA OPERACIONAL: POR QUE O MODELO ALADAY FUNCIONA       */}
+      {/* 8. PLANOS E PREÇOS REAIS ALADAY                                    */}
+      {/* Anual R$ 99,00/mês Cartão (12x) & Mensal R$ 129,90/mês             */}
       {/* ================================================================== */}
-      <section className="space-y-8">
-        <div className="max-w-3xl space-y-2">
-          <p className="text-xs font-bold text-blue-600 uppercase tracking-wider">
-            01. Pilares da Operação
-          </p>
-          <h2 className="text-2xl sm:text-3xl font-bold text-slate-950 tracking-tight">
-            Como a Aladay transforma o WhatsApp da sua loja em lucro real
-          </h2>
-          <p className="text-sm text-slate-600">
-            Eliminamos os intermediários para que você tenha controle dos seus clientes, margens saudáveis e agilidade máxima de ponta a ponta.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Card 1: Pix Direto */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 flex flex-col justify-between hover:border-blue-300 transition-colors shadow-2xs">
-            <div className="space-y-3">
-              <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
-                <QrCode className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold text-slate-950">
-                1. Pix 100% Direto na Conta da Loja
-              </h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Você cadastra a chave Pix do seu próprio banco (Nubank PJ, Inter, Itaú, Bradesco, etc.). O QR Code e código Copia e Cola são gerados instantaneamente com padrão BACEN EMV. <strong>A Aladay não retém R$ 0,01 das suas vendas.</strong>
-              </p>
-            </div>
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-mono">
-              <span>Zero Retenção</span>
-              <span className="text-blue-600 font-bold">Liquidação Imediata</span>
-            </div>
+      <section id="planos" className="py-16 sm:py-24 bg-slate-50 border-t border-slate-200/80 scroll-mt-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+          <div className="max-w-3xl space-y-3">
+            <span className="text-xs font-bold text-blue-600 uppercase tracking-widest font-mono">
+              Valores Transparentes
+            </span>
+            <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-950 tracking-tight">
+              Planos claros, sem surpresas e com 0% de comissão
+            </h2>
+            <p className="text-sm sm:text-base text-slate-600">
+              Você paga apenas uma assinatura fixa para manter a infraestrutura no ar. Todo o faturamento dos seus pedidos é 100% seu.
+            </p>
           </div>
 
-          {/* Card 2: KDS & WhatsApp Automático */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 flex flex-col justify-between hover:border-blue-300 transition-colors shadow-2xs">
-            <div className="space-y-3">
-              <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
-                <MessageSquare className="w-6 h-6" />
+          {/* Pricing Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
+            {/* Plano Anual R$ 99/mês (Cartão de Crédito) */}
+            <div className="lg:col-span-6 bg-slate-950 text-white rounded-3xl p-8 sm:p-10 flex flex-col justify-between border-2 border-blue-500 relative shadow-2xl">
+              <div className="absolute -top-3.5 right-6 bg-blue-600 text-white text-[11px] font-extrabold px-3 py-1 rounded-full shadow-md flex items-center gap-1.5">
+                <CreditCard className="w-3.5 h-3.5" />
+                <span>PLANO MAIS VANTAJOSO &middot; ECONOMIZE R$ 370,80/ANO</span>
               </div>
-              <h3 className="text-base font-bold text-slate-950">
-                2. KDS &amp; WhatsApp Automático
-              </h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                O cliente acompanha cada etapa sem sobrecarregar sua equipe: quando o pedido é confirmado, entra em preparo ou sai para entrega com o motoboy, o WhatsApp dele recebe avisos automáticos.
-              </p>
-            </div>
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-mono">
-              <span>-80% Mensagens</span>
-              <span className="text-blue-600 font-bold">Fim do &ldquo;Cadê meu pedido?&rdquo;</span>
-            </div>
-          </div>
 
-          {/* Card 3: Cardápio Próprio Sem Instalação */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 flex flex-col justify-between hover:border-blue-300 transition-colors shadow-2xs">
-            <div className="space-y-3">
-              <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
-                <Smartphone className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold text-slate-950">
-                3. Sem Download &amp; Sem Login Chato
-              </h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                O cliente acessa pelo link na bio do Instagram ou pelo QR Code da mesa sem precisar baixar nenhum aplicativo da App Store. Carregamento instantâneo, com experiência moderna e intuitiva.
-              </p>
-            </div>
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-mono">
-              <span>aladay.com.br</span>
-              <span className="text-blue-600 font-bold">100% Responsivo</span>
-            </div>
-          </div>
-
-          {/* Card 4: Salão, Mesas & Garçons */}
-          <div className="bg-white border border-amber-200 rounded-2xl p-6 space-y-4 flex flex-col justify-between hover:border-amber-400 transition-colors shadow-2xs">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center">
-                  <Utensils className="w-6 h-6" />
+              <div className="space-y-6">
+                <div>
+                  <span className="text-xs font-semibold text-sky-400 uppercase tracking-wider font-mono">
+                    Ciclo Anual &middot; 12x no Cartão
+                  </span>
+                  <h3 className="text-2xl sm:text-3xl font-black text-white mt-1">Plano Aladay Anual</h3>
+                  <p className="text-xs sm:text-sm text-slate-400 mt-1">
+                    Ideal para restaurantes que buscam o menor custo mensal fixo parcelado no cartão de crédito.
+                  </p>
                 </div>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200 uppercase tracking-wider">
-                  Salão &amp; PDV Mesa
-                </span>
-              </div>
-              <h3 className="text-base font-bold text-slate-950">
-                4. Controle de Salão, Mesas &amp; Garçons
-              </h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Mapa visual de mesas em tempo real (Livre, Ocupada, Pronto p/ Servir e Conta). O garçom lança pedidos pelo celular direto para a cozinha ou o cliente pede sozinho pelo <strong>QR Code exclusivo de cada mesa</strong>. Fechamento com <strong>10% opcional do garçom</strong> e divisão por pessoa.
-              </p>
-            </div>
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-mono">
-              <span>Comanda Digital + QR Mesa</span>
-              <span className="text-amber-700 font-bold">Divisão &amp; Taxa 10%</span>
-            </div>
-          </div>
 
-          {/* Card 5: Integração Oficial iFood */}
-          <div className="bg-white border border-red-200 rounded-2xl p-6 space-y-4 flex flex-col justify-between hover:border-red-400 transition-colors shadow-2xs">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="w-12 h-12 rounded-xl bg-red-50 text-red-600 border border-red-200 flex items-center justify-center">
-                  <Bike className="w-6 h-6" />
+                <div className="border-y border-slate-800 py-5 space-y-2">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="text-4xl sm:text-5xl font-black font-mono text-white">R$ 99,00</span>
+                    <span className="text-slate-400 text-sm font-semibold">/mês</span>
+                    <span className="ml-auto text-xs font-mono text-sky-400 bg-slate-900 px-3 py-1 rounded-lg border border-slate-800 font-bold">
+                      24% OFF
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 font-mono">
+                    12 parcelas de R$ 99,00 no Cartão de Crédito &middot; Total R$ 1.188,00/ano
+                  </p>
                 </div>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 border border-red-200 uppercase tracking-wider">
-                  API Oficial iFood
-                </span>
+
+                <div className="space-y-3 text-xs sm:text-sm text-slate-300">
+                  <div className="flex items-start gap-2.5">
+                    <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
+                    <span><strong>0% de comissão</strong> sobre todas as suas vendas</span>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
+                    <span>Cardápio digital ilimitado para Delivery, Balcão e QR Code</span>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
+                    <span>Pix dos pedidos 100% direto na conta bancária da sua loja</span>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
+                    <span>Automação completa de pedidos no WhatsApp via Evolution API</span>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
+                    <span>Painel KDS de cozinha com cronômetro SLA e impressão térmica</span>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
+                    <span>Módulo de Salão &amp; Mesas: QR Code por mesa e divisão de conta</span>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
+                    <span>Integração Oficial com a API do iFood no mesmo painel KDS</span>
+                  </div>
+                </div>
               </div>
-              <h3 className="text-base font-bold text-slate-950">
-                5. Integração Oficial iFood no KDS
-              </h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Chega de usar duas telas na cozinha! Receba automaticamente os pedidos do <strong>iFood</strong> no mesmo painel KDS dos seus pedidos diretos. Quando a cozinha avança o prato, o status atualiza sozinho no app do iFood (<em>Confirmado, Pronto e Despachado</em>) com código de coleta do entregador.
-              </p>
+
+              <div className="pt-8 mt-6 border-t border-slate-800 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => handleTrackedSignup('pricing_annual_card')}
+                  className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm rounded-xl transition-all shadow-md shadow-blue-600/30 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <CreditCard className="w-4 h-4" />
+                  <span>Assinar Anual por R$ 99,00/mês no Cartão</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+                <p className="text-[11px] text-slate-400 text-center font-mono">
+                  Inclui 15 dias de teste grátis &middot; Economia de R$ 370,80 ao ano
+                </p>
+              </div>
             </div>
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-mono">
-              <span>Webhook + OAuth2</span>
-              <span className="text-red-600 font-bold">Hub Único na Cozinha</span>
+
+            {/* Plano Mensal R$ 129,90/mês */}
+            <div className="lg:col-span-6 bg-white border border-slate-200/90 rounded-3xl p-8 sm:p-10 flex flex-col justify-between shadow-sm">
+              <div className="space-y-6">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-blue-600 uppercase tracking-wider font-mono">
+                      Assinatura Mensal Flexível
+                    </span>
+                    <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                      15 Dias Grátis
+                    </span>
+                  </div>
+                  <h3 className="text-2xl sm:text-3xl font-black text-slate-950 mt-1">Plano Aladay Mensal</h3>
+                  <p className="text-xs sm:text-sm text-slate-600 mt-1">
+                    Sem fidelidade ou carência. Pague mês a mês via Pix, Cartão ou Boleto.
+                  </p>
+                </div>
+
+                <div className="border-y border-slate-200 py-5 space-y-2">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="text-4xl sm:text-5xl font-black font-mono text-slate-950">R$ 129,90</span>
+                    <span className="text-slate-500 text-sm font-semibold">/mês</span>
+                  </div>
+                  <p className="text-xs text-blue-600 font-mono font-semibold">
+                    Pix, Cartão de Crédito ou Boleto &middot; Cancele quando quiser
+                  </p>
+                </div>
+
+                <div className="space-y-3 text-xs sm:text-sm text-slate-700">
+                  <div className="flex items-start gap-2.5">
+                    <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                    <span>Todos os recursos do sistema liberados</span>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                    <span>0% de comissão sobre qualquer venda</span>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                    <span>Pix dos pedidos 100% direto na sua conta bancária</span>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                    <span>KDS Cozinha + WhatsApp Automático (Evolution API)</span>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                    <span>Módulo de Mesas &amp; Salão com QR Code individual</span>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                    <span>Integração Oficial com pedidos do iFood no KDS</span>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                    <span>Sem multa rescisória e sem fidelidade anual</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-8 mt-6 border-t border-slate-200 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => handleTrackedSignup('pricing_monthly_card')}
+                  className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white font-bold text-sm rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>Começar 15 Dias Grátis no Plano Mensal</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+                <p className="text-[11px] text-slate-500 text-center font-mono">
+                  R$ 0,00 hoje &middot; Primeira cobrança somente após 15 dias
+                </p>
+              </div>
             </div>
           </div>
 
-          {/* Card 6: CRM & Relatórios Analíticos */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 flex flex-col justify-between hover:border-blue-300 transition-colors shadow-2xs">
-            <div className="space-y-3">
-              <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
-                <Users className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold text-slate-950">
-                6. CRM de Clientes &amp; Relatórios Reais
-              </h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Construa sua própria base de clientes a cada pedido no salão ou delivery. Visualize gráficos de vendas por dia, ranking dos pratos mais vendidos e recupere clientes inativos direto pelo WhatsApp.
-              </p>
+          {/* Comparativo de Custos & Economia */}
+          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+            <div className="p-4 sm:p-5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-xs sm:text-sm font-bold text-slate-900 uppercase tracking-wide">
+                Comparativo Real: Aplicativos Tradicionais vs Aladay
+              </h4>
+              <span className="text-xs font-mono font-bold text-blue-600">Mais Lucro no Seu Bolso</span>
             </div>
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-mono">
-              <span>Gráficos &amp; Fidelização</span>
-              <span className="text-blue-600 font-bold">Base 100% Sua</span>
+            <div className="overflow-x-auto text-xs sm:text-sm">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-white">
+                    <th className="py-3 px-4 font-semibold text-slate-700">Item</th>
+                    <th className="py-3 px-4 font-semibold text-slate-500">Apps Tradicionais (Marketplaces)</th>
+                    <th className="py-3 px-4 font-bold text-blue-700 bg-blue-50/70">Aladay Cardápios Digitais</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 bg-white">
+                  <tr>
+                    <td className="py-3.5 px-4 font-medium text-slate-900">Comissão por Pedido</td>
+                    <td className="py-3.5 px-4 text-rose-600 font-semibold">12% a 27% sobre cada venda</td>
+                    <td className="py-3.5 px-4 font-bold text-blue-700 bg-blue-50/70">0% (Zero comissão)</td>
+                  </tr>
+                  <tr>
+                    <td className="py-3.5 px-4 font-medium text-slate-900">Repasse do Dinheiro</td>
+                    <td className="py-3.5 px-4 text-slate-600">Até 30 dias (ou taxa extra de antecipação)</td>
+                    <td className="py-3.5 px-4 font-bold text-blue-700 bg-blue-50/70">Imediato (Pix direto no seu banco)</td>
+                  </tr>
+                  <tr>
+                    <td className="py-3.5 px-4 font-medium text-slate-900">Base de Clientes</td>
+                    <td className="py-3.5 px-4 text-slate-600">Retida pelo app</td>
+                    <td className="py-3.5 px-4 font-bold text-blue-700 bg-blue-50/70">100% sua no WhatsApp</td>
+                  </tr>
+                  <tr>
+                    <td className="py-3.5 px-4 font-medium text-slate-900">Custo Mensal Fixo</td>
+                    <td className="py-3.5 px-4 text-slate-600">R$ 2.000 a R$ 8.000+ em taxas</td>
+                    <td className="py-3.5 px-4 font-bold text-blue-700 bg-blue-50/70">R$ 99/mês (Anual no Cartão) ou R$ 129,90/mês</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
       </section>
 
       {/* ================================================================== */}
-      {/* 4. OFERTA: PLANOS, PREÇOS E COMO SOLICITAR PROPOSTA                */}
+      {/* 9. CALCULADORA DE ECONOMIA INTERATIVA                              */}
       {/* ================================================================== */}
-      <section id="planos" className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-10 lg:p-12 space-y-10 shadow-xs scroll-mt-24">
-        <div className="max-w-3xl space-y-2">
-          <p className="text-xs font-bold text-blue-600 uppercase tracking-wider">
-            02. Modelo Comercial &amp; Planos
-          </p>
-          <h2 className="text-2xl sm:text-3xl font-bold text-slate-950 tracking-tight">
-            Transparência absoluta: quanto custa usar a Aladay?
-          </h2>
-          <p className="text-sm text-slate-600">
-            Você paga apenas uma assinatura mensal fixa para a infraestrutura da plataforma. Venda 50 ou 5.000 pedidos, o valor do seu plano não se altera.
-          </p>
-        </div>
+      <section id="calculadora" className="py-16 sm:py-24 bg-white scroll-mt-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+          <div className="max-w-3xl space-y-3">
+            <span className="text-xs font-bold text-blue-600 uppercase tracking-widest font-mono">
+              Simulador Financeiro
+            </span>
+            <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-950 tracking-tight">
+              Calcule quanto seu restaurante economiza todo mês
+            </h2>
+            <p className="text-sm sm:text-base text-slate-600">
+              Mova os controles abaixo para simular o valor que você deixa de perder em taxas de entrega.
+            </p>
+          </div>
 
-        {/* Pricing Cards Grid: Anual R$ 99,00/mês (Cartão) & Mensal R$ 129,90/mês */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-          {/* Card 1 (Featured): Assinatura Anual R$ 99,00/mês no Cartão de Crédito */}
-          <div className="lg:col-span-6 bg-slate-950 text-white rounded-2xl p-6 sm:p-7 flex flex-col justify-between border-2 border-blue-500 relative shadow-xl">
-            <div className="absolute -top-3.5 right-5 bg-blue-600 text-white text-[11px] font-extrabold px-3 py-1 rounded-full shadow-md flex items-center gap-1">
-              <CreditCard className="w-3.5 h-3.5" />
-              <span>MAIS VANTAJOSO &middot; ECONOMIZE R$ 370,80/ANO</span>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center bg-slate-50 border border-slate-200/90 rounded-3xl p-6 sm:p-10">
+            {/* Sliders */}
+            <div className="lg:col-span-7 space-y-6 text-left">
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs font-semibold">
+                  <label htmlFor="slider-orders" className="text-slate-800">
+                    Volume de pedidos por mês
+                  </label>
+                  <span className="font-mono font-bold text-blue-600 text-sm">
+                    {monthlyOrders} pedidos
+                  </span>
+                </div>
+                <input
+                  id="slider-orders"
+                  type="range"
+                  min={50}
+                  max={2000}
+                  step={25}
+                  value={monthlyOrders}
+                  onChange={(e) => setMonthlyOrders(Number(e.target.value))}
+                  className="w-full accent-blue-600 cursor-pointer"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs font-semibold">
+                  <label htmlFor="slider-ticket" className="text-slate-800">
+                    Ticket Médio por Pedido (R$)
+                  </label>
+                  <span className="font-mono font-bold text-blue-600 text-sm">
+                    R$ {averageTicketBRL},00
+                  </span>
+                </div>
+                <input
+                  id="slider-ticket"
+                  type="range"
+                  min={25}
+                  max={180}
+                  step={5}
+                  value={averageTicketBRL}
+                  onChange={(e) => setAverageTicketBRL(Number(e.target.value))}
+                  className="w-full accent-blue-600 cursor-pointer"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs font-semibold">
+                  <label htmlFor="slider-fee" className="text-slate-800">
+                    Taxa cobrada pelo aplicativo atual (%)
+                  </label>
+                  <span className="font-mono font-bold text-rose-600 text-sm">
+                    {marketplaceFeePercent}%
+                  </span>
+                </div>
+                <input
+                  id="slider-fee"
+                  type="range"
+                  min={12}
+                  max={27}
+                  step={1}
+                  value={marketplaceFeePercent}
+                  onChange={(e) => setMarketplaceFeePercent(Number(e.target.value))}
+                  className="w-full accent-blue-600 cursor-pointer"
+                />
+              </div>
             </div>
 
-            <div className="space-y-5">
-              <div>
-                <span className="text-xs font-semibold text-sky-400 uppercase tracking-wider">
-                  Assinatura Anual &middot; Exclusivo no Cartão de Crédito
-                </span>
-                <h3 className="text-2xl font-black text-white mt-1">Plano Aladay Anual</h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  Garanta o menor valor mensal contratando o ciclo anual parcelado em 12x no cartão de crédito.
+            {/* Result Card */}
+            <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-6 sm:p-7 space-y-5 shadow-sm text-left">
+              <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-xl text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setCalculatorPlanCycle('YEARLY')}
+                  className={`py-1.5 px-2 rounded-lg transition-all cursor-pointer text-center ${
+                    calculatorPlanCycle === 'YEARLY'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Anual (R$ 99/mês)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCalculatorPlanCycle('MONTHLY')}
+                  className={`py-1.5 px-2 rounded-lg transition-all cursor-pointer text-center ${
+                    calculatorPlanCycle === 'MONTHLY'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Mensal (R$ 129,90/mês)
+                </button>
+              </div>
+
+              <div className="space-y-2 border-b border-slate-200 pb-4 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-slate-600">Faturamento Bruto:</span>
+                  <span className="font-mono font-bold text-slate-900">{formatBRL(grossMonthlyRevenue)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-600">Comissão Retida no App ({marketplaceFeePercent}%):</span>
+                  <span className="font-mono font-bold text-rose-600">- {formatBRL(marketplaceMonthlyCost)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-600">Assinatura Aladay:</span>
+                  <span className="font-mono font-bold text-blue-600">
+                    {calculatorPlanCycle === 'YEARLY' ? 'R$ 99,00' : 'R$ 129,90'} / mês
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-xs text-slate-500 font-medium">Economia Líquida Mensal:</p>
+                <p className="text-3xl font-black text-emerald-600 font-mono tracking-tight">
+                  {formatBRL(monthlySavings)} <span className="text-sm font-sans font-bold text-slate-600">/ mês</span>
+                </p>
+                <p className="text-xs text-slate-500 font-mono">
+                  Isso representa <strong>{formatBRL(annualSavings)} a mais por ano</strong> para o seu restaurante.
                 </p>
               </div>
 
-              {/* Price display */}
-              <div className="border-y border-slate-800 py-4 space-y-2">
-                <div className="flex flex-wrap items-baseline gap-2">
-                  <span className="text-4xl sm:text-5xl font-black font-mono text-white">R$ 99,00</span>
-                  <span className="text-slate-300 text-sm font-semibold">/mês</span>
-                  <span className="ml-auto text-[11px] font-mono text-sky-400 bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800">
-                    24% de desconto
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
-                  <span className="flex items-center gap-1.5 text-sky-300 font-semibold">
-                    <CreditCard className="w-3.5 h-3.5 text-sky-400" />
-                    <span>No Cartão de Crédito (12x de R$ 99,00)</span>
-                  </span>
-                  <span className="line-through text-slate-500">De R$ 129,90/mês</span>
-                </div>
-              </div>
-
-              {/* What is included checklist */}
-              <div className="space-y-2.5 text-xs text-slate-300">
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
-                  <span><strong>Pagamento exclusivo no Cartão de Crédito</strong> (12x R$ 99,00)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
-                  <span>Cardápio digital ilimitado (Link &amp; QR Code de Mesa)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
-                  <span>Pix dos pedidos 100% direto na conta bancária da loja (0% comissão)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
-                  <span>Disparos automáticos no WhatsApp </span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
-                  <span>Painel KDS com contador visual SLA &amp; impressão térmica</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                  <span><strong>Módulo Salão &amp; Garçons:</strong> Mapa de mesas, Comanda Digital, QR Code por mesa e conta com 10%</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                  <span><strong>Integração Oficial iFood:</strong> Receba e despache pedidos do iFood direto no seu KDS</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
-                  <span>Inclui 15 dias de teste grátis para experimentar tudo</span>
-                </div>
-              </div>
-            </div>
-
-            {/* CTA inside Annual Card */}
-            <div className="pt-6 mt-6 border-t border-slate-800 space-y-2">
               <button
                 type="button"
-                onClick={() => handleTrackedSignup('pricing_annual_99_cc')}
-                className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs sm:text-sm rounded-xl transition-all shadow-md shadow-blue-600/25 flex items-center justify-center gap-2 cursor-pointer"
+                onClick={() => handleTrackedSignup('calculator_cta')}
+                className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer"
               >
-                <CreditCard className="w-4 h-4" />
-                <span>Assinar Anual por R$ 99,00/mês no Cartão</span>
-                <ArrowRight className="w-4 h-4" />
+                <Calculator className="w-4 h-4" />
+                <span>Quero economizar esse valor agora</span>
               </button>
-              <p className="text-[11px] text-slate-400 text-center">
-                12x de R$ 99,00 no cartão de crédito (total R$ 1.188,00/ano) &middot; Economia de R$ 370,80.
-              </p>
             </div>
-          </div>
-
-          {/* Card 2: Assinatura Mensal R$ 129,90/mês */}
-          <div className="lg:col-span-6 bg-white border border-slate-200 rounded-2xl p-6 sm:p-7 flex flex-col justify-between shadow-xs">
-            <div className="space-y-5">
-              <div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-blue-600 uppercase tracking-wider">
-                    Assinatura Mensal Flexível
-                  </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-                    15 Dias Grátis
-                  </span>
-                </div>
-                <h3 className="text-xl font-black text-slate-950 mt-1">Plano Aladay Mensal</h3>
-                <p className="text-xs text-slate-600 mt-1">
-                  Sem fidelidade anual. Pague mês a mês via Pix, Cartão de Crédito ou Boleto .
-                </p>
-              </div>
-
-              {/* Price display */}
-              <div className="border-y border-slate-200 py-4 space-y-1.5">
-                <div className="flex flex-wrap items-baseline gap-1.5">
-                  <span className="text-3xl sm:text-4xl font-black font-mono text-slate-950">R$ 129,90</span>
-                  <span className="text-slate-500 text-xs font-medium">/mês</span>
-                </div>
-                <p className="text-[11px] font-mono text-blue-600 font-semibold">
-                  Pix, Cartão de Crédito ou Boleto &middot; 0% comissão
-                </p>
-              </div>
-
-              <div className="space-y-2.5 text-xs text-slate-700">
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                  <span>Todos os recursos do Plano Pro liberados</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                  <span>Pix 100% direto na conta bancária da sua loja</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                  <span>Pedidos, produtos e categorias ilimitados</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                  <span>KDS Cozinha + WhatsApp Automático </span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <span><strong>Controle de Mesas &amp; Garçons:</strong> Mapa de salão, QR Code na mesa e divisão de conta</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                  <span><strong>Hub iFood Integrado:</strong> Pedidos do iFood sincronizados no mesmo KDS</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                  <span>Sem fidelidade: cancele quando quiser sem multa</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-6 mt-6 border-t border-slate-200 space-y-2">
-              <button
-                type="button"
-                onClick={() => handleTrackedSignup('pricing_monthly_129_90')}
-                className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <span>Começar 15 Dias Grátis (Plano Mensal)</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-              <p className="text-[11px] text-slate-500 text-center">
-                R$ 0,00 hoje &middot; Após 15 dias, R$ 129,90/mês.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Comparison Table vs Marketplaces */}
-        <div className="border border-slate-200 rounded-2xl overflow-hidden bg-slate-50/50">
-          <div className="p-4 bg-slate-100 border-b border-slate-200 flex items-center justify-between">
-            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wide">
-              Comparativo de Custos &middot; Apps Tradicionais vs Aladay
-            </h4>
-            <span className="text-[11px] text-blue-600 font-mono font-semibold">Economia Real</span>
-          </div>
-          <div className="overflow-x-auto text-xs">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-slate-200 bg-white">
-                  <th className="py-3 px-4 font-semibold text-slate-700">Recurso / Custo</th>
-                  <th className="py-3 px-4 font-semibold text-slate-500">Apps Tradicionais (Marketplaces)</th>
-                  <th className="py-3 px-4 font-bold text-blue-800 bg-blue-50/60">Aladay Cardápios Digitais</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 bg-white">
-                <tr>
-                  <td className="py-3 px-4 font-medium text-slate-900">Comissão por Pedido</td>
-                  <td className="py-3 px-4 text-rose-600 font-semibold">12% a 27% sobre cada venda</td>
-                  <td className="py-3 px-4 font-bold text-blue-700 bg-blue-50/60">0% (Zero comissão)</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-4 font-medium text-slate-900">Prazo de Repasse do Dinheiro</td>
-                  <td className="py-3 px-4 text-slate-600">Até 30 dias (ou taxa extra de antecipação)</td>
-                  <td className="py-3 px-4 font-bold text-blue-700 bg-blue-50/60">Na hora (Pix direto no seu banco)</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-4 font-medium text-slate-900">Acesso à Base de Clientes</td>
-                  <td className="py-3 px-4 text-slate-600">O cliente pertence ao aplicativo</td>
-                  <td className="py-3 px-4 font-bold text-blue-700 bg-blue-50/60">Sua base própria de WhatsApp</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-4 font-medium text-slate-900">Notificações no WhatsApp</td>
-                  <td className="py-3 px-4 text-slate-600">Não disponível</td>
-                  <td className="py-3 px-4 font-bold text-blue-700 bg-blue-50/60">100% automáticas</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-4 font-medium text-slate-900">Custo Total Mensal</td>
-                  <td className="py-3 px-4 text-slate-600">R$ 2.000 a R$ 8.000+ em comissões</td>
-                  <td className="py-3 px-4 font-bold text-blue-700 bg-blue-50/60">R$ 99,00/mês (Anual no Cartão) ou R$ 129,90/mês (Mensal)</td>
-                </tr>
-              </tbody>
-            </table>
           </div>
         </div>
       </section>
 
       {/* ================================================================== */}
-      {/* 5. SIMULADOR DE ECONOMIA (CALCULADORA DE ROI INTERATIVA)            */}
+      {/* 10. SEGMENTOS ATENDIDOS & PROVA SOCIAL                             */}
       {/* ================================================================== */}
-      <section id="calculadora" className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-10 space-y-8 shadow-xs scroll-mt-24">
-        <div className="max-w-3xl space-y-2">
-          <p className="text-xs font-bold text-blue-600 uppercase tracking-wider">
-            03. Calculadora de Economia
-          </p>
-          <h2 className="text-2xl sm:text-3xl font-bold text-slate-950 tracking-tight">
-            Calcule quanto você economiza ao substituir comissões pela assinatura fixa
-          </h2>
-          <p className="text-sm text-slate-600">
-            Arraste os seletores para aproximar com os números do seu restaurante hoje.
-          </p>
-        </div>
+      <section className="py-16 sm:py-24 bg-slate-50 border-t border-slate-200/80">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+          <div className="max-w-3xl space-y-3">
+            <span className="text-xs font-bold text-blue-600 uppercase tracking-widest font-mono">
+              Para Quem É
+            </span>
+            <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-950 tracking-tight">
+              Feito sob medida para todo o setor de alimentação
+            </h2>
+            <p className="text-sm sm:text-base text-slate-600">
+              A Aladay atende operações gastronômicas de todos os portes com agilidade e facilidade de uso.
+            </p>
+          </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-          {/* Sliders */}
-          <div className="lg:col-span-7 space-y-6">
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs font-medium">
-                <label htmlFor="slider-orders" className="text-slate-700">
-                  Volume de pedidos por mês
-                </label>
-                <span className="font-mono font-bold text-slate-950">
-                  {monthlyOrders} pedidos/mês
-                </span>
-              </div>
-              <input
-                id="slider-orders"
-                type="range"
-                min={50}
-                max={2000}
-                step={25}
-                value={monthlyOrders}
-                onChange={(e) => {
-                  setMonthlyOrders(Number(e.target.value));
-                  trackConversionEvent('calculate_roi', {
-                    orders: Number(e.target.value),
-                    savings: monthlySavings,
-                  });
-                }}
-                className="w-full accent-blue-600 cursor-pointer"
-              />
-              <div className="flex justify-between text-[11px] text-slate-400 font-mono">
-                <span>50 pedidos</span>
-                <span>1.000 pedidos</span>
-                <span>2.000 pedidos</span>
-              </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 text-center">
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-2 shadow-2xs">
+              <span className="text-2xl">🍔</span>
+              <p className="font-bold text-xs sm:text-sm text-slate-900">Hamburguerias</p>
+              <p className="text-[11px] text-slate-500">Combos &amp; pontos</p>
             </div>
-
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs font-medium">
-                <label htmlFor="slider-ticket" className="text-slate-700">
-                  Ticket Médio por Pedido (R$)
-                </label>
-                <span className="font-mono font-bold text-slate-950">
-                  R$ {averageTicketBRL},00
-                </span>
-              </div>
-              <input
-                id="slider-ticket"
-                type="range"
-                min={25}
-                max={180}
-                step={5}
-                value={averageTicketBRL}
-                onChange={(e) => {
-                  setAverageTicketBRL(Number(e.target.value));
-                  trackConversionEvent('calculate_roi', {
-                    ticket: Number(e.target.value),
-                    savings: monthlySavings,
-                  });
-                }}
-                className="w-full accent-blue-600 cursor-pointer"
-              />
-              <div className="flex justify-between text-[11px] text-slate-400 font-mono">
-                <span>R$ 25</span>
-                <span>R$ 90</span>
-                <span>R$ 180</span>
-              </div>
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-2 shadow-2xs">
+              <span className="text-2xl">🍕</span>
+              <p className="font-bold text-xs sm:text-sm text-slate-900">Pizzarias</p>
+              <p className="text-[11px] text-slate-500">Sabores &amp; bordas</p>
             </div>
-
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs font-medium">
-                <label htmlFor="slider-fee" className="text-slate-700">
-                  Comissão cobrada pelo Marketplace (%)
-                </label>
-                <span className="font-mono font-bold text-slate-950">
-                  {marketplaceFeePercent}%
-                </span>
-              </div>
-              <input
-                id="slider-fee"
-                type="range"
-                min={12}
-                max={27}
-                step={1}
-                value={marketplaceFeePercent}
-                onChange={(e) => setMarketplaceFeePercent(Number(e.target.value))}
-                className="w-full accent-blue-600 cursor-pointer"
-              />
-              <div className="flex justify-between text-[11px] text-slate-400 font-mono">
-                <span>12% (Básico)</span>
-                <span>18% (Média)</span>
-                <span>27% (Com Entrega do App)</span>
-              </div>
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-2 shadow-2xs">
+              <span className="text-2xl">🥪</span>
+              <p className="font-bold text-xs sm:text-sm text-slate-900">Lanchonetes</p>
+              <p className="text-[11px] text-slate-500">Agilidade no balcão</p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-2 shadow-2xs">
+              <span className="text-2xl">🍽️</span>
+              <p className="font-bold text-xs sm:text-sm text-slate-900">Restaurantes</p>
+              <p className="text-[11px] text-slate-500">Controle de salão</p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-2 shadow-2xs">
+              <span className="text-2xl">🛵</span>
+              <p className="font-bold text-xs sm:text-sm text-slate-900">Dark Kitchens</p>
+              <p className="text-[11px] text-slate-500">Foco em entrega</p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-2 shadow-2xs">
+              <span className="text-2xl">☕</span>
+              <p className="font-bold text-xs sm:text-sm text-slate-900">Cafés &amp; Docerias</p>
+              <p className="text-[11px] text-slate-500">Menu visual atraente</p>
             </div>
           </div>
 
-          {/* Result Card */}
-          <div className="lg:col-span-5 bg-slate-50 border border-slate-200 rounded-2xl p-6 space-y-4">
-            {/* Plan cycle toggle inside calculator */}
-            <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-200/80 rounded-xl text-[11px] font-semibold">
-              <button
-                type="button"
-                onClick={() => setCalculatorPlanCycle('YEARLY')}
-                className={`py-1.5 px-2 rounded-lg transition-all cursor-pointer ${
-                  calculatorPlanCycle === 'YEARLY'
-                    ? 'bg-blue-600 text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Anual (R$ 99,00/mês Cartão)
-              </button>
-              <button
-                type="button"
-                onClick={() => setCalculatorPlanCycle('MONTHLY')}
-                className={`py-1.5 px-2 rounded-lg transition-all cursor-pointer ${
-                  calculatorPlanCycle === 'MONTHLY'
-                    ? 'bg-blue-600 text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Mensal (R$ 129,90/mês)
-              </button>
-            </div>
-
-            <div className="space-y-2.5 border-b border-slate-200 pb-4 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-600">Faturamento Bruto:</span>
-                <span className="font-mono font-semibold text-slate-900">
-                  {formatBRL(grossMonthlyRevenue)}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-600">Comissão Retida no App ({marketplaceFeePercent}%):</span>
-                <span className="font-mono font-semibold text-rose-600">
-                  - {formatBRL(marketplaceMonthlyCost)} / mês
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-600">
-                  Assinatura Fixa Aladay ({calculatorPlanCycle === 'YEARLY' ? 'Anual no Cartão' : 'Mensal'}):
-                </span>
-                <span className="font-mono font-semibold text-blue-600">
-                  {calculatorPlanCycle === 'YEARLY' ? 'R$ 99,00 / mês' : 'R$ 129,90 / mês'}
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <p className="text-xs text-slate-500 font-medium">
-                Lucro Extra que fica no seu bolso todo mês:
-              </p>
-              <p className="text-3xl font-black text-blue-600 font-mono">
-                {formatBRL(monthlySavings)} / mês
-              </p>
-              <p className="text-xs font-mono text-slate-600">
-                Ou seja, <strong>{formatBRL(annualSavings)} a mais por ano</strong> para investir no seu negócio.
+          {/* Franchise / Multi-store bar */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 flex flex-wrap items-center justify-between gap-4 shadow-xs">
+            <div className="space-y-1 text-left">
+              <h4 className="text-base font-bold text-slate-950 flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-blue-600" />
+                <span>Possui rede de restaurantes ou franquia com múltiplas unidades?</span>
+              </h4>
+              <p className="text-xs sm:text-sm text-slate-600">
+                Oferecemos suporte a franquias com múltiplos cardápios e painel consolidado.
               </p>
             </div>
-
             <button
               type="button"
-              onClick={() => handleTrackedSignup('calculator_result_cta')}
-              className="w-full py-3.5 px-4 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs shadow-blue-600/20"
+              onClick={() => setIsProposalModalOpen(true)}
+              className="px-5 py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all cursor-pointer whitespace-nowrap"
             >
-              <Calculator className="w-4 h-4" />
-              <span>Quero Economizar {formatBRL(monthlySavings)}/mês</span>
+              Solicitar Proposta para Redes
             </button>
           </div>
         </div>
       </section>
 
       {/* ================================================================== */}
-      {/* 6. CAMINHO EVIDENTE: BANNER FINAL DE CONVERSÃO & CONTATO           */}
+      {/* 11. FAQ (DÚVIDAS FREQUENTES ACCORDION)                             */}
       {/* ================================================================== */}
-      <section className="bg-slate-950 text-white rounded-3xl p-8 sm:p-12 text-center relative overflow-hidden shadow-xl border border-slate-800">
-        <div className="max-w-2xl mx-auto space-y-6 relative z-10">
-          <span className="inline-block px-3 py-1 bg-blue-950/90 border border-blue-800 text-sky-400 text-xs font-semibold rounded-full">
-            Teste Grátis por 15 Dias &middot; Sem Compromisso
+      <section id="faq" className="py-16 sm:py-24 bg-white scroll-mt-20">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+          <div className="text-center space-y-3">
+            <span className="text-xs font-bold text-blue-600 uppercase tracking-widest font-mono">
+              Perguntas Frequentes
+            </span>
+            <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-950 tracking-tight">
+              Tire todas as suas dúvidas sobre a Aladay
+            </h2>
+            <p className="text-sm sm:text-base text-slate-600">
+              Respostas diretas e transparentes sobre o funcionamento da plataforma.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            {faqs.map((faq, idx) => {
+              const isOpen = openFaqIndex === idx;
+              return (
+                <div
+                  key={faq.question}
+                  className="border border-slate-200 rounded-2xl overflow-hidden transition-colors bg-white shadow-2xs"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setOpenFaqIndex(isOpen ? null : idx)}
+                    className="w-full text-left p-5 flex items-center justify-between gap-4 cursor-pointer hover:bg-slate-50 transition-colors"
+                    aria-expanded={isOpen}
+                  >
+                    <span className="text-sm sm:text-base font-bold text-slate-900">
+                      {faq.question}
+                    </span>
+                    <ChevronDown
+                      className={`w-5 h-5 text-slate-400 shrink-0 transition-transform duration-200 ${
+                        isOpen ? 'rotate-180 text-blue-600' : ''
+                      }`}
+                    />
+                  </button>
+                  {isOpen && (
+                    <div className="px-5 pb-5 pt-1 text-xs sm:text-sm text-slate-600 leading-relaxed border-t border-slate-100 text-left">
+                      {faq.answer}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* ================================================================== */}
+      {/* 12. CTA FINAL: "Pronto para modernizar seu restaurante?"           */}
+      {/* ================================================================== */}
+      <section className="py-16 sm:py-24 bg-slate-950 text-white relative overflow-hidden border-t border-slate-800">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-8 relative z-10">
+          <span className="inline-block px-3 py-1 bg-blue-950/80 border border-blue-800 text-sky-400 text-xs font-semibold rounded-full font-mono">
+            Comece em Menos de 1 Minuto
           </span>
-          <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
-            Coloque seu cardápio próprio no ar hoje mesmo com 15 dias grátis.
+
+          <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight leading-[1.12]">
+            Pronto para modernizar seu restaurante?
           </h2>
-          <p className="text-sm sm:text-base text-slate-400 max-w-xl mx-auto leading-relaxed">
-            Cadastre seu período de teste grátis de 15 dias em menos de 1 minuto, configure seus produtos e comece a receber pedidos no WhatsApp com Pix 100% na sua conta bancária.
+
+          <p className="text-base sm:text-lg text-slate-300 max-w-2xl mx-auto leading-relaxed">
+            Cadastre-se agora e aproveite 15 dias de teste grátis com acesso a todos os recursos. Sem necessidade de cartão de crédito no cadastro.
           </p>
 
-          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+          <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
             <button
               type="button"
-              onClick={() => handleTrackedSignup('bottom_banner_primary')}
-              className="px-7 py-4 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-xl transition-all shadow-md shadow-blue-600/25 flex items-center gap-2 cursor-pointer"
+              onClick={() => handleTrackedSignup('bottom_cta_primary')}
+              className="px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-xl transition-all shadow-xl shadow-blue-600/30 flex items-center gap-2 cursor-pointer"
             >
-              <span>Começar 15 Dias de Teste Grátis</span>
+              <span>Começar meu teste grátis</span>
               <ArrowRight className="w-4 h-4" />
             </button>
 
             <button
               type="button"
-              onClick={() => handleScrollToPhoneDemo('bottom_banner_demo')}
-              className="px-6 py-4 bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold rounded-xl border border-slate-800 transition-colors flex items-center gap-2 cursor-pointer shadow-xs"
-            >
-              <Smartphone className="w-4 h-4 text-sky-400" />
-              <span>Testar Demonstração no Celular</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleTrackedWhatsApp('bottom_banner_whatsapp')}
-              className="px-5 py-4 bg-slate-900 hover:bg-slate-800 text-slate-300 text-sm font-medium rounded-xl border border-slate-800 transition-colors flex items-center gap-2 cursor-pointer"
+              onClick={() => handleTrackedWhatsApp('bottom_cta_whatsapp')}
+              className="px-7 py-4 bg-slate-900 hover:bg-slate-800 text-slate-200 text-sm font-semibold rounded-xl border border-slate-800 transition-colors flex items-center gap-2 cursor-pointer"
             >
               <PhoneCall className="w-4 h-4 text-sky-400" />
-              <span>Tirar Dúvidas no WhatsApp</span>
+              <span>Falar com especialista no WhatsApp</span>
             </button>
           </div>
         </div>
       </section>
 
       {/* ================================================================== */}
-      {/* 7. MODAL DE SOLICITAÇÃO DE PROPOSTA (REDES & FRANQUIAS)           */}
+      {/* 13. QUIET SAAS FOOTER                                              */}
+      {/* ================================================================== */}
+      <footer className="bg-slate-950 text-slate-400 border-t border-slate-900 py-12 text-xs">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-6 text-center sm:text-left">
+          <div className="flex items-center gap-2 text-white font-bold text-base">
+            <span className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-xs font-black">
+              A
+            </span>
+            <span>Aladay Cardápios Digitais</span>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-6 text-slate-400 font-medium">
+            <a href="#recursos" className="hover:text-white transition-colors">
+              Recursos
+            </a>
+            <a href="#demonstracao" className="hover:text-white transition-colors">
+              Como Funciona
+            </a>
+            <a href="#planos" className="hover:text-white transition-colors">
+              Planos
+            </a>
+            <a href="#calculadora" className="hover:text-white transition-colors">
+              Calculadora
+            </a>
+            {onNavigateToTerms && (
+              <button
+                type="button"
+                onClick={onNavigateToTerms}
+                className="hover:text-white transition-colors cursor-pointer"
+              >
+                Termos de Uso
+              </button>
+            )}
+            {onNavigateToPrivacy && (
+              <button
+                type="button"
+                onClick={onNavigateToPrivacy}
+                className="hover:text-white transition-colors cursor-pointer"
+              >
+                Privacidade
+              </button>
+            )}
+          </div>
+
+          <p className="text-slate-500 font-mono text-[11px]">
+            &copy; {new Date().getFullYear()} Aladay. Todos os direitos reservados.
+          </p>
+        </div>
+      </footer>
+
+      {/* ================================================================== */}
+      {/* 14. MODAL DE REELS / VÍDEOS VERTICAIS EXPANDIDO                    */}
+      {/* ================================================================== */}
+      {selectedReel && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-950 border border-slate-800 rounded-3xl max-w-sm w-full overflow-hidden shadow-2xl relative animate-in fade-in zoom-in-95 duration-200 aspect-[9/16] flex flex-col text-white">
+            {/* Reel Header */}
+            <div className="p-4 bg-gradient-to-b from-black/80 to-transparent z-20 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] font-bold text-sky-400 font-mono uppercase">
+                  {selectedReel.category}
+                </span>
+                <h4 className="text-xs font-bold text-white truncate max-w-[200px]">
+                  {selectedReel.title}
+                </h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedReel(null)}
+                className="p-1.5 rounded-full bg-white/20 hover:bg-white/30 text-white cursor-pointer transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Simulated Story Video Backdrop */}
+            <div className="flex-1 relative overflow-hidden flex flex-col justify-end p-5">
+              <img
+                src={selectedReel.thumbnailUrl}
+                alt={selectedReel.title}
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/50 to-transparent" />
+
+              {/* Story Content Card */}
+              <div className="relative z-10 bg-slate-900/90 backdrop-blur-md rounded-2xl p-4 border border-slate-800 space-y-2 text-left">
+                <span className="text-[10px] font-bold text-sky-400 bg-sky-950/60 border border-sky-800 px-2 py-0.5 rounded font-mono inline-block">
+                  {selectedReel.storySteps[activeStoryStep].badge}
+                </span>
+                <h5 className="text-sm font-bold text-white">
+                  {selectedReel.storySteps[activeStoryStep].heading}
+                </h5>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  {selectedReel.storySteps[activeStoryStep].description}
+                </p>
+
+                {/* Progress Indicators */}
+                <div className="flex gap-1 pt-2">
+                  {selectedReel.storySteps.map((_, sIdx) => (
+                    <button
+                      key={sIdx}
+                      type="button"
+                      onClick={() => setActiveStoryStep(sIdx)}
+                      className={`h-1 flex-1 rounded-full cursor-pointer transition-all ${
+                        activeStoryStep === sIdx ? 'bg-blue-500' : 'bg-slate-700'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Story Bottom CTA */}
+              <div className="relative z-10 pt-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedReel(null);
+                    handleTrackedSignup('reel_modal_cta');
+                  }}
+                  className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+                >
+                  <span>Testar 15 Dias Grátis</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================== */}
+      {/* 15. MODAL DE SOLICITAÇÃO DE PROPOSTA (REDES & FRANQUIAS)           */}
       {/* ================================================================== */}
       {isProposalModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl border border-slate-200 relative animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl border border-slate-200 relative text-left">
             <div className="flex items-center justify-between border-b border-slate-200 pb-4">
               <div>
                 <h3 className="text-lg font-bold text-slate-950">
-                  Solicitar Proposta para Redes &amp; Franquias
+                  Proposta Personalizada para Redes &amp; Franquias
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Preencha os dados da sua operação para receber contato personalizado.
+                  Preencha os dados para receber atendimento de nossa equipe corporativa.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsProposalModalOpen(false)}
-                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg"
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1513,7 +2325,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 <CheckCircle2 className="w-10 h-10 text-blue-600 mx-auto" />
                 <h4 className="font-bold text-sm">Solicitação Recebida com Sucesso!</h4>
                 <p className="text-xs text-slate-600">
-                  Redirecionando para o canal direto do WhatsApp para envio da sua proposta comercial...
+                  Redirecionando para o canal direto do WhatsApp para envio da sua proposta...
                 </p>
               </div>
             ) : (
@@ -1535,14 +2347,14 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block font-medium text-slate-700 mb-1">
-                      Nome do Restaurante / Marca *
+                      Nome da Marca / Restaurante *
                     </label>
                     <input
                       type="text"
                       required
                       value={proposalForm.restaurantName}
                       onChange={(e) => setProposalForm({ ...proposalForm, restaurantName: e.target.value })}
-                      placeholder="Ex: Smash Bros Burger"
+                      placeholder="Ex: Burger Prime"
                       className="w-full px-3 py-2.5 rounded-lg border border-slate-300 focus:outline-blue-600 text-slate-900"
                     />
                   </div>
@@ -1559,7 +2371,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                       <option value="2 a 3 lojas">2 a 3 lojas</option>
                       <option value="4 a 8 lojas">4 a 8 lojas</option>
                       <option value="9 a 20 lojas">9 a 20 lojas</option>
-                      <option value="Mais de 20 lojas (Franquia)">Mais de 20 lojas (Franquia)</option>
+                      <option value="Mais de 20 lojas">Mais de 20 lojas (Franquia)</option>
                     </select>
                   </div>
                 </div>
@@ -1575,7 +2387,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                       value={proposalForm.whatsapp}
                       onChange={(e) => setProposalForm({ ...proposalForm, whatsapp: e.target.value })}
                       placeholder="(11) 99999-9999"
-                      className="w-full px-3 py-2.5 rounded-lg border border-slate-300 focus:outline-blue-600 text-slate-900"
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-300 focus:outline-blue-600 text-slate-900 font-mono"
                     />
                   </div>
 
@@ -1594,19 +2406,6 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                   </div>
                 </div>
 
-                <div>
-                  <label className="block font-medium text-slate-700 mb-1">
-                    E-mail Corporativo (Opcional)
-                  </label>
-                  <input
-                    type="email"
-                    value={proposalForm.email}
-                    onChange={(e) => setProposalForm({ ...proposalForm, email: e.target.value })}
-                    placeholder="contato@restaurante.com.br"
-                    className="w-full px-3 py-2.5 rounded-lg border border-slate-300 focus:outline-blue-600 text-slate-900"
-                  />
-                </div>
-
                 <div className="pt-2">
                   <button
                     type="submit"
@@ -1623,115 +2422,16 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
       )}
 
       {/* ================================================================== */}
-      {/* 8. MODAL DE DEMONSTRAÇÃO COMPLETA DA OPERAÇÃO ALADAY             */}
-      {/* ================================================================== */}
-      {isGuidedDemoModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 space-y-6 shadow-2xl border border-slate-200 relative animate-in fade-in duration-150 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
-              <div>
-                <span className="text-xs font-semibold text-blue-600 uppercase tracking-wider">
-                  Tour Operacional Aladay
-                </span>
-                <h3 className="text-xl font-black text-slate-950 mt-0.5">
-                  Como Funciona do Pedido à Entrega
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsGuidedDemoModalOpen(false)}
-                className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* 3 Step Interactive Visual Cards */}
-            <div className="space-y-4">
-              {/* Step 1 */}
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-slate-900 flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">1</span>
-                    Cliente Acessa o Cardápio no Celular
-                  </span>
-                  <span className="text-blue-600 font-mono font-semibold">Sem App &middot; 100% Web</span>
-                </div>
-                <p className="text-xs text-slate-600 leading-relaxed pl-8">
-                  O cliente clica no link da sua bio do Instagram ou escaneia o QR Code na mesa. Navega pelas categorias, seleciona adicionais e opções com fotos reais e fecha o pedido em segundos.
-                </p>
-              </div>
-
-              {/* Step 2 */}
-              <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-blue-950 flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-full bg-blue-700 text-white flex items-center justify-center text-xs font-bold">2</span>
-                    Pix 100% Direto na Conta do seu Banco
-                  </span>
-                  <span className="text-blue-700 font-mono font-bold">0% Comissão Retida</span>
-                </div>
-                <p className="text-xs text-slate-700 leading-relaxed pl-8">
-                  O QR Code e o código Pix Copia e Cola são gerados instantaneamente com a chave Pix cadastrada pelo seu restaurante. O dinheiro entra na hora na sua conta bancária PJ.
-                </p>
-              </div>
-
-              {/* Step 3 */}
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-slate-900 flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-bold">3</span>
-                    Cozinha KDS &amp; WhatsApp Automático
-                  </span>
-                  <span className="text-slate-500 font-mono">Evolution API</span>
-                </div>
-                <p className="text-xs text-slate-600 leading-relaxed pl-8">
-                  A cozinha visualiza o pedido no painel Kanban. Quando avança para &ldquo;Em Preparo&rdquo; ou &ldquo;Saiu para Entrega&rdquo;, o cliente recebe atualizações em tempo real pelo WhatsApp com link de rastreio.
-                </p>
-              </div>
-            </div>
-
-            {/* Modal Actions */}
-            <div className="pt-2 border-t border-slate-200 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsGuidedDemoModalOpen(false);
-                  handleScrollToPhoneDemo('modal_demo_cta');
-                }}
-                className="flex-1 py-3.5 px-4 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Smartphone className="w-4 h-4 text-sky-400" />
-                <span>Testar Cardápio no Celular Interativo</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setIsGuidedDemoModalOpen(false);
-                  handleTrackedSignup('modal_signup_cta');
-                }}
-                className="flex-1 py-3.5 px-4 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs"
-              >
-                <span>Criar Meu Cardápio (A partir de R$ 99/mês)</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ================================================================== */}
-      {/* 9. PRIVACY & LGPD COOKIE CONSENT BANNER (MEDIÇÃO COM PRIVACIDADE)   */}
+      {/* 16. COOKIE PRIVACY BANNER (LGPD)                                   */}
       {/* ================================================================== */}
       {cookieConsent === 'pending' && (
-        <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-md z-50 bg-white border border-slate-300 rounded-2xl p-5 shadow-2xl text-xs space-y-3">
+        <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-md z-50 bg-white border border-slate-300 rounded-2xl p-5 shadow-2xl text-xs space-y-3 text-left">
           <div className="flex items-start gap-2.5">
             <ShieldCheck className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
             <div className="space-y-1">
               <p className="font-bold text-slate-950">Privacidade &amp; Métricas (LGPD)</p>
               <p className="text-slate-600 leading-relaxed text-[11px]">
-                Utilizamos cookies essenciais para o funcionamento do site e, com seu consentimento, métricas de navegação anônimas via Google Analytics 4 para aprimorar o serviço. Consulte nossos{' '}
+                Utilizamos cookies essenciais para o funcionamento do site e métricas anônimas para aprimorar sua experiência.{' '}
                 {onNavigateToTerms && (
                   <button
                     type="button"
@@ -1762,7 +2462,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               onClick={handleAcceptAllCookies}
               className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg text-xs transition-colors cursor-pointer text-center"
             >
-              Aceitar Métricas
+              Aceitar
             </button>
             <button
               type="button"
